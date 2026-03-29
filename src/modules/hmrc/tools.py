@@ -148,7 +148,7 @@ def register_tools(mcp: FastMCP) -> None:
                 "Register at https://developer.service.hmrc.gov.uk"
             )})
         try:
-            client: httpx.AsyncClient = ctx.request_context.lifespan_state["http"]
+            client: httpx.AsyncClient = ctx.lifespan_context["http"]
             token_resp = await client.post(
                 f"{HMRC_API_BASE}/oauth/token",
                 data={"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret, "scope": "read:vat"},
@@ -193,7 +193,7 @@ def register_tools(mcp: FastMCP) -> None:
             str: JSON array of HMRCGuidanceResult objects (title, url, summary, updated).
         """
         try:
-            client: httpx.AsyncClient = ctx.request_context.lifespan_state["http"]
+            client: httpx.AsyncClient = ctx.lifespan_context["http"]
             resp = await client.get(
                 GOVUK_SEARCH_BASE,
                 params={"q": params.query, "filter_organisations": "hm-revenue-customs", "fields[]": ["title", "description", "link", "public_timestamp"], "count": 10},

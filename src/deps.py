@@ -3,13 +3,13 @@ Shared dependencies for uk-legal-mcp.
 
 FastMCP v3 uses a lifespan pattern for shared resources. The httpx clients
 are created once per server lifespan and accessed via
-ctx.request_context.lifespan_state — never exposed in LLM tool schemas.
+ctx.lifespan_context — never exposed in LLM tool schemas.
 
 Usage in tools:
     @mcp.tool()
     async def my_tool(query: str, ctx: Context) -> str:
-        client     = ctx.request_context.lifespan_state["http"]      # JSON APIs
-        xml_client = ctx.request_context.lifespan_state["xml_http"]  # XML/Atom APIs
+        client     = ctx.lifespan_context["http"]      # JSON APIs
+        xml_client = ctx.lifespan_context["xml_http"]   # XML/Atom APIs
         resp = await client.get(...)
 """
 
@@ -42,8 +42,8 @@ async def http_lifespan(server: FastMCP):
     Provide shared async HTTP clients for the lifespan of the server.
 
     Yields two clients under keys 'http' and 'xml_http'. Access in tools via:
-        ctx.request_context.lifespan_state["http"]
-        ctx.request_context.lifespan_state["xml_http"]
+        ctx.lifespan_context["http"]
+        ctx.lifespan_context["xml_http"]
     """
     async with httpx.AsyncClient(
         timeout=30.0,

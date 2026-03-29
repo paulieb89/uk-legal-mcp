@@ -62,12 +62,12 @@ def _compile_patterns() -> dict[CitationType, re.Pattern]:
             re.IGNORECASE,
         ),
         CitationType.LAW_REPORT: re.compile(
-            r"\[(\d{4})\]\s+(\d+)\s+(" + REPORT_SERIES + r")\s+(\d+)",
+            r"\[(\d{4})\]\s+(?:(\d+)\s+)?(" + REPORT_SERIES + r")\s+(\d+)",
             re.IGNORECASE,
         ),
         CitationType.LEGISLATION: re.compile(
             r"s(?:ection)?\.?\s*(\d+[A-Z]?)(?:\(\d+\))*\s+"
-            r"([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*\s+Act\s+\d{4})",
+            r"([A-Z][A-Za-z']+(?:\s+[A-Z][A-Za-z']+)*\s+Act\s+\d{4})",
         ),
         CitationType.SI: re.compile(
             r"S\.?I\.?\s+(\d{4})\s*/\s*(\d+)",

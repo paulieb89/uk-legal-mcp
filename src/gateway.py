@@ -22,6 +22,7 @@ from fastmcp import FastMCP
 from fastmcp.server.middleware.rate_limiting import RateLimitingMiddleware
 from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
 
+from .deps import http_lifespan
 from .modules.case_law import case_law_mcp
 from .modules.citations import citations_mcp
 from .modules.hmrc import hmrc_mcp
@@ -34,6 +35,7 @@ from .modules.parliament import parliament_mcp
 
 gateway = FastMCP(
     name="uk-legal-mcp",
+    lifespan=http_lifespan,
     instructions=(
         "UK legal research server. Five namespaced modules:\n\n"
         "• case_law_search / case_law_get_judgment\n"

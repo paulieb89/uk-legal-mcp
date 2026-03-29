@@ -3,13 +3,11 @@
 from fastmcp import FastMCP
 from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
 
-from ...deps import http_lifespan
 from .tools import register_tools
 from .resources import register_resources
 
 case_law_mcp = FastMCP(
     name="case_law",
-    lifespan=http_lifespan,
     instructions=(
         "Search and retrieve UK court judgments from the TNA Find Case Law database. "
         "Use case_law_search to find judgments by keyword, court, judge, party, or date. "

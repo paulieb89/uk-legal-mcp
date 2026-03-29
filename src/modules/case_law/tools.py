@@ -123,7 +123,7 @@ def register_tools(mcp: FastMCP) -> None:
                 identifiers, xml_url, pdf_url), page, has_more, total_pages.
         """
         try:
-            client: httpx.AsyncClient = ctx.request_context.lifespan_state["xml_http"]
+            client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
             qp: dict = {"query": params.query, "page": params.page}
             if params.court: qp["court"] = params.court
             if params.judge: qp["judge"] = params.judge
@@ -153,7 +153,7 @@ def register_tools(mcp: FastMCP) -> None:
             str: LegalDocML XML content, or JSON error object.
         """
         try:
-            client: httpx.AsyncClient = ctx.request_context.lifespan_state["xml_http"]
+            client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
             uri = params.uri.lstrip("/")
             resp = await client.get(f"{TNA_BASE}/{uri}/data.xml")
             resp.raise_for_status()

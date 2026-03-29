@@ -87,7 +87,7 @@ def register_tools(mcp: FastMCP) -> None:
                 date, debate_title, section, text, url).
         """
         try:
-            client: httpx.AsyncClient = ctx.request_context.lifespan_state["http"]
+            client: httpx.AsyncClient = ctx.lifespan_context["http"]
             qp: dict = {"queryParameters.searchTerm": params.query, "queryParameters.take": 20}
             if params.from_date: qp["queryParameters.startDate"] = params.from_date.isoformat()
             if params.to_date: qp["queryParameters.endDate"] = params.to_date.isoformat()
@@ -120,7 +120,7 @@ def register_tools(mcp: FastMCP) -> None:
                 key_supporters, key_opponents, key_concerns.
         """
         try:
-            client: httpx.AsyncClient = ctx.request_context.lifespan_state["http"]
+            client: httpx.AsyncClient = ctx.lifespan_context["http"]
             resp = await client.get(
                 f"{HANSARD_BASE}/search/contributions.json",
                 params={"queryParameters.searchTerm": params.topic, "queryParameters.take": 15},
@@ -189,7 +189,7 @@ def register_tools(mcp: FastMCP) -> None:
             str: JSON array of MemberResult objects (id, name, party, constituency, house, is_current).
         """
         try:
-            client: httpx.AsyncClient = ctx.request_context.lifespan_state["http"]
+            client: httpx.AsyncClient = ctx.lifespan_context["http"]
             resp = await client.get(f"{MEMBERS_BASE}/Members/Search", params={"Name": params.name, "IsCurrentMember": "false"})
             resp.raise_for_status()
             data = resp.json()
@@ -224,7 +224,7 @@ def register_tools(mcp: FastMCP) -> None:
             str: JSON array of HansardContribution objects.
         """
         try:
-            client: httpx.AsyncClient = ctx.request_context.lifespan_state["http"]
+            client: httpx.AsyncClient = ctx.lifespan_context["http"]
             qp: dict = {"queryParameters.memberId": params.member_id, "queryParameters.take": 20}
             if params.topic: qp["queryParameters.searchTerm"] = params.topic
             resp = await client.get(f"{HANSARD_BASE}/search/contributions.json", params=qp)

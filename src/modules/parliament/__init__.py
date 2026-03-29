@@ -2,13 +2,11 @@
 
 from fastmcp import FastMCP
 
-from ...deps import http_lifespan
 from .tools import register_tools
 from .prompts import register_prompts
 
 parliament_mcp = FastMCP(
     name="parliament",
-    lifespan=http_lifespan,
     instructions=(
         "Search UK parliamentary debates (Hansard) and member information. "
         "Use parliament_search_hansard to find debates on a topic. "

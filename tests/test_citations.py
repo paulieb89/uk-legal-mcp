@@ -182,6 +182,39 @@ class TestAmbiguity:
 # Multi-citation extraction from prose
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Law report without volume number (pre-2001 citations)
+# ---------------------------------------------------------------------------
+
+def test_law_report_without_volume():
+    """[1932] AC 562 — no volume number, should still parse."""
+    patterns = _compile_patterns()
+    confident, _ = _extract_all_citations("[1932] AC 562", patterns)
+    assert len(confident) >= 1
+    c = confident[0]
+    assert c.type == CitationType.LAW_REPORT
+    assert c.year == 1932
+    assert c.volume is None
+    assert c.report_series == "AC"
+    assert c.page == 562
+
+
+# ---------------------------------------------------------------------------
+# Apostrophe in Act titles
+# ---------------------------------------------------------------------------
+
+def test_apostrophe_in_act_title():
+    """s.2 Occupiers' Liability Act 1957 — apostrophe in title."""
+    patterns = _compile_patterns()
+    confident, _ = _extract_all_citations("s.2 Occupiers' Liability Act 1957", patterns)
+    assert len(confident) >= 1
+    c = confident[0]
+    assert c.type == CitationType.LEGISLATION
+    assert c.section == "2"
+    assert "Occupiers" in c.legislation_title
+    assert "1957" in c.legislation_title
+
+
 MIXED_TEXT = """
 This appeal concerns the duty of care established in Donoghue v Stevenson [1932] AC 562.
 The Supreme Court considered the matter in [2024] UKSC 12 and [2023] UKSC 8.
@@ -196,6 +229,7 @@ def test_mixed_text_extraction():
 
     types_found = {c.type for c in all_citations}
     assert CitationType.NEUTRAL in types_found
+    assert CitationType.LAW_REPORT in types_found
     assert CitationType.LEGISLATION in types_found
     assert CitationType.SI in types_found
     assert CitationType.EU_RETAINED in types_found

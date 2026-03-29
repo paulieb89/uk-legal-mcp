@@ -120,7 +120,7 @@ def register_tools(mcp: FastMCP) -> None:
             str: JSON with results (title, type, year, number, score, url) and total count.
         """
         try:
-            client: httpx.AsyncClient = ctx.request_context.lifespan_state["http"]
+            client: httpx.AsyncClient = ctx.lifespan_context["http"]
             qp: dict = {"q": params.query}
             if params.type: qp["type"] = params.type
             if params.year: qp["year"] = params.year
@@ -159,7 +159,7 @@ def register_tools(mcp: FastMCP) -> None:
             str: JSON with title, section_number, content, in_force, extent, version_date, prospective.
         """
         try:
-            client: httpx.AsyncClient = ctx.request_context.lifespan_state["xml_http"]
+            client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
             url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/section/{params.section}/data.xml"
             resp = await client.get(url)
             resp.raise_for_status()
@@ -184,7 +184,7 @@ def register_tools(mcp: FastMCP) -> None:
             str: JSON array of strings in format 'section-N: Title text'.
         """
         try:
-            client: httpx.AsyncClient = ctx.request_context.lifespan_state["xml_http"]
+            client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
             url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/data.xml"
             resp = await client.get(url)
             resp.raise_for_status()

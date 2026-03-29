@@ -85,7 +85,7 @@ def _parse_citation_from_match(
 
     if ctype == CitationType.LAW_REPORT:
         year = int(match.group(1))
-        volume = int(match.group(2))
+        volume = int(match.group(2)) if match.group(2) else None
         series = re.sub(r"\s+", " ", match.group(3).strip())
         page = int(match.group(4))
         return ParsedCitation(raw=raw, type=ctype, year=year, report_series=series, volume=volume, page=page, confidence=0.9)
@@ -246,7 +246,7 @@ def register_tools(mcp: FastMCP) -> None:
                 eu_refs, law_report_refs, total_citations.
         """
         try:
-            client: httpx.AsyncClient = ctx.request_context.lifespan_state["http"]
+            client: httpx.AsyncClient = ctx.lifespan_context["http"]
             uri = params.case_uri.lstrip("/")
             resp = await client.get(f"{TNA_BASE}/{uri}/data.xml")
             resp.raise_for_status()

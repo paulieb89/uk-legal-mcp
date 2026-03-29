@@ -7,13 +7,11 @@ This is the primary differentiator of uk-legal-mcp.
 
 from fastmcp import FastMCP
 
-from ...deps import http_lifespan
 from .tools import register_tools
 from .resources import register_resources
 
 citations_mcp = FastMCP(
     name="citations",
-    lifespan=http_lifespan,
     instructions=(
         "Parse and resolve OSCOLA legal citations from free text. "
         "Use citations_parse to extract all citations from a judgment, memo, or article. "

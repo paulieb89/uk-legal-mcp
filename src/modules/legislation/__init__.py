@@ -3,14 +3,12 @@
 from fastmcp import FastMCP
 from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
 
-from ...deps import http_lifespan
 from .tools import register_tools
 from .resources import register_resources
 from .prompts import register_prompts
 
 legislation_mcp = FastMCP(
     name="legislation",
-    lifespan=http_lifespan,
     instructions=(
         "Search and retrieve UK legislation (Acts, SIs, etc). "
         "Use legislation_search to find Acts by topic. "

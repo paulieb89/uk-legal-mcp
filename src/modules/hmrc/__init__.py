@@ -3,12 +3,10 @@
 from fastmcp import FastMCP
 from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
 
-from ...deps import http_lifespan
 from .tools import register_tools
 
 hmrc_mcp = FastMCP(
     name="hmrc",
-    lifespan=http_lifespan,
     instructions=(
         "Look up UK tax information via HMRC APIs and GOV.UK. "
         "Use hmrc_get_vat_rate to find the VAT rate for any commodity or service type. "
