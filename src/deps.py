@@ -68,7 +68,7 @@ def format_http_error(e: Exception) -> str:
         if status == 404:
             return "Error 404: Resource not found — check the URI or identifier is correct."
         if status == 403:
-            return "Error 403: Access denied — some TNA endpoints require a Computational Analysis licence."
+            return f"Error 403: Access denied by upstream API. URL: {e.request.url}"
         if status == 429:
             return "Error 429: Rate limit hit — upstream API is throttling. Try again shortly."
         if status == 503:

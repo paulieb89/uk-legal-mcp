@@ -1,11 +1,14 @@
 """
 Tools for the parliament module.
 
-Upstream: UK Parliament Members API + Hansard API
-Wire format: JSON
+Upstream APIs (all public, no auth required):
+  - hansard-api.parliament.uk  — debate contributions (search.json)
+  - questions-statements-api.parliament.uk — written questions & answers
+  - members-api.parliament.uk — MPs and Lords lookup
 """
 
 import json
+import re
 from datetime import date
 
 import httpx
@@ -15,14 +18,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from ...deps import format_http_error
 from .models import HansardContribution, MemberResult, PolicyVibeResult
 
-HANSARD_BASE = "https://hansard.parliament.uk"
+HANSARD_API = "https://hansard-api.parliament.uk"
+QS_BASE = "https://questions-statements-api.parliament.uk/api"
 MEMBERS_BASE = "https://members-api.parliament.uk/api"
 
 
 class HansardSearchInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    query: str = Field(..., description="Topic or keyword to search in Hansard, e.g. 'artificial intelligence regulation'", min_length=1, max_length=500)
+    query: str = Field(..., description="Topic or keyword to search in Hansard debates, e.g. 'short selling'", min_length=1, max_length=500)
     from_date: date | None = Field(None, description="Start date (YYYY-MM-DD)")
     to_date: date | None = Field(None, description="End date (YYYY-MM-DD)")
     member: str | None = Field(None, description="Filter by member name")
@@ -48,19 +52,35 @@ class MemberDebatesInput(BaseModel):
     topic: str | None = Field(None, description="Optional topic filter")
 
 
+def _strip_html(text: str) -> str:
+    """Remove HTML tags and collapse whitespace."""
+    clean = re.sub(r"<[^>]+>", "", text)
+    return re.sub(r"\s+", " ", clean).strip()
+
+
 def _parse_hansard_contributions(data: dict) -> list[HansardContribution]:
+    """Parse hansard-api.parliament.uk search.json response."""
     contributions = []
-    for item in data.get("Results", data.get("results", [])):
+    for item in data.get("Contributions", []):
         try:
+            # Extract attribution like "Lord Carlile of Berriew (CB)"
+            attr = item.get("AttributedTo", "")
+            name = item.get("MemberName", "Unknown")
+            party = None
+            if "(" in attr and ")" in attr:
+                party = attr[attr.rfind("(") + 1:attr.rfind(")")]
+
+            text = _strip_html(item.get("ContributionText", ""))
+
             contributions.append(HansardContribution(
-                member_name=item.get("MemberName", item.get("memberName", "Unknown")),
-                party=item.get("Party", item.get("party")),
-                constituency=item.get("Constituency", item.get("constituency")),
-                date=date.fromisoformat(item.get("SittingDate", item.get("date", "1970-01-01"))[:10]),
-                debate_title=item.get("DebateSection", item.get("debateTitle", "Unknown debate")),
-                section=item.get("Section", item.get("section", "Unknown")),
-                text=item.get("Value", item.get("text", ""))[:3000],
-                url=item.get("Url", item.get("url", "")),
+                member_name=name,
+                party=party,
+                constituency=None,
+                date=date.fromisoformat(item.get("SittingDate", "1970-01-01")[:10]),
+                debate_title=item.get("DebateSectionName", item.get("Section", "Unknown")),
+                section=item.get("HansardSection", item.get("House", "Unknown")),
+                text=text[:3000],
+                url=item.get("Url", ""),
             ))
         except Exception:
             continue
@@ -77,22 +97,26 @@ def register_tools(mcp: FastMCP) -> None:
         """Search Hansard for parliamentary debates, questions, and speeches.
 
         Returns contributions from MPs and Lords including date, party, debate title,
-        and full text. Useful for understanding legislative intent or political context.
+        and text. Useful for understanding legislative intent or political context.
 
         Args:
             params (HansardSearchInput): query, optional date range, optional member filter.
 
         Returns:
-            str: JSON array of contributions (member_name, party, constituency,
-                date, debate_title, section, text, url).
+            str: JSON array of contributions (member_name, party, date,
+                debate_title, section, text, url).
         """
         try:
             client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            qp: dict = {"queryParameters.searchTerm": params.query, "queryParameters.take": 20}
-            if params.from_date: qp["queryParameters.startDate"] = params.from_date.isoformat()
-            if params.to_date: qp["queryParameters.endDate"] = params.to_date.isoformat()
-            if params.member: qp["queryParameters.memberId"] = params.member
-            resp = await client.get(f"{HANSARD_BASE}/search/contributions.json", params=qp)
+            qp: dict = {"searchTerm": f'"{params.query}"', "take": 20}
+            if params.from_date:
+                qp["startDate"] = params.from_date.isoformat()
+            if params.to_date:
+                qp["endDate"] = params.to_date.isoformat()
+            if params.member:
+                qp["member"] = params.member
+
+            resp = await client.get(f"{HANSARD_API}/search.json", params=qp)
             resp.raise_for_status()
             contributions = _parse_hansard_contributions(resp.json())
             return json.dumps([c.model_dump(mode="json") for c in contributions], indent=2)
@@ -106,9 +130,8 @@ def register_tools(mcp: FastMCP) -> None:
     async def parliament_vibe_check(params: PolicyVibeInput, ctx: Context) -> str:
         """Assess the likely parliamentary reception of a policy proposal.
 
-        Searches Hansard for relevant debates, then uses LLM sampling to classify
-        sentiment and extract supporters, opponents, and key concerns.
-        Returns raw contributions alongside the AI-generated summary for verification.
+        Searches Hansard for relevant debate contributions, then uses LLM sampling
+        to classify sentiment and extract supporters, opponents, and key concerns.
 
         Degrades gracefully if sampling is unavailable — returns contributions only.
 
@@ -122,8 +145,8 @@ def register_tools(mcp: FastMCP) -> None:
         try:
             client: httpx.AsyncClient = ctx.lifespan_context["http"]
             resp = await client.get(
-                f"{HANSARD_BASE}/search/contributions.json",
-                params={"queryParameters.searchTerm": params.topic, "queryParameters.take": 15},
+                f"{HANSARD_API}/search.json",
+                params={"searchTerm": f'"{params.topic}"', "take": 15},
             )
             resp.raise_for_status()
             contributions = _parse_hansard_contributions(resp.json())
@@ -143,7 +166,7 @@ def register_tools(mcp: FastMCP) -> None:
                 f"Policy proposal: {params.policy_text}\n\n"
                 f"Relevant Hansard contributions:\n{contributions_text}\n\n"
                 f"Respond ONLY with a JSON object (no markdown fences):\n"
-                '"sentiment_summary": "...", "key_supporters": [...], '
+                '{"sentiment_summary": "...", "key_supporters": [...], '
                 '"key_opponents": [...], "key_concerns": [...]}'
             )
 
@@ -154,7 +177,7 @@ def register_tools(mcp: FastMCP) -> None:
 
             try:
                 result = await ctx.sample(sample_prompt, result_type=str)
-                raw = result.text.strip().lstrip("```json").lstrip("```").rstrip("```")
+                raw = (result.text or "").strip().lstrip("```json").lstrip("```").rstrip("```")
                 parsed = json.loads(raw)
                 sentiment_summary = parsed.get("sentiment_summary")
                 key_supporters = parsed.get("key_supporters", [])
@@ -213,7 +236,7 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Get Member Debates", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def parliament_member_debates(params: MemberDebatesInput, ctx: Context) -> str:
-        """Retrieve Hansard contributions by a specific member ID, optionally filtered by topic.
+        """Retrieve Hansard contributions by a specific member, optionally filtered by topic.
 
         Use parliament_find_member first to obtain the integer member ID.
 
@@ -225,9 +248,10 @@ def register_tools(mcp: FastMCP) -> None:
         """
         try:
             client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            qp: dict = {"queryParameters.memberId": params.member_id, "queryParameters.take": 20}
-            if params.topic: qp["queryParameters.searchTerm"] = params.topic
-            resp = await client.get(f"{HANSARD_BASE}/search/contributions.json", params=qp)
+            qp: dict = {"member": params.member_id, "take": 20}
+            if params.topic:
+                qp["searchTerm"] = f'"{params.topic}"'
+            resp = await client.get(f"{HANSARD_API}/search.json", params=qp)
             resp.raise_for_status()
             contributions = _parse_hansard_contributions(resp.json())
             return json.dumps([c.model_dump(mode="json") for c in contributions], indent=2)
