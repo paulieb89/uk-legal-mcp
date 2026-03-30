@@ -36,7 +36,7 @@ class PolicyVibeInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     policy_text: str = Field(..., description="Description of the policy proposal to assess", min_length=10, max_length=2000)
-    topic: str = Field(..., description="Short topic keyword for Hansard search, e.g. 'AI safety'", min_length=2, max_length=200)
+    topic: str = Field(..., description="Search terms for Hansard — use the full topic phrase, e.g. 'artificial intelligence financial services regulation'", min_length=2, max_length=200)
 
 
 class FindMemberInput(BaseModel):
@@ -146,7 +146,7 @@ def register_tools(mcp: FastMCP) -> None:
             client: httpx.AsyncClient = ctx.lifespan_context["http"]
             resp = await client.get(
                 f"{HANSARD_API}/search.json",
-                params={"searchTerm": f'"{params.topic}"', "take": 15},
+                params={"searchTerm": params.topic, "take": 15},
             )
             resp.raise_for_status()
             contributions = _parse_hansard_contributions(resp.json())
