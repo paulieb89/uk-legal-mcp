@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ...deps import format_http_error
 from .models import HMRCGuidanceResult, MTDStatus, VATRate
 
-HMRC_API_BASE = "https://api.service.hmrc.gov.uk"
+HMRC_API_BASE = os.getenv("HMRC_API_BASE", "https://test-api.service.hmrc.gov.uk")
 GOVUK_SEARCH_BASE = "https://www.gov.uk/api/search.json"
 
 # ---------------------------------------------------------------------------
