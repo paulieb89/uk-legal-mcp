@@ -90,7 +90,7 @@ class HMRCVATRateInput(BaseModel):
 class HMRCMTDStatusInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    vrn: str = Field(..., description="VAT Registration Number: 9 digits, e.g. '123456789' (no GB prefix needed)", min_length=9, max_length=12)
+    vrn: str = Field(..., description="VAT Registration Number: 9 digits, e.g. '123456789'. GB prefix accepted and stripped automatically.", min_length=9, max_length=12)
 
 
 class HMRCGuidanceSearchInput(BaseModel):
@@ -110,7 +110,8 @@ def register_tools(mcp: FastMCP) -> None:
 
         Returns the rate category (standard 20%, reduced 5%, zero 0%, exempt),
         effective date, and any relevant conditions or exceptions.
-        Uses a curated lookup table. Always verify complex cases against GOV.UK guidance.
+        Uses a static lookup table current as of 22 Nov 2023 (Autumn Statement).
+        Rates may have changed — always verify against GOV.UK for recent Budgets.
 
         Args:
             params (HMRCVATRateInput): commodity_code — description of goods or service.
@@ -130,6 +131,8 @@ def register_tools(mcp: FastMCP) -> None:
     async def hmrc_check_mtd_status(params: HMRCMTDStatusInput, ctx: Context) -> str:
         """Check a business's Making Tax Digital VAT mandate status via the HMRC API.
 
+        NOTE: Connects to the HMRC sandbox by default. Set HMRC_API_BASE env var to
+        'https://api.service.hmrc.gov.uk' for production.
         Requires HMRC_CLIENT_ID and HMRC_CLIENT_SECRET environment variables (OAuth 2.0).
         Returns whether the business is mandated for MTD, effective date, and trading name.
 

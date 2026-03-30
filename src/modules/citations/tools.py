@@ -31,7 +31,12 @@ class CitationsParseInput(BaseModel):
 
     text: str = Field(
         ...,
-        description="Free text containing OSCOLA citations to extract (judgment, memo, article). Max 50,000 chars.",
+        description=(
+            "Free text containing OSCOLA citations to extract. Supported: "
+            "neutral citations ([2024] UKSC 12), law reports ([2024] 1 WLR 100), "
+            "legislation sections (s.47 Companies Act 2006), SIs (SI 2018/1234), "
+            "retained EU law (Regulation (EU) 2016/679). Max 50,000 chars."
+        ),
         min_length=1,
         max_length=50_000,
     )
@@ -57,7 +62,11 @@ class CitationsNetworkInput(BaseModel):
 
     case_uri: str = Field(
         ...,
-        description="TNA judgment URI slug e.g. 'uksc/2024/12'. Obtain from case_law_search or citations_resolve.",
+        description=(
+            "TNA judgment URI slug, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450'. "
+            "Use the 'uri' field from case_law_search results — not the full URL. "
+            "Do not include the 'https://caselaw.nationalarchives.gov.uk/' prefix."
+        ),
         min_length=5,
     )
 

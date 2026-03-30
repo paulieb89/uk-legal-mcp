@@ -24,7 +24,14 @@ class CaseLawSearchInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     query: str = Field(..., description="Full-text search query, e.g. 'negligence duty of care'", min_length=1, max_length=500)
-    court: str | None = Field(None, description="Filter by court code: 'uksc', 'ewca/civ', 'ewhc/kb', 'ewhc/ch', 'eat', etc.")
+    court: str | None = Field(None, description=(
+        "Filter by court slug. Values: 'uksc', 'ukpc', "
+        "'ewca/civ', 'ewca/crim', 'ewhc/kb', 'ewhc/ch', 'ewhc/comm', "
+        "'ewhc/fam', 'ewhc/pat', 'ewhc/ipec', 'ewhc/admin', 'ewhc/tcc', "
+        "'ewhc/costs', 'ewfc', 'ewcop', 'eat', "
+        "'ukut/iac', 'ukut/aac', 'ukut/tcc', 'ukut/lc', "
+        "'ukftt/tc', 'ukftt/grc', 'nica', 'niqb'."
+    ))
     judge: str | None = Field(None, description="Filter by judge surname")
     party: str | None = Field(None, description="Filter by party name")
     from_date: date | None = Field(None, description="Earliest judgment date (YYYY-MM-DD)")
@@ -37,8 +44,11 @@ class CaseLawGetJudgmentInput(BaseModel):
 
     uri: str = Field(
         ...,
-        description="TNA judgment URI slug e.g. 'uksc/2024/12' or UUID for post-April 2025 docs. Obtain from case_law_search.",
-        min_length=3,
+        description=(
+            "TNA judgment URI slug, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450'. "
+            "Always use the 'uri' field returned by case_law_search — do not construct manually."
+        ),
+        min_length=8,
     )
 
 

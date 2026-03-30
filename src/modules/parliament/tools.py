@@ -26,7 +26,11 @@ MEMBERS_BASE = "https://members-api.parliament.uk/api"
 class HansardSearchInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    query: str = Field(..., description="Topic or keyword to search in Hansard debates, e.g. 'short selling'", min_length=1, max_length=500)
+    query: str = Field(..., description=(
+        "Full phrase to search in Hansard debates. Pass the complete topic, "
+        "e.g. 'short selling regulation' or 'artificial intelligence liability'. "
+        "Searched as an exact phrase — do not truncate to a single keyword."
+    ), min_length=1, max_length=500)
     from_date: date | None = Field(None, description="Start date (YYYY-MM-DD)")
     to_date: date | None = Field(None, description="End date (YYYY-MM-DD)")
     member: str | None = Field(None, description="Filter by member name")
@@ -36,7 +40,11 @@ class PolicyVibeInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     policy_text: str = Field(..., description="Description of the policy proposal to assess", min_length=10, max_length=2000)
-    topic: str = Field(..., description="Search terms for Hansard — use the full topic phrase, e.g. 'artificial intelligence financial services regulation'", min_length=2, max_length=200)
+    topic: str = Field(..., description=(
+        "Search terms for Hansard (keyword search, not phrase-matched). "
+        "Use 2-5 key terms, e.g. 'artificial intelligence financial services regulation'. "
+        "Broader terms return more contributions for sentiment analysis."
+    ), min_length=2, max_length=200)
 
 
 class FindMemberInput(BaseModel):
@@ -49,7 +57,10 @@ class MemberDebatesInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     member_id: int = Field(..., description="Parliament Members API integer ID. Obtain from parliament_find_member.", ge=1)
-    topic: str | None = Field(None, description="Optional topic filter")
+    topic: str | None = Field(None, description=(
+        "Optional phrase to filter this member's contributions by topic, "
+        "e.g. 'housing benefit' or 'net zero'. Searched as an exact phrase."
+    ))
 
 
 def _strip_html(text: str) -> str:

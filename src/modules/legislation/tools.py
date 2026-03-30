@@ -31,16 +31,16 @@ class LegislationSearchInput(BaseModel):
 class LegislationGetSectionInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    type: str = Field(..., description="Legislation type e.g. 'ukpga', 'uksi'", min_length=2, max_length=10)
+    type: str = Field(..., description="Legislation type code: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). Use the value from legislation_search results.", min_length=2, max_length=10)
     year: int = Field(..., description="Year of enactment", ge=1800, le=2100)
     number: int = Field(..., description="Chapter or SI number", ge=1)
-    section: str = Field(..., description="Section identifier: '47', '12A', or 'schedule/1'", min_length=1, max_length=50)
+    section: str = Field(..., description="Section number, e.g. '47' or '12A'. Use the numeric part only — not 'section-47'. Schedules are not currently supported.", min_length=1, max_length=50)
 
 
 class LegislationGetTocInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    type: str = Field(..., description="Legislation type e.g. 'ukpga'", min_length=2, max_length=10)
+    type: str = Field(..., description="Legislation type code: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). Use the value from legislation_search results.", min_length=2, max_length=10)
     year: int = Field(..., description="Year of enactment", ge=1800, le=2100)
     number: int = Field(..., description="Chapter or SI number", ge=1)
 
@@ -174,8 +174,9 @@ def register_tools(mcp: FastMCP) -> None:
     async def legislation_get_toc(params: LegislationGetTocInput, ctx: Context) -> str:
         """Retrieve the table of contents for a UK Act or SI.
 
-        Returns section numbers and titles. Use this before fetching sections to understand
-        an Act's structure and identify the relevant provisions.
+        Returns structural elements (parts, chapters, sections, schedules) with XML id
+        and title, e.g. 'section-47: Definitions'. When calling legislation_get_section,
+        pass only the numeric part — use '47', not 'section-47'.
 
         Args:
             params (LegislationGetTocInput): type, year, number.
