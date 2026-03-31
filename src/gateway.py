@@ -19,15 +19,21 @@ Transport: Streamable HTTP, port 8000
 Region:    lhr (London) — co-located with UK legal data sources
 """
 
+import collections
 import logging
 import os
+import time
+from datetime import datetime, timezone
 
 from fastmcp import FastMCP
+from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.logging import StructuredLoggingMiddleware
 from fastmcp.server.middleware.rate_limiting import RateLimitingMiddleware
 from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
 from fastmcp.server.middleware.timing import DetailedTimingMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from .deps import http_lifespan
 from .modules.bills import bills_mcp
@@ -38,6 +44,62 @@ from .modules.hmrc import hmrc_mcp
 from .modules.legislation import legislation_mcp
 from .modules.parliament import parliament_mcp
 from .modules.votes import votes_mcp
+
+# ---------------------------------------------------------------------------
+# Tool call counter middleware
+# ---------------------------------------------------------------------------
+
+_server_start = datetime.now(timezone.utc)
+
+
+class ToolCounterMiddleware(Middleware):
+    """Per-tool call counter with timing and recent call log. Feeds /stats."""
+
+    MAX_RECENT = 50
+
+    def __init__(self):
+        self.calls: dict[str, int] = {}
+        self.errors: dict[str, int] = {}
+        self.total_ms: dict[str, float] = {}
+        self.total_calls: int = 0
+        self.total_errors: int = 0
+        self.last_call_at: str | None = None
+        self.recent: collections.deque[dict] = collections.deque(maxlen=self.MAX_RECENT)
+
+    async def on_call_tool(self, context: MiddlewareContext, call_next):
+        tool_name = context.message.name
+        self.calls[tool_name] = self.calls.get(tool_name, 0) + 1
+        self.total_calls += 1
+        now = datetime.now(timezone.utc)
+        self.last_call_at = now.isoformat()
+
+        t0 = time.perf_counter()
+        error_msg = None
+        try:
+            result = await call_next(context)
+            return result
+        except Exception as e:
+            self.errors[tool_name] = self.errors.get(tool_name, 0) + 1
+            self.total_errors += 1
+            error_msg = str(e)
+            raise
+        finally:
+            duration_ms = round((time.perf_counter() - t0) * 1000, 1)
+            self.total_ms[tool_name] = self.total_ms.get(tool_name, 0.0) + duration_ms
+            entry = {"tool": tool_name, "at": now.isoformat(), "ms": duration_ms}
+            if error_msg:
+                entry["error"] = error_msg[:200]
+            self.recent.append(entry)
+
+    def avg_ms(self) -> dict[str, float]:
+        return {
+            tool: round(self.total_ms[tool] / self.calls[tool], 1)
+            for tool in self.calls
+            if self.calls[tool] > 0
+        }
+
+
+tool_counter = ToolCounterMiddleware()
 
 # ---------------------------------------------------------------------------
 # Gateway server
@@ -85,6 +147,9 @@ gateway.add_middleware(StructuredLoggingMiddleware(
     estimate_payload_tokens=True,
 ))
 
+# Per-tool call counter — feeds /stats endpoint
+gateway.add_middleware(tool_counter)
+
 # Per-tool timing — logs "Tool 'X' completed in Y ms"
 gateway.add_middleware(DetailedTimingMiddleware())
 
@@ -106,6 +171,38 @@ gateway.mount(votes_mcp,       namespace="votes")
 gateway.mount(committees_mcp,  namespace="committees")
 gateway.mount(citations_mcp,   namespace="citations")
 gateway.mount(hmrc_mcp,        namespace="hmrc")
+
+
+# ---------------------------------------------------------------------------
+# Custom HTTP routes — /health and /stats
+# ---------------------------------------------------------------------------
+
+CORS_HEADERS = {"Access-Control-Allow-Origin": "*"}
+
+
+@gateway.custom_route("/health", methods=["GET"])
+async def health(request: Request) -> JSONResponse:
+    return JSONResponse({
+        "status": "ok",
+        "server": "uk-legal-mcp",
+        "tools": 24,
+        "modules": 8,
+        "uptime_seconds": int((datetime.now(timezone.utc) - _server_start).total_seconds()),
+    }, headers=CORS_HEADERS)
+
+
+@gateway.custom_route("/stats", methods=["GET"])
+async def stats(request: Request) -> JSONResponse:
+    return JSONResponse({
+        "uptime_seconds": int((datetime.now(timezone.utc) - _server_start).total_seconds()),
+        "total_calls": tool_counter.total_calls,
+        "total_errors": tool_counter.total_errors,
+        "last_call_at": tool_counter.last_call_at,
+        "calls_by_tool": dict(sorted(tool_counter.calls.items(), key=lambda x: x[1], reverse=True)),
+        "avg_ms_by_tool": tool_counter.avg_ms(),
+        "errors_by_tool": tool_counter.errors if tool_counter.errors else None,
+        "recent_calls": list(tool_counter.recent),
+    }, headers=CORS_HEADERS)
 
 
 # ---------------------------------------------------------------------------
