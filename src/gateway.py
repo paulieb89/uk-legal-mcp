@@ -33,7 +33,7 @@ from fastmcp.server.middleware.rate_limiting import RateLimitingMiddleware
 from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
 from fastmcp.server.middleware.timing import DetailedTimingMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from .deps import http_lifespan
 from .modules.bills import bills_mcp
@@ -185,9 +185,9 @@ CORS_HEADERS = {
 
 
 @gateway.custom_route("/health", methods=["GET", "OPTIONS"])
-async def health(request: Request) -> JSONResponse:
+async def health(request: Request) -> Response:
     if request.method == "OPTIONS":
-        return JSONResponse(None, status_code=204, headers=CORS_HEADERS)
+        return Response(status_code=204, headers=CORS_HEADERS)
     return JSONResponse({
         "status": "ok",
         "server": "uk-legal-mcp",
@@ -197,9 +197,9 @@ async def health(request: Request) -> JSONResponse:
 
 
 @gateway.custom_route("/stats", methods=["GET", "OPTIONS"])
-async def stats(request: Request) -> JSONResponse:
+async def stats(request: Request) -> Response:
     if request.method == "OPTIONS":
-        return JSONResponse(None, status_code=204, headers=CORS_HEADERS)
+        return Response(status_code=204, headers=CORS_HEADERS)
     return JSONResponse({
         "uptime_seconds": int((datetime.now(timezone.utc) - _server_start).total_seconds()),
         "total_calls": tool_counter.total_calls,
