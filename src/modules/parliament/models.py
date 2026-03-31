@@ -43,3 +43,39 @@ class MemberResult(BaseModel):
     constituency: str | None = Field(None, description="Constituency (Commons); None for Lords")
     house: Literal["Commons", "Lords"] = Field(..., description="House of Parliament")
     is_current: bool = Field(..., description="Whether the member currently sits")
+
+
+class Interest(BaseModel):
+    """A single registered financial interest."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    category: str = Field(..., description="Interest category (e.g. 'Directorships', 'Donations')")
+    description: str = Field(..., description="Description of the interest")
+    date_created: Date | None = Field(None, description="Date the interest was registered")
+    date_amended: Date | None = Field(None, description="Date the interest was last amended")
+
+
+class MemberInterests(BaseModel):
+    """A member's registered financial interests."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    member_id: int = Field(..., description="Parliament Members API member ID")
+    interests: list[Interest] = Field(default_factory=list, description="Registered interests")
+    total: int = Field(0, description="Total number of interests returned")
+
+
+class PetitionSummary(BaseModel):
+    """A UK Parliament petition."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    id: int = Field(..., description="Petition ID")
+    action: str = Field(..., description="Petition title / call to action")
+    state: str = Field(..., description="Petition state (open, closed, etc.)")
+    signature_count: int = Field(..., description="Number of signatures")
+    created_at: Date | None = Field(None, description="Date the petition was created")
+    government_response_at: Date | None = Field(None, description="Date of government response, if any")
+    debate_date: Date | None = Field(None, description="Date the petition was debated, if any")
+    url: str = Field(..., description="Petition URL on petition.parliament.uk")

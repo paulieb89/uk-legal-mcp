@@ -66,17 +66,58 @@
 - **Endpoints used:**
   - `GET /api/search.json?q=...&filter_organisations=hm-revenue-customs` — HMRC guidance search
 
-## APIs not yet integrated
+### Bills API
+- **Base:** `https://bills-api.parliament.uk/api/v1`
+- **Format:** JSON
+- **Auth:** None
+- **Licence:** Open Parliament Licence
+- **Endpoints used:**
+  - `GET /Bills?SearchTerm=...` — search bills by keyword, session, house, stage
+  - `GET /Bills/{id}` — bill detail (sponsors, stages, Royal Assent date)
 
-These are public UK Parliament APIs that could extend the parliament module:
+### Commons Votes API
+- **Base:** `https://commonsvotes-api.parliament.uk`
+- **Format:** JSON
+- **Auth:** None
+- **Licence:** Open Parliament Licence
+- **Endpoints used:**
+  - `GET /data/divisions.json/search` — search Commons divisions (25/page hard cap)
+  - `GET /data/division/{id}.json` — division detail with voter lists
 
-| API | Base URL | What it provides |
-|-----|----------|-----------------|
-| Bills | `bills-api.parliament.uk` | Bill search, stages, sponsors, amendments, progress tracking |
-| Commons Votes | `commonsvotes-api.parliament.uk` | Division records, how each MP voted, rebel flags |
-| Lords Votes | `lordsvotes-api.parliament.uk` | Lords division records |
-| Financial Interests | `interests-api.parliament.uk` | Register of Members' Financial Interests |
-| Petitions | `petition.parliament.uk` | Petitions, signature counts, government responses |
-| Committees | `committees-api.parliament.uk` | Select committees, evidence, publications |
+### Lords Votes API
+- **Base:** `https://lordsvotes-api.parliament.uk`
+- **Format:** JSON
+- **Auth:** None
+- **Licence:** Open Parliament Licence
+- **Endpoints used:**
+  - `GET /data/Divisions/search` — search Lords divisions
+  - `GET /data/Divisions/{id}` — division detail with voter lists, includes `isGovernmentWin`
 
-All are public, JSON format, no authentication required. See the [i.AI Parliament MCP](https://github.com/i-dot-ai/parliament-mcp) for reference implementations using these APIs.
+### Financial Interests API
+- **Base:** `https://interests-api.parliament.uk/api/v1`
+- **Format:** JSON
+- **Auth:** None
+- **Rate limit:** Unknown (20/page hard cap, paginated internally)
+- **Licence:** Open Parliament Licence
+- **Endpoints used:**
+  - `GET /Interests?MemberId=...` — registered financial interests for a member
+
+### Petitions API
+- **Base:** `https://petition.parliament.uk`
+- **Format:** JSON
+- **Auth:** None
+- **Licence:** Open Parliament Licence
+- **Endpoints used:**
+  - `GET /petitions.json?q=...` — search petitions by keyword and state
+
+### Committees API
+- **Base:** `https://committees-api.parliament.uk/api`
+- **Format:** JSON
+- **Auth:** None
+- **Licence:** Open Parliament Licence
+- **Endpoints used:**
+  - `GET /Committees` — list/search select committees
+  - `GET /Committees/{id}` — committee detail
+  - `GET /Committees/{id}/Members` — committee membership
+  - `GET /OralEvidence?CommitteeId=...` — oral evidence sessions
+  - `GET /WrittenEvidence?CommitteeId=...` — written evidence submissions

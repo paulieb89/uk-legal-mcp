@@ -10,17 +10,35 @@ Upstream APIs (all public, no auth required):
 import json
 import re
 from datetime import date
+from typing import Literal
 
 import httpx
 from fastmcp import FastMCP, Context
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import format_http_error
-from .models import HansardContribution, MemberResult, PolicyVibeResult
+from .models import HansardContribution, Interest, MemberInterests, MemberResult, PetitionSummary, PolicyVibeResult
 
 HANSARD_API = "https://hansard-api.parliament.uk"
 QS_BASE = "https://questions-statements-api.parliament.uk/api"
 MEMBERS_BASE = "https://members-api.parliament.uk/api"
+PETITIONS_BASE = "https://petition.parliament.uk"
+INTERESTS_BASE = "https://interests-api.parliament.uk/api/v1"
+
+INTEREST_CATEGORIES: dict[str, int] = {
+    "employment": 1,
+    "donations": 2,
+    "gifts": 3,
+    "overseas_visits": 4,
+    "land": 6,
+    "shareholdings": 7,
+    "miscellaneous": 8,
+    "family": 9,
+    "lobbying": 10,
+}
+
+MAX_INTEREST_PAGES = 5
+INTERESTS_PAGE_SIZE = 20
 
 
 class HansardSearchInput(BaseModel):
@@ -61,6 +79,27 @@ class MemberDebatesInput(BaseModel):
         "Optional phrase to filter this member's contributions by topic, "
         "e.g. 'housing benefit' or 'net zero'. Searched as an exact phrase."
     ))
+
+
+class PetitionSearchInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    query: str = Field(..., description=(
+        "Search term for petition titles, e.g. 'ban trophy hunting' or 'NHS funding'."
+    ), min_length=2, max_length=300)
+    state: Literal["open", "closed", "all"] = Field("all", description="Filter by petition state.")
+
+
+class MemberInterestsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    member_id: int = Field(..., description=(
+        "Parliament Members API integer ID. Get from parliament_find_member."
+    ), ge=1)
+    category: Literal[
+        "employment", "donations", "gifts", "overseas_visits",
+        "land", "shareholdings", "miscellaneous", "family", "lobbying",
+    ] | None = Field(None, description="Filter by interest category. Omit for all categories.")
 
 
 def _strip_html(text: str) -> str:
@@ -266,5 +305,108 @@ def register_tools(mcp: FastMCP) -> None:
             resp.raise_for_status()
             contributions = _parse_hansard_contributions(resp.json())
             return json.dumps([c.model_dump(mode="json") for c in contributions], indent=2)
+        except Exception as e:
+            return json.dumps({"error": format_http_error(e)})
+
+    @mcp.tool(
+        name="member_interests",
+        annotations={"title": "Get Member Financial Interests", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    )
+    async def parliament_member_interests(params: MemberInterestsInput, ctx: Context) -> str:
+        """Look up registered financial interests for a member of Parliament.
+
+        Use parliament_find_member first to obtain the integer member ID.
+        Returns interests across categories like employment, donations, land,
+        shareholdings, and overseas visits.
+
+        Args:
+            params (MemberInterestsInput): member_id, optional category filter.
+
+        Returns:
+            str: JSON MemberInterests with list of Interest objects.
+        """
+        try:
+            client: httpx.AsyncClient = ctx.lifespan_context["http"]
+            qp: dict = {"MemberId": params.member_id, "Take": INTERESTS_PAGE_SIZE, "Skip": 0}
+            if params.category:
+                qp["CategoryId"] = INTEREST_CATEGORIES.get(params.category)
+
+            all_interests: list[Interest] = []
+            for page in range(MAX_INTEREST_PAGES):
+                qp["Skip"] = page * INTERESTS_PAGE_SIZE
+                resp = await client.get(f"{INTERESTS_BASE}/Interests", params=qp)
+                resp.raise_for_status()
+                data = resp.json()
+
+                items = data.get("items", data.get("results", []))
+                for item in items:
+                    created = item.get("registrationDate") or item.get("publishedDate")
+                    category_obj = item.get("category", {})
+                    category_name = category_obj.get("name", "Unknown") if isinstance(category_obj, dict) else str(category_obj)
+                    all_interests.append(Interest(
+                        category=category_name,
+                        description=item.get("summary", item.get("interest", "")),
+                        date_created=date.fromisoformat(created[:10]) if created else None,
+                        date_amended=None,
+                    ))
+
+                if len(items) < INTERESTS_PAGE_SIZE:
+                    break
+
+            result = MemberInterests(
+                member_id=params.member_id,
+                interests=all_interests,
+                total=len(all_interests),
+            )
+            return result.model_dump_json(indent=2)
+        except Exception as e:
+            return json.dumps({"error": format_http_error(e)})
+
+    @mcp.tool(
+        name="search_petitions",
+        annotations={"title": "Search UK Parliament Petitions", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    )
+    async def parliament_search_petitions(params: PetitionSearchInput, ctx: Context) -> str:
+        """Search UK Parliament petitions by keyword.
+
+        Returns petition title, state, signature count, and dates for government response
+        or parliamentary debate if applicable.
+
+        Args:
+            params (PetitionSearchInput): query and optional state filter.
+
+        Returns:
+            str: JSON array of PetitionSummary objects.
+        """
+        try:
+            client: httpx.AsyncClient = ctx.lifespan_context["http"]
+            qp: dict = {"q": params.query, "count": 20}
+            if params.state != "all":
+                qp["state"] = params.state
+
+            resp = await client.get(f"{PETITIONS_BASE}/petitions.json", params=qp)
+            resp.raise_for_status()
+            data = resp.json()
+
+            petitions = []
+            for item in data.get("data", []):
+                attrs = item.get("attributes", item)
+                petition_id = item.get("id", 0)
+
+                created = attrs.get("created_at")
+                gov_resp = attrs.get("government_response_at")
+                debate = attrs.get("debate_date") or attrs.get("scheduled_debate_date")
+
+                petitions.append(PetitionSummary(
+                    id=int(petition_id) if petition_id else 0,
+                    action=attrs.get("action", "Unknown"),
+                    state=attrs.get("state", "unknown"),
+                    signature_count=attrs.get("signature_count", 0),
+                    created_at=date.fromisoformat(created[:10]) if created else None,
+                    government_response_at=date.fromisoformat(gov_resp[:10]) if gov_resp else None,
+                    debate_date=date.fromisoformat(debate[:10]) if debate else None,
+                    url=f"https://petition.parliament.uk/petitions/{petition_id}",
+                ))
+            return json.dumps([p.model_dump(mode="json") for p in petitions], indent=2)
         except Exception as e:
             return json.dumps({"error": format_http_error(e)})

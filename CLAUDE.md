@@ -2,7 +2,7 @@
 
 ## What this is
 
-UK legal research MCP server. 15 tools across 5 modules (case_law, legislation, parliament, citations, hmrc) mounted into a single FastMCP v3 gateway. Deployed to Fly.io (London region). Streamable HTTP transport.
+UK legal research MCP server. 24 tools across 8 modules (case_law, legislation, parliament, bills, votes, committees, citations, hmrc) mounted into a single FastMCP v3 gateway. Deployed to Fly.io (London region). Streamable HTTP transport.
 
 Live endpoint: `https://uk-legal-mcp.fly.dev/mcp`
 Repo: `https://gitlab.com/articat1066/uk-legal-mcp`
@@ -51,6 +51,12 @@ fly secrets set HMRC_CLIENT_ID=xxx HMRC_CLIENT_SECRET=xxx --app uk-legal-mcp
 | legislation | `legislation.gov.uk` + `lex.lab.i.ai.gov.uk` | CLML XML + JSON. |
 | parliament | `hansard-api.parliament.uk` | **NOT** `hansard.parliament.uk` (Cloudflare blocked). |
 | parliament | `members-api.parliament.uk` | JSON. Public, no auth. |
+| parliament | `petition.parliament.uk` | JSON. Public, no auth. |
+| parliament | `interests-api.parliament.uk` | JSON. Public. 20/page hard cap. |
+| bills | `bills-api.parliament.uk` | JSON. Public, no auth. Session IDs change yearly. |
+| votes | `commonsvotes-api.parliament.uk` | JSON. Public. 25/page hard cap. |
+| votes | `lordsvotes-api.parliament.uk` | JSON. Public. Has `isGovernmentWin` field. |
+| committees | `committees-api.parliament.uk` | JSON. Public, no auth. |
 | citations | None | Pure regex. Self-contained. |
 | hmrc | `test-api.service.hmrc.gov.uk` (sandbox default) | OAuth 2.0. Set `HMRC_API_BASE` for production. |
 | hmrc | `www.gov.uk/api/search.json` | Public GOV.UK search. |
@@ -59,13 +65,8 @@ fly secrets set HMRC_CLIENT_ID=xxx HMRC_CLIENT_SECRET=xxx --app uk-legal-mcp
 
 ## Known APIs not yet integrated
 
-These UK Parliament APIs are public and could extend the parliament module:
-
-- `bills-api.parliament.uk` — bill search, stages, sponsors, progress tracking
-- `commonsvotes-api.parliament.uk` — Commons division/vote records with voter lists
-- `lordsvotes-api.parliament.uk` — Lords division/vote records
-- `interests-api.parliament.uk` — Register of Members' Financial Interests
-- `petition.parliament.uk` — petitions and signature counts
+- `committees-api.parliament.uk` — Committee publications and document retrieval (large binary/HTML blobs)
+- `questions-statements-api.parliament.uk` — Written questions and ministerial statements
 
 ## Adding a new tool
 
