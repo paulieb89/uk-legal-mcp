@@ -188,11 +188,9 @@ CORS_HEADERS = {
 async def health(request: Request) -> JSONResponse:
     if request.method == "OPTIONS":
         return JSONResponse(None, status_code=204, headers=CORS_HEADERS)
-    tools = await gateway.get_tools()
     return JSONResponse({
         "status": "ok",
         "server": "uk-legal-mcp",
-        "tools": len(tools),
         "modules": 8,
         "uptime_seconds": int((datetime.now(timezone.utc) - _server_start).total_seconds()),
     }, headers=CORS_HEADERS)
