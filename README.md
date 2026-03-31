@@ -1,207 +1,182 @@
 # uk-legal-mcp
 
-> UK legal research MCP server — case law, legislation, parliament, OSCOLA citations, HMRC tax
+A Model Context Protocol server for UK legal research. Connects AI assistants to case law, legislation, parliamentary debates, OSCOLA citation parsing, and HMRC tax data through a single endpoint.
 
-**Stack:** Python 3.12 · FastMCP v3 · Fly.io · Streamable HTTP  
-**Architecture:** Gateway + 5 mounted sub-modules (in-process, zero network hop)  
-**Status:** Pre-production
-
----
-
-## What it is
-
-A single MCP server exposing 11 UK legal research tools across five domains. One connection, one endpoint, one authentication context. Built for AI-native legal research workflows.
+**15 tools across 5 modules.** One connection. Read-only. No API keys required for 14 of 15 tools.
 
 ```
-MCP Client (Claude, etc.)
-        │
-        ▼
-  uk-legal-mcp gateway  (uk-legal-mcp.fly.dev/mcp)
-  ┌──────────────────────────────────────────────────┐
-  │                                                  │
-  │  case_law      → TNA Find Case Law API           │
-  │  legislation   → legislation.gov.uk + Lex API    │
-  │  parliament    → Hansard + Members API           │
-  │  citations  ★  → OSCOLA parser (self-contained)  │
-  │  hmrc          → HMRC APIs + GOV.UK search       │
-  │                                                  │
-  └──────────────────────────────────────────────────┘
+MCP Client (Claude, Cursor, etc.)
+        |
+        v
+  uk-legal-mcp gateway  (Streamable HTTP)
+  +----------------------------------------------------+
+  |                                                    |
+  |  case_law      TNA Find Case Law API               |
+  |  legislation   legislation.gov.uk + i.AI Lex API   |
+  |  parliament    Hansard API + Members API            |
+  |  citations     OSCOLA regex parser (no network)     |
+  |  hmrc          HMRC sandbox/prod + GOV.UK search    |
+  |                                                    |
+  +----------------------------------------------------+
+```
+
+## Quickstart
+
+### Connect to the hosted server
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "uk-legal": {
+      "type": "streamable-http",
+      "url": "https://uk-legal-mcp.fly.dev/mcp"
+    }
+  }
+}
+```
+
+Then try:
+
+- *"Search for case law about cycling accidents"*
+- *"Get section 172 of the Companies Act 2006"*
+- *"Parse the citations in: The court applied Donoghue v Stevenson [1932] AC 562 and s.2 Occupiers' Liability Act 1957"*
+- *"What is parliament saying about short selling?"*
+
+### Run locally
+
+```bash
+pip install -e .
+python -m src.gateway
+# Server starts on http://localhost:8000/mcp
+```
+
+Inspect with the MCP Inspector:
+
+```bash
+npx @modelcontextprotocol/inspector http://localhost:8000/mcp
 ```
 
 ---
 
-## Tool Reference
+## Tools
 
-### Case Law (`case_law_*`)
+### Case Law
 
-| Tool | Description |
+| Tool | What it does |
 |------|-------------|
-| `case_law_search` | Search UK judgments by keyword, court, judge, party, date range |
-| `case_law_get_judgment` | Retrieve full LegalDocML XML for a judgment by TNA URI |
+| `case_law_search` | Full-text search of UK judgments. Filter by court, judge, party, date range. |
+| `case_law_get_judgment` | Retrieve full LegalDocML XML for a judgment by TNA URI slug. |
 
-**Upstream:** TNA Find Case Law API · **Rate limit:** 1,000 req/5 min · **Cache:** 1hr TTL
+Upstream: [TNA Find Case Law](https://caselaw.nationalarchives.gov.uk/) (Atom/XML). Rate limit: 1,000 req/5 min. Cached 1 hour.
 
----
+### Legislation
 
-### Legislation (`legislation_*`)
-
-| Tool | Description |
+| Tool | What it does |
 |------|-------------|
-| `legislation_search` | Search Acts and SIs via i.AI Lex API (ranked, JSON) |
-| `legislation_get_toc` | Get table of contents for an Act (section numbers + titles) |
-| `legislation_get_section` | Retrieve a specific section with extent, in-force status, version date |
+| `legislation_search` | Search Acts of Parliament and Statutory Instruments via the i.AI Lex API. |
+| `legislation_get_toc` | Table of contents for an Act — parts, chapters, sections, schedules. |
+| `legislation_get_section` | Retrieve a specific section with territorial extent, in-force status, and version date. |
 
-**Always surface `extent`** — a section may apply to England & Wales but not Scotland or NI.
+Upstream: [legislation.gov.uk](https://www.legislation.gov.uk/) (CLML XML) + [i.AI Lex API](https://lex.lab.i.ai.gov.uk) (JSON). Cached 24 hours.
 
-**Upstream:** legislation.gov.uk + i.AI Lex API · **Rate limit:** 3,000 req/5 min · **Cache:** 24hr TTL
+**Note:** Always check the `extent` field. A section may apply to England and Wales but not Scotland or Northern Ireland.
 
----
+### Parliament
 
-### Parliament (`parliament_*`)
-
-| Tool | Description |
+| Tool | What it does |
 |------|-------------|
-| `parliament_search_hansard` | Search Hansard for debates, speeches, questions |
-| `parliament_vibe_check` | Assess parliamentary reception of a policy (uses LLM sampling) |
-| `parliament_find_member` | Look up an MP or Lord by name (returns integer member ID) |
-| `parliament_member_debates` | Retrieve contributions by a specific member |
+| `parliament_search_hansard` | Search Hansard debate contributions by exact phrase. |
+| `parliament_vibe_check` | Assess parliamentary reception of a policy topic. Searches Hansard, then uses LLM sampling to classify sentiment, supporters, opponents, and concerns. |
+| `parliament_find_member` | Look up an MP or Lord by name. Returns member ID for use with `member_debates`. |
+| `parliament_member_debates` | Retrieve a specific member's Hansard contributions, optionally filtered by topic. |
 
-**Upstream:** UK Parliament Members API + Hansard API · **Cache:** not cached (live data)
+Upstream: [hansard-api.parliament.uk](https://hansard-api.parliament.uk) + [members-api.parliament.uk](https://members-api.parliament.uk). Not cached (live data).
 
----
+### Citations
 
-### Citations ★ (`citations_*`)
-
-> **The differentiator.** No equivalent exists in the UK legal MCP ecosystem.
-
-| Tool | Description |
+| Tool | What it does |
 |------|-------------|
-| `citations_parse` | Extract all OSCOLA citations from free text. Resolves to URLs. Disambiguates via sampling. |
-| `citations_resolve` | Parse and resolve a single citation string to its canonical URL |
-| `citations_network` | Map all citations within a judgment (cases cited + legislation referenced) |
+| `citations_parse` | Extract all OSCOLA citations from free text. Resolves to canonical URLs. Disambiguates bare court codes via LLM sampling. |
+| `citations_resolve` | Parse and resolve a single citation string to its canonical URL. |
+| `citations_network` | Fetch a judgment from TNA and map every citation within it — cases, legislation, SIs, EU law. |
 
-**Supported citation types:**
+Self-contained. No external API. Zero network dependency (except `citations_network` which fetches the judgment XML).
 
-| Type | Example |
-|------|---------|
+**Supported citation formats:**
+
+| Format | Example |
+|--------|---------|
 | Neutral citation | `[2024] UKSC 12` |
-| Law report | `[2024] 1 WLR 100` |
+| Law report (with or without volume) | `[2024] 1 WLR 100`, `[1932] AC 562` |
 | Legislation section | `s.47 Companies Act 2006` |
 | Statutory Instrument | `SI 2018/1234` |
 | Retained EU law | `Regulation (EU) 2016/679` |
 
-**No external API.** Fully self-contained — zero network dependency.  
-Ambiguous citations (e.g. bare `[2024] EWHC 123`) are disambiguated via `ctx.sample()`.
+### HMRC
 
----
-
-### HMRC (`hmrc_*`)
-
-| Tool | Description |
+| Tool | What it does |
 |------|-------------|
-| `hmrc_get_vat_rate` | VAT rate for any commodity or service (standard/reduced/zero/exempt) |
-| `hmrc_check_mtd_status` | Check MTD VAT mandate status for a VRN (requires HMRC OAuth) |
-| `hmrc_search_guidance` | Search GOV.UK for HMRC guidance documents |
+| `hmrc_get_vat_rate` | VAT rate lookup for any commodity or service. Static table current as of Autumn Statement 2023. |
+| `hmrc_check_mtd_status` | Check Making Tax Digital VAT mandate status for a VRN. Requires HMRC OAuth credentials. |
+| `hmrc_search_guidance` | Search GOV.UK for HMRC guidance documents. |
 
-**Cache:** VAT rates 90 days, MTD status 24hr
-
----
-
-## FastMCP Features Used
-
-| Feature | Where |
-|---------|-------|
-| `mount()` direct | Gateway — in-process composition |
-| `namespace=` / `prefix=` | Gateway — tools as `case_law_search`, `legislation_get_section` |
-| `RateLimitingMiddleware` | Gateway — 50 req/min per client |
-| `ResponseLimitingMiddleware` | Gateway — 80,000 char cap (LegalDocML can be 200k+) |
-| `ResponseCachingMiddleware` | case_law, legislation, hmrc — per upstream stability |
-| `@mcp.resource` + `{param}` | case_law, legislation, citations — stable URI-addressed docs |
-| `@mcp.prompt` | legislation, parliament — reusable research workflows |
-| `Depends()` | All modules (HTTP client), citations (compiled regex) |
-| `ctx.sample()` | parliament_vibe_check, citations_parse (disambiguation) |
-| `readOnlyHint=True` | All tools — entire server is read-only |
+`hmrc_get_vat_rate` and `hmrc_search_guidance` require no credentials. `hmrc_check_mtd_status` requires `HMRC_CLIENT_ID` and `HMRC_CLIENT_SECRET` — register at [developer.service.hmrc.gov.uk](https://developer.service.hmrc.gov.uk). Defaults to sandbox; set `HMRC_API_BASE=https://api.service.hmrc.gov.uk` for production.
 
 ---
 
-## Repository Structure
+## Architecture
 
 ```
-uk-legal-mcp/
-├── src/
-│   ├── gateway.py              # FastMCP gateway — mounts all modules
-│   ├── deps.py                 # Shared httpx clients + error formatting
-│   └── modules/
-│       ├── case_law/           # TNA Find Case Law
-│       │   ├── __init__.py
-│       │   ├── tools.py
-│       │   ├── resources.py
-│       │   └── models.py
-│       ├── legislation/        # legislation.gov.uk + i.AI Lex API
-│       │   ├── __init__.py
-│       │   ├── tools.py
-│       │   ├── resources.py
-│       │   ├── prompts.py
-│       │   └── models.py
-│       ├── parliament/         # Hansard + Members API
-│       │   ├── __init__.py
-│       │   ├── tools.py
-│       │   ├── prompts.py
-│       │   └── models.py
-│       ├── citations/          # OSCOLA parser ★
-│       │   ├── __init__.py
-│       │   ├── tools.py
-│       │   ├── patterns.py     # Compiled regex engine (lru_cache)
-│       │   └── models.py
-│       └── hmrc/               # VAT, MTD, GOV.UK guidance
-│           ├── __init__.py
-│           ├── tools.py
-│           └── models.py
-├── tests/
-│   └── test_citations.py       # Unit tests — citations module (no API needed)
-├── pyproject.toml
-├── fly.toml
-└── Dockerfile
+src/
+  gateway.py            FastMCP gateway — mounts all modules, applies middleware
+  deps.py               Shared httpx clients (lifespan-managed) + error formatting
+  modules/
+    case_law/           TNA Find Case Law (Atom/XML parsing)
+    legislation/        legislation.gov.uk (CLML XML) + Lex API (JSON)
+    parliament/         Hansard API + Members API (JSON)
+    citations/          OSCOLA regex engine (compiled once, lru_cache)
+    hmrc/               HMRC OAuth + GOV.UK search (JSON)
+tests/
+  test_citations.py     35 unit tests — regex patterns, resolution, disambiguation
 ```
+
+Each module is a standalone `FastMCP` instance mounted into the gateway with a namespace prefix (`case_law_`, `legislation_`, etc.). All modules share a single httpx client pool via the gateway's lifespan context.
+
+**Middleware stack (gateway level):**
+
+| Middleware | Purpose |
+|-----------|---------|
+| `RateLimitingMiddleware` | 50 req/min per client across all modules |
+| `ResponseLimitingMiddleware` | 80,000 char cap (LegalDocML XML can exceed 200k) |
+| `ResponseCachingMiddleware` | Per-module TTLs on case_law (1hr), legislation (24hr), hmrc (90 days) |
 
 ---
 
 ## Deployment
 
-### Prerequisites
+### Fly.io
 
 ```bash
-pip install -e .
 fly auth login
-```
-
-### Environment Variables
-
-```bash
-fly secrets set HMRC_CLIENT_ID=your_client_id
-fly secrets set HMRC_CLIENT_SECRET=your_client_secret
-# Optional: TNA computational analysis licence reference
-fly secrets set COMPUTATIONAL_ANALYSIS=your_tna_licence_ref
-```
-
-### Deploy
-
-```bash
 fly launch --name uk-legal-mcp --region lhr
 fly deploy
 ```
 
-### Local Development
+Optional secrets:
 
 ```bash
-# Install dependencies
-pip install -e .
+fly secrets set HMRC_CLIENT_ID=your_id HMRC_CLIENT_SECRET=your_secret
+# For production HMRC (default is sandbox):
+fly secrets set HMRC_API_BASE=https://api.service.hmrc.gov.uk
+```
 
-# Run locally
-python -m src.gateway
+### Docker
 
-# Test with MCP Inspector
-npx @modelcontextprotocol/inspector http://localhost:8000/mcp
+```bash
+docker build -t uk-legal-mcp .
+docker run -p 8000:8000 uk-legal-mcp
 ```
 
 ---
@@ -209,45 +184,33 @@ npx @modelcontextprotocol/inspector http://localhost:8000/mcp
 ## Testing
 
 ```bash
-# Run citations unit tests (no API or credentials needed)
+pip install -e '.[test]'  # or: pip install pytest
 pytest tests/test_citations.py -v
-
-# Syntax check all modules
-python -m py_compile src/gateway.py
-python -m py_compile src/modules/citations/tools.py
-python -m py_compile src/modules/citations/patterns.py
 ```
 
----
-
-## Open Questions
-
-- [ ] **TNA Computational Analysis Licence** — apply before bulk judgment fetching; required for large-scale programmatic access
-- [ ] **Lex API rate limits** — undocumented; measure empirically during early build. Treat as 60 req/min until confirmed.
-- [ ] **OSCOLA court code enumeration** — compile complete list of UKFTT divisions and UKUT chamber codes for patterns.py
-- [ ] **`citations_network` cross-ref data** — TNA may not expose outbound citation links via API. BAILII scrape may be needed as fallback; evaluate during integration testing.
-- [ ] **`ctx.sample()` in production** — confirm Claude client implements sampling handler. parliament_vibe_check and citations_parse both degrade gracefully if sampling is unavailable.
-- [ ] **Lex API JSON schema** — undocumented; verify response field names against live API before shipping legislation_search.
-- [ ] **HMRC MTD endpoint scope** — current implementation uses `read:vat` scope; verify this covers obligations lookup or if `write:vat` is also needed.
+All 35 citation tests run offline with no API credentials.
 
 ---
 
-## Licences
+## Upstream APIs and Licences
 
-| Source | Licence | Notes |
-|--------|---------|-------|
-| TNA Find Case Law | Open Justice Licence | Computational analysis requires separate application |
-| legislation.gov.uk | Open Government Licence v3 | Attribution required |
-| Hansard | Open Parliament Licence | Attribution required |
-| HMRC APIs | OGL / commercial terms vary | Sandbox vs production environments differ |
+| Source | API | Licence | Auth |
+|--------|-----|---------|------|
+| TNA Find Case Law | `caselaw.nationalarchives.gov.uk` | [Open Justice Licence](https://caselaw.nationalarchives.gov.uk/open-justice-licence) | None |
+| legislation.gov.uk | `legislation.gov.uk` | [OGL v3](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/) | None |
+| i.AI Lex API | `lex.lab.i.ai.gov.uk` | OGL v3 | None |
+| UK Parliament Hansard | `hansard-api.parliament.uk` | [Open Parliament Licence](https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/) | None |
+| UK Parliament Members | `members-api.parliament.uk` | Open Parliament Licence | None |
+| HMRC | `test-api.service.hmrc.gov.uk` | OGL / commercial terms | OAuth 2.0 |
+| GOV.UK Search | `www.gov.uk/api/search.json` | OGL v3 | None |
 
 ---
 
-## Build Order (from spec)
+## Stack
 
-1. **`citations`** — no external API, pure Python, highest differentiating value. Establishes `Depends()` and `ctx.sample()` patterns.
-2. **`case_law`** — TNA API is well-documented. Establishes resource template + XML parsing layer.
-3. **`legislation`** — builds on case_law patterns. Adds Lex API JSON path + `@mcp.prompt`.
-4. **`parliament`** — adds sampling-based sentiment analysis.
-5. **`hmrc`** — simplest module, JSON tools with TTL caching.
-6. **Gateway** — wire up mounts, middleware, integration test.
+- Python 3.12
+- [FastMCP](https://gofastmcp.com) v3 (streamable HTTP transport)
+- [httpx](https://www.python-httpx.org/) (async HTTP with connection pooling)
+- [lxml](https://lxml.de/) (LegalDocML and CLML XML parsing)
+- [Pydantic](https://docs.pydantic.dev/) v2 (input validation, output serialisation)
+- [Fly.io](https://fly.io/) (London region, auto-stop/start)
