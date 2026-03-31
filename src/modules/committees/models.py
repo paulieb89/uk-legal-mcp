@@ -20,7 +20,7 @@ class CommitteeSummary(BaseModel):
     id: int = Field(..., description="Committee ID")
     name: str = Field(..., description="Committee name")
     house: str | None = Field(None, description="Commons, Lords, or Joint")
-    is_active: bool = Field(True, description="Whether the committee is currently active")
+    is_active: bool | None = Field(None, description="Whether the committee is currently active (None if unknown)")
     url: str | None = Field(None, description="Parliament URL for this committee")
 
 

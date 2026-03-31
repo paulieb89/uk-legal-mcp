@@ -177,22 +177,31 @@ gateway.mount(hmrc_mcp,        namespace="hmrc")
 # Custom HTTP routes — /health and /stats
 # ---------------------------------------------------------------------------
 
-CORS_HEADERS = {"Access-Control-Allow-Origin": "*"}
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+}
 
 
-@gateway.custom_route("/health", methods=["GET"])
+@gateway.custom_route("/health", methods=["GET", "OPTIONS"])
 async def health(request: Request) -> JSONResponse:
+    if request.method == "OPTIONS":
+        return JSONResponse(None, status_code=204, headers=CORS_HEADERS)
+    tools = await gateway.get_tools()
     return JSONResponse({
         "status": "ok",
         "server": "uk-legal-mcp",
-        "tools": 24,
+        "tools": len(tools),
         "modules": 8,
         "uptime_seconds": int((datetime.now(timezone.utc) - _server_start).total_seconds()),
     }, headers=CORS_HEADERS)
 
 
-@gateway.custom_route("/stats", methods=["GET"])
+@gateway.custom_route("/stats", methods=["GET", "OPTIONS"])
 async def stats(request: Request) -> JSONResponse:
+    if request.method == "OPTIONS":
+        return JSONResponse(None, status_code=204, headers=CORS_HEADERS)
     return JSONResponse({
         "uptime_seconds": int((datetime.now(timezone.utc) - _server_start).total_seconds()),
         "total_calls": tool_counter.total_calls,

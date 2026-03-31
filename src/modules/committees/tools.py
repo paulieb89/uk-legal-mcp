@@ -99,7 +99,7 @@ def register_tools(mcp: FastMCP) -> None:
                     id=cid,
                     name=name,
                     house=_parse_house(item.get("house")),
-                    is_active=params.active_only,
+                    is_active=True if params.active_only else None,
                     url=f"https://committees.parliament.uk/committee/{cid}/",
                 ))
 
