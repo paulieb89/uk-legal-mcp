@@ -1,23 +1,31 @@
 """
 Tools for the legislation module.
 
-Search upstream: i.AI Lex API — JSON
+Search upstream: legislation.gov.uk Atom feed
 Full text upstream: legislation.gov.uk API — CLML XML
 Rate limit: legislation.gov.uk 3,000 req / 5 min per IP.
 """
 
 import json
+import re
 from datetime import date
 
 import httpx
 from fastmcp import FastMCP, Context
+from lxml import etree
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import format_http_error
 from .models import LegislationResult, LegislationSearchResult, LegislationSection
 
-LEX_BASE = "https://lex.lab.i.ai.gov.uk"
 LEGISLATION_BASE = "https://www.legislation.gov.uk"
+
+ATOM_NS = {
+    "a": "http://www.w3.org/2005/Atom",
+    "os": "http://a9.com/-/spec/opensearch/1.1/",
+}
+
+_ID_RE = re.compile(r"/id/([a-z]+)/(\d{4})/(\d+)$")
 
 
 class LegislationSearchInput(BaseModel):
@@ -108,7 +116,7 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Search UK Legislation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def legislation_search(params: LegislationSearchInput, ctx: Context) -> str:
-        """Search UK legislation via the i.AI Lex API.
+        """Search UK legislation on legislation.gov.uk.
 
         Returns ranked results: title, type, year, number, and legislation.gov.uk URL.
         Use legislation_get_toc to explore structure, then legislation_get_section for provisions.
@@ -117,26 +125,41 @@ def register_tools(mcp: FastMCP) -> None:
             params (LegislationSearchInput): query, optional type filter, optional year.
 
         Returns:
-            str: JSON with results (title, type, year, number, score, url) and total count.
+            str: JSON with results (title, type, year, number, url) and total count.
         """
         try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            qp: dict = {"q": params.query}
-            if params.type: qp["type"] = params.type
-            if params.year: qp["year"] = params.year
-            resp = await client.get(f"{LEX_BASE}/api/search", params=qp)
+            client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+            path = f"/{params.type}" if params.type else "/search"
+            qp: dict = {"text": params.query, "results-count": 20}
+            if params.year:
+                qp["year"] = params.year
+
+            resp = await client.get(f"{LEGISLATION_BASE}{path}", params=qp)
             resp.raise_for_status()
-            data = resp.json()
+            root = etree.fromstring(resp.content)
+
+            total_el = root.findtext(".//os:totalResults", namespaces=ATOM_NS)
+            total = int(total_el) if total_el else 0
+
             results = []
-            for item in data.get("results", data.get("items", [])):
-                leg_type = item.get("type", "ukpga")
-                yr = item.get("year", 0)
-                num = item.get("number", 0)
+            for entry in root.findall(".//a:entry", namespaces=ATOM_NS):
+                title = entry.findtext("a:title", namespaces=ATOM_NS) or "Unknown"
+                entry_id = entry.findtext("a:id", namespaces=ATOM_NS) or ""
+
+                m = _ID_RE.search(entry_id)
+                if m:
+                    leg_type, yr, num = m.group(1), int(m.group(2)), int(m.group(3))
+                else:
+                    leg_type, yr, num = "unknown", 0, 0
+
                 results.append(LegislationResult(
-                    title=item.get("title", "Unknown"), type=leg_type, year=yr, number=num,
-                    score=item.get("score"), url=f"{LEGISLATION_BASE}/{leg_type}/{yr}/{num}",
+                    title=title, type=leg_type, year=yr, number=num,
+                    score=None, url=f"{LEGISLATION_BASE}/{leg_type}/{yr}/{num}",
                 ))
-            return LegislationSearchResult(results=results, total=data.get("total", len(results))).model_dump_json(indent=2)
+
+            return LegislationSearchResult(
+                results=results, total=total or len(results),
+            ).model_dump_json(indent=2)
         except Exception as e:
             return json.dumps({"error": format_http_error(e)})
 
