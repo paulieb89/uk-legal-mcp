@@ -75,7 +75,7 @@ def register_tools(mcp: FastMCP) -> None:
         """
         try:
             client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            qp: dict = {"Take": 60}
+            qp: dict = {"Take": 200}
             if params.active_only:
                 qp["CommitteeStatus"] = "Current"
             if params.house:
@@ -99,7 +99,7 @@ def register_tools(mcp: FastMCP) -> None:
                     id=cid,
                     name=name,
                     house=_parse_house(item.get("house")),
-                    is_active=str(item.get("committeeStatus", "")).lower() == "current",
+                    is_active=params.active_only,
                     url=f"https://committees.parliament.uk/committee/{cid}/",
                 ))
 

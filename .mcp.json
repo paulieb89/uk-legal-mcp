@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "uk-legal": {
+      "type": "http",
+      "url": "https://uk-legal-mcp.fly.dev/mcp"
+    }
+  }
+}

@@ -26,15 +26,18 @@ PETITIONS_BASE = "https://petition.parliament.uk"
 INTERESTS_BASE = "https://interests-api.parliament.uk/api/v1"
 
 INTEREST_CATEGORIES: dict[str, int] = {
-    "employment": 1,
-    "donations": 2,
-    "gifts": 3,
-    "overseas_visits": 4,
-    "land": 6,
-    "shareholdings": 7,
-    "miscellaneous": 8,
-    "family": 9,
-    "lobbying": 10,
+    "employment": 12,
+    "employment_adhoc": 1,
+    "employment_ongoing": 2,
+    "donations": 3,
+    "gifts_uk": 4,
+    "overseas_visits": 5,
+    "gifts_overseas": 6,
+    "land": 7,
+    "shareholdings": 8,
+    "miscellaneous": 9,
+    "family_employed": 10,
+    "family_lobbying": 11,
 }
 
 MAX_INTEREST_PAGES = 5
@@ -97,9 +100,15 @@ class MemberInterestsInput(BaseModel):
         "Parliament Members API integer ID. Get from parliament_find_member."
     ), ge=1)
     category: Literal[
-        "employment", "donations", "gifts", "overseas_visits",
-        "land", "shareholdings", "miscellaneous", "family", "lobbying",
-    ] | None = Field(None, description="Filter by interest category. Omit for all categories.")
+        "employment", "employment_adhoc", "employment_ongoing",
+        "donations", "gifts_uk", "overseas_visits", "gifts_overseas",
+        "land", "shareholdings", "miscellaneous", "family_employed", "family_lobbying",
+    ] | None = Field(None, description=(
+        "Filter by interest category. Common categories: "
+        "'donations' (donations and support), 'gifts_uk' (gifts/hospitality from UK), "
+        "'employment' (employment and earnings), 'land' (land and property), "
+        "'shareholdings', 'overseas_visits'. Omit for all categories."
+    ))
 
 
 def _strip_html(text: str) -> str:

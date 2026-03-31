@@ -16,5 +16,4 @@ build/
 .env.*
 
 tests/
-README.md
 *.log

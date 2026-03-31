@@ -19,11 +19,15 @@ Transport: Streamable HTTP, port 8000
 Region:    lhr (London) — co-located with UK legal data sources
 """
 
+import logging
 import os
 
 from fastmcp import FastMCP
+from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
+from fastmcp.server.middleware.logging import StructuredLoggingMiddleware
 from fastmcp.server.middleware.rate_limiting import RateLimitingMiddleware
 from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
+from fastmcp.server.middleware.timing import DetailedTimingMiddleware
 
 from .deps import http_lifespan
 from .modules.bills import bills_mcp
@@ -68,8 +72,21 @@ gateway = FastMCP(
 
 # ---------------------------------------------------------------------------
 # Gateway-level middleware
-# Applies across all mounted modules as the outermost layer.
+# Executes in add order (first added = outermost).
 # ---------------------------------------------------------------------------
+
+# Error handling (outermost — catches unhandled exceptions, tracks error counts)
+gateway.add_middleware(ErrorHandlingMiddleware(include_traceback=False))
+
+# Structured JSON logging — every tool call logged with duration, payload size, token estimate
+gateway.add_middleware(StructuredLoggingMiddleware(
+    log_level=logging.INFO,
+    include_payload_length=True,
+    estimate_payload_tokens=True,
+))
+
+# Per-tool timing — logs "Tool 'X' completed in Y ms"
+gateway.add_middleware(DetailedTimingMiddleware())
 
 # Single rate limit counter shared across all modules — protects upstream APIs
 gateway.add_middleware(RateLimitingMiddleware(max_requests_per_second=0.833, burst_capacity=10))
