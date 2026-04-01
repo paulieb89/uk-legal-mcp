@@ -1,10 +1,12 @@
 # uk-legal-mcp
 
+<!-- mcp-name: io.github.paulieb89/uk-legal-mcp -->
+
 [![SafeSkill 92/100](https://img.shields.io/badge/SafeSkill-92%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/paulieb89-uk-legal-mcp)
 
-A Model Context Protocol server for UK legal research. Connects AI assistants to case law, legislation, parliamentary debates, OSCOLA citation parsing, and HMRC tax data through a single endpoint.
+A Model Context Protocol server for UK legal research. Connects AI assistants to case law, legislation, parliamentary debates, bills, votes, committees, OSCOLA citation parsing, and HMRC tax data through a single endpoint.
 
-**15 tools across 5 modules.** One connection. Read-only. No API keys required for 14 of 15 tools.
+**24 tools across 8 modules.** One connection. Read-only. No API keys required for 23 of 24 tools.
 
 ```
 MCP Client (Claude, Cursor, etc.)
@@ -14,8 +16,11 @@ MCP Client (Claude, Cursor, etc.)
   +----------------------------------------------------+
   |                                                    |
   |  case_law      TNA Find Case Law API               |
-  |  legislation   legislation.gov.uk + i.AI Lex API   |
+  |  legislation   legislation.gov.uk Atom feed         |
   |  parliament    Hansard API + Members API            |
+  |  bills         Parliamentary Bills API              |
+  |  votes         Commons + Lords division records     |
+  |  committees    Select committees + evidence         |
   |  citations     OSCOLA regex parser (no network)     |
   |  hmrc          HMRC sandbox/prod + GOV.UK search    |
   |                                                    |
@@ -77,11 +82,11 @@ Upstream: [TNA Find Case Law](https://caselaw.nationalarchives.gov.uk/) (Atom/XM
 
 | Tool | What it does |
 |------|-------------|
-| `legislation_search` | Search Acts of Parliament and Statutory Instruments via the i.AI Lex API. |
+| `legislation_search` | Search Acts of Parliament and Statutory Instruments on legislation.gov.uk. |
 | `legislation_get_toc` | Table of contents for an Act — parts, chapters, sections, schedules. |
 | `legislation_get_section` | Retrieve a specific section with territorial extent, in-force status, and version date. |
 
-Upstream: [legislation.gov.uk](https://www.legislation.gov.uk/) (CLML XML) + [i.AI Lex API](https://lex.lab.i.ai.gov.uk) (JSON). Cached 24 hours.
+Upstream: [legislation.gov.uk](https://www.legislation.gov.uk/) (CLML XML + Atom feed). Cached 24 hours.
 
 **Note:** Always check the `extent` field. A section may apply to England and Wales but not Scotland or Northern Ireland.
 
@@ -93,8 +98,38 @@ Upstream: [legislation.gov.uk](https://www.legislation.gov.uk/) (CLML XML) + [i.
 | `parliament_vibe_check` | Assess parliamentary reception of a policy topic. Searches Hansard, then uses LLM sampling to classify sentiment, supporters, opponents, and concerns. |
 | `parliament_find_member` | Look up an MP or Lord by name. Returns member ID for use with `member_debates`. |
 | `parliament_member_debates` | Retrieve a specific member's Hansard contributions, optionally filtered by topic. |
+| `parliament_member_interests` | Get a member's registered financial interests (donations, shareholdings, etc.). |
+| `parliament_search_petitions` | Search UK Parliament petitions by keyword. |
 
-Upstream: [hansard-api.parliament.uk](https://hansard-api.parliament.uk) + [members-api.parliament.uk](https://members-api.parliament.uk). Not cached (live data).
+Upstream: [hansard-api.parliament.uk](https://hansard-api.parliament.uk) + [members-api.parliament.uk](https://members-api.parliament.uk) + [petition.parliament.uk](https://petition.parliament.uk). Not cached (live data).
+
+### Bills
+
+| Tool | What it does |
+|------|-------------|
+| `bills_search_bills` | Search current and historical parliamentary bills by keyword, session, or type. |
+| `bills_get_bill` | Get full bill detail — stages, sponsors, publications. |
+
+Upstream: [bills-api.parliament.uk](https://bills-api.parliament.uk). Cached 1 hour.
+
+### Votes
+
+| Tool | What it does |
+|------|-------------|
+| `votes_search_divisions` | Search Commons and Lords division records by keyword or date. |
+| `votes_get_division` | Get full division detail — vote counts, how each member voted. |
+
+Upstream: [commonsvotes-api.parliament.uk](https://commonsvotes-api.parliament.uk) + [lordsvotes-api.parliament.uk](https://lordsvotes-api.parliament.uk). Cached 24 hours.
+
+### Committees
+
+| Tool | What it does |
+|------|-------------|
+| `committees_search_committees` | Search parliamentary select committees by keyword. |
+| `committees_get_committee` | Get committee detail — membership, sub-committees. |
+| `committees_search_evidence` | Search oral and written evidence submissions to committees. |
+
+Upstream: [committees-api.parliament.uk](https://committees-api.parliament.uk). Cached 1 hour.
 
 ### Citations
 
@@ -136,8 +171,11 @@ src/
   deps.py               Shared httpx clients (lifespan-managed) + error formatting
   modules/
     case_law/           TNA Find Case Law (Atom/XML parsing)
-    legislation/        legislation.gov.uk (CLML XML) + Lex API (JSON)
-    parliament/         Hansard API + Members API (JSON)
+    legislation/        legislation.gov.uk (CLML XML + Atom feed)
+    parliament/         Hansard API + Members API + Petitions (JSON)
+    bills/              Parliamentary Bills API (JSON)
+    votes/              Commons + Lords division records (JSON)
+    committees/         Select committees + evidence (JSON)
     citations/          OSCOLA regex engine (compiled once, lru_cache)
     hmrc/               HMRC OAuth + GOV.UK search (JSON)
 tests/
@@ -150,9 +188,12 @@ Each module is a standalone `FastMCP` instance mounted into the gateway with a n
 
 | Middleware | Purpose |
 |-----------|---------|
-| `RateLimitingMiddleware` | 50 req/min per client across all modules |
+| `ErrorHandlingMiddleware` | Catches unhandled exceptions |
+| `StructuredLoggingMiddleware` | JSON logging with duration and payload size |
+| `DetailedTimingMiddleware` | Per-tool timing logs |
 | `ResponseLimitingMiddleware` | 80,000 char cap (LegalDocML XML can exceed 200k) |
-| `ResponseCachingMiddleware` | Per-module TTLs on case_law (1hr), legislation (24hr), hmrc (90 days) |
+
+**Per-module caching:** `ResponseCachingMiddleware` with TTLs — case_law (1hr), legislation (24hr), bills (1hr), votes (24hr), committees (1hr), hmrc (90 days). Parliament and citations are not cached.
 
 ---
 
@@ -200,9 +241,12 @@ All 35 citation tests run offline with no API credentials.
 |--------|-----|---------|------|
 | TNA Find Case Law | `caselaw.nationalarchives.gov.uk` | [Open Justice Licence](https://caselaw.nationalarchives.gov.uk/open-justice-licence) | None |
 | legislation.gov.uk | `legislation.gov.uk` | [OGL v3](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/) | None |
-| i.AI Lex API | `lex.lab.i.ai.gov.uk` | OGL v3 | None |
 | UK Parliament Hansard | `hansard-api.parliament.uk` | [Open Parliament Licence](https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/) | None |
 | UK Parliament Members | `members-api.parliament.uk` | Open Parliament Licence | None |
+| UK Parliament Petitions | `petition.parliament.uk` | Open Parliament Licence | None |
+| UK Parliament Bills | `bills-api.parliament.uk` | Open Parliament Licence | None |
+| UK Parliament Votes | `commonsvotes-api.parliament.uk` | Open Parliament Licence | None |
+| UK Parliament Committees | `committees-api.parliament.uk` | Open Parliament Licence | None |
 | HMRC | `test-api.service.hmrc.gov.uk` | OGL / commercial terms | OAuth 2.0 |
 | GOV.UK Search | `www.gov.uk/api/search.json` | OGL v3 | None |
 
@@ -210,7 +254,7 @@ All 35 citation tests run offline with no API credentials.
 
 ## Stack
 
-- Python 3.12
+- Python 3.10+
 - [FastMCP](https://gofastmcp.com) v3 (streamable HTTP transport)
 - [httpx](https://www.python-httpx.org/) (async HTTP with connection pooling)
 - [lxml](https://lxml.de/) (LegalDocML and CLML XML parsing)

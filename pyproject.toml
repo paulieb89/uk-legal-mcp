@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "uk-legal-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "UK legal research MCP server — case law, legislation, parliament, bills, votes, committees, citations, HMRC"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 authors = [
     { name = "Paul Boucher" },
 ]
@@ -30,21 +30,27 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Internet :: WWW/HTTP",
 ]
 dependencies = [
-    "fastmcp>=2.0.0",
+    "fastmcp>=3.0.0",
     "httpx>=0.27.0",
     "pydantic>=2.7.0",
     "lxml>=5.2.0",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=7.0.0"]
+
 [project.urls]
-Repository = "https://gitlab.com/articat1066/uk-legal-mcp"
-Documentation = "https://gitlab.com/articat1066/uk-legal-mcp#readme"
-"Bug Tracker" = "https://gitlab.com/articat1066/uk-legal-mcp/-/issues"
+Repository = "https://github.com/paulieb89/uk-legal-mcp"
+Documentation = "https://github.com/paulieb89/uk-legal-mcp#readme"
+"Bug Tracker" = "https://github.com/paulieb89/uk-legal-mcp/issues"
 "Live Endpoint" = "https://uk-legal-mcp.fly.dev/mcp"
 
 [project.scripts]

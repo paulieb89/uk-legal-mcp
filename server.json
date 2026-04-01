@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.paulieb89/uk-legal-mcp",
   "title": "UK Legal Research",
-  "description": "UK legal research — case law, legislation, Hansard, HMRC, OSCOLA citations. 15 tools.",
-  "version": "0.2.0",
+  "description": "UK legal research — case law, legislation, Hansard, bills, votes, committees, HMRC, OSCOLA citations. 24 tools across 8 modules.",
+  "version": "0.3.0",
   "websiteUrl": "https://bouch.dev/products/legal-research",
   "repository": {
     "url": "https://github.com/paulieb89/uk-legal-mcp",
@@ -11,5 +11,14 @@
   },
   "remotes": [
     { "type": "streamable-http", "url": "https://uk-legal-mcp.fly.dev/mcp" }
+  ],
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "uk-legal-mcp",
+      "version": "0.3.0",
+      "runtimeHint": "uvx",
+      "transport": { "type": "stdio" }
+    }
   ]
 }

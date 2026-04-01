@@ -5,7 +5,7 @@
 UK legal research MCP server. 24 tools across 8 modules (case_law, legislation, parliament, bills, votes, committees, citations, hmrc) mounted into a single FastMCP v3 gateway. Deployed to Fly.io (London region). Streamable HTTP transport.
 
 Live endpoint: `https://uk-legal-mcp.fly.dev/mcp`
-Repo: `https://gitlab.com/articat1066/uk-legal-mcp`
+Repo: `https://github.com/paulieb89/uk-legal-mcp`
 
 ## Commands
 
