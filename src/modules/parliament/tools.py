@@ -272,7 +272,7 @@ def register_tools(mcp: FastMCP) -> None:
         """
         try:
             client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            resp = await client.get(f"{MEMBERS_BASE}/Members/Search", params={"Name": params.name, "IsCurrentMember": "false"})
+            resp = await client.get(f"{MEMBERS_BASE}/Members/Search", params={"Name": params.name})
             resp.raise_for_status()
             data = resp.json()
             members = []
