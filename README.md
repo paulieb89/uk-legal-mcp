@@ -1,5 +1,7 @@
 # uk-legal-mcp
 
+[![SafeSkill 92/100](https://img.shields.io/badge/SafeSkill-92%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/paulieb89-uk-legal-mcp)
+
 A Model Context Protocol server for UK legal research. Connects AI assistants to case law, legislation, parliamentary debates, OSCOLA citation parsing, and HMRC tax data through a single endpoint.
 
 **15 tools across 5 modules.** One connection. Read-only. No API keys required for 14 of 15 tools.
