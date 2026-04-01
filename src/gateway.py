@@ -29,7 +29,6 @@ from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.logging import StructuredLoggingMiddleware
-from fastmcp.server.middleware.rate_limiting import RateLimitingMiddleware
 from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
 from fastmcp.server.middleware.timing import DetailedTimingMiddleware
 from starlette.requests import Request
@@ -127,8 +126,7 @@ gateway = FastMCP(
         "  Fully self-contained — no API key required.\n\n"
         "• hmrc_get_vat_rate / hmrc_check_mtd_status / hmrc_search_guidance\n"
         "  UK VAT rate lookups, Making Tax Digital status, and HMRC guidance search.\n\n"
-        "All tools are read-only. Judgments and statutes are cached aggressively.\n"
-        "Rate limits enforced at gateway level: 50 requests/minute per client."
+        "All tools are read-only. Judgments and statutes are cached aggressively."
     ),
 )
 
@@ -152,9 +150,6 @@ gateway.add_middleware(tool_counter)
 
 # Per-tool timing — logs "Tool 'X' completed in Y ms"
 gateway.add_middleware(DetailedTimingMiddleware())
-
-# Single rate limit counter shared across all modules — protects upstream APIs
-gateway.add_middleware(RateLimitingMiddleware(max_requests_per_second=0.833, burst_capacity=10))
 
 # LegalDocML XML can run to 200k+ characters; cap before it floods LLM context
 gateway.add_middleware(ResponseLimitingMiddleware(max_size=80000))
