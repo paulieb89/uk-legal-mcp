@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.paulieb89/uk-legal-mcp",
   "title": "UK Legal Research",
-  "description": "UK legal research — case law, legislation, Hansard, bills, votes, committees, HMRC, OSCOLA citations. 24 tools across 8 modules.",
+  "description": "UK legal research — case law, legislation, Hansard, bills, votes, committees, HMRC, citations",
   "version": "0.3.0",
   "websiteUrl": "https://bouch.dev/products/legal-research",
   "repository": {
