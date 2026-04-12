@@ -153,20 +153,26 @@ def register_tools(mcp: FastMCP) -> None:
     async def case_law_get_judgment(params: CaseLawGetJudgmentInput, ctx: Context) -> str:
         """Retrieve the full LegalDocML XML for a judgment by TNA URI slug.
 
-        Response is raw LegalDocML XML (capped at 80,000 chars by gateway middleware).
-        Contains full judicial reasoning, orders, and party details.
+        Response is a JSON object wrapping the LegalDocML XML content (raw XML
+        is not JSON-serialisable for MCP output schema validation). XML content
+        is capped at 80,000 chars by gateway middleware.
 
         Args:
             params (CaseLawGetJudgmentInput): uri — TNA slug e.g. 'uksc/2024/12'.
 
         Returns:
-            str: LegalDocML XML content, or JSON error object.
+            str: JSON string with keys 'uri', 'format', 'content' (LegalDocML XML),
+                or JSON error object.
         """
         try:
             client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
             uri = params.uri.lstrip("/")
             resp = await client.get(f"{TNA_BASE}/{uri}/data.xml")
             resp.raise_for_status()
-            return resp.text
+            return json.dumps({
+                "uri": uri,
+                "format": "legaldocml-xml",
+                "content": resp.text,
+            })
         except Exception as e:
             return json.dumps({"error": format_http_error(e)})
