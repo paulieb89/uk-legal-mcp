@@ -150,29 +150,31 @@ def register_tools(mcp: FastMCP) -> None:
         name="get_judgment",
         annotations={"title": "Get Full Judgment Text", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def case_law_get_judgment(params: CaseLawGetJudgmentInput, ctx: Context) -> str:
+    async def case_law_get_judgment(params: CaseLawGetJudgmentInput, ctx: Context) -> dict:
         """Retrieve the full LegalDocML XML for a judgment by TNA URI slug.
 
-        Response is a JSON object wrapping the LegalDocML XML content (raw XML
-        is not JSON-serialisable for MCP output schema validation). XML content
-        is capped at 80,000 chars by gateway middleware.
+        Returns a dict containing the LegalDocML XML as a string value. The dict
+        return type (rather than str) lets FastMCP auto-generate an MCP-spec-
+        compliant structured output schema — matching the documented pattern
+        for object-like tool returns. XML content is capped at 80,000 chars by
+        gateway middleware.
 
         Args:
             params (CaseLawGetJudgmentInput): uri — TNA slug e.g. 'uksc/2024/12'.
 
         Returns:
-            str: JSON string with keys 'uri', 'format', 'content' (LegalDocML XML),
-                or JSON error object.
+            dict: Keys 'uri', 'format', 'content' (LegalDocML XML string),
+                or 'error' on failure.
         """
         try:
             client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
             uri = params.uri.lstrip("/")
             resp = await client.get(f"{TNA_BASE}/{uri}/data.xml")
             resp.raise_for_status()
-            return json.dumps({
+            return {
                 "uri": uri,
                 "format": "legaldocml-xml",
                 "content": resp.text,
-            })
+            }
         except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+            return {"error": format_http_error(e)}
