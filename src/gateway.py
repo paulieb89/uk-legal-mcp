@@ -29,7 +29,6 @@ from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.logging import StructuredLoggingMiddleware
-from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
 from fastmcp.server.middleware.timing import DetailedTimingMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -151,8 +150,13 @@ gateway.add_middleware(tool_counter)
 # Per-tool timing — logs "Tool 'X' completed in Y ms"
 gateway.add_middleware(DetailedTimingMiddleware())
 
-# LegalDocML XML can run to 200k+ characters; cap before it floods LLM context
-gateway.add_middleware(ResponseLimitingMiddleware(max_size=80000))
+# NOTE: ResponseLimitingMiddleware was removed because it silently drops
+# structured_content from oversize tool responses, which fails strict MCP
+# clients (claude.ai) that validate against the advertised outputSchema.
+# Per-tool truncation (via a max_chars parameter on the tool itself) is
+# the correct place to control payload size — the tool author knows what
+# can safely be cut and can keep the response a valid object. See
+# case_law/tools.py::case_law_get_judgment for the pattern.
 
 # ---------------------------------------------------------------------------
 # Mount sub-modules (in-process — zero network hop)

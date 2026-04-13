@@ -12,7 +12,6 @@ from datetime import date, datetime
 
 import httpx
 from fastmcp import FastMCP, Context
-from fastmcp.tools.tool import ToolResult
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import format_http_error
@@ -50,6 +49,19 @@ class CaseLawGetJudgmentInput(BaseModel):
             "Always use the 'uri' field returned by case_law_search — do not construct manually."
         ),
         min_length=8,
+    )
+    max_chars: int = Field(
+        50000,
+        description=(
+            "Maximum number of characters of LegalDocML XML to return. "
+            "Default 50,000 (~12,500 tokens) keeps a single judgment under "
+            "10% of a 200k-token context window. Set higher (e.g. 200000) "
+            "to fetch a complete judgment when you need every clause; the "
+            "tool will return up to that many chars and flag if truncation "
+            "occurred."
+        ),
+        ge=1000,
+        le=400000,
     )
 
 
@@ -151,45 +163,45 @@ def register_tools(mcp: FastMCP) -> None:
         name="get_judgment",
         annotations={"title": "Get Full Judgment Text", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def case_law_get_judgment(params: CaseLawGetJudgmentInput, ctx: Context) -> ToolResult:
+    async def case_law_get_judgment(params: CaseLawGetJudgmentInput, ctx: Context) -> dict:
         """Retrieve the full LegalDocML XML for a judgment by TNA URI slug.
 
-        Returns a ToolResult with both a text content block (human/legacy
-        consumers) and structured_content (MCP spec structured output).
+        Returns a dict with the LegalDocML XML, truncated to `max_chars`
+        if necessary. Caller controls payload size via the max_chars
+        parameter — defaults to 50,000 chars to stay well under typical
+        LLM context budgets.
 
-        Why ToolResult explicitly: FastMCP 3.2.3's auto-wrapping for dict
-        returns does not reliably populate structuredContent when the dict
-        contains large payloads (like 80k-char LegalDocML XML). The bare
-        `{"type": "object", "additionalProperties": true}` output schema
-        then has no accompanying structuredContent on the wire, and strict
-        MCP clients (claude.ai) reject the response with "has an output
-        schema but did not return structured content". ToolResult bypasses
-        the auto-wrap path and sets structured_content directly.
+        FastMCP handles serialisation, schema generation, and structured
+        output wrapping automatically. The dict return type is the
+        idiomatic FastMCP pattern — no manual json.dumps, no ToolResult
+        unless you need explicit content/structured_content control.
 
         Args:
-            params (CaseLawGetJudgmentInput): uri — TNA slug e.g. 'uksc/2024/12'.
+            params (CaseLawGetJudgmentInput): uri (TNA slug), max_chars (cap).
 
         Returns:
-            ToolResult: structured_content with 'uri', 'format', 'content'
-                (LegalDocML XML string), plus a matching text content block.
+            dict: Keys 'uri', 'format', 'content' (LegalDocML XML),
+                'truncated' (bool), 'original_length' (int).
+                On failure: 'error' key.
         """
         try:
             client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
             uri = params.uri.lstrip("/")
             resp = await client.get(f"{TNA_BASE}/{uri}/data.xml")
             resp.raise_for_status()
-            payload = {
+
+            xml_text = resp.text
+            original_length = len(xml_text)
+            truncated = original_length > params.max_chars
+            if truncated:
+                xml_text = xml_text[: params.max_chars] + "\n<!-- ...truncated -->"
+
+            return {
                 "uri": uri,
                 "format": "legaldocml-xml",
-                "content": resp.text,
+                "content": xml_text,
+                "truncated": truncated,
+                "original_length": original_length,
             }
-            return ToolResult(
-                content=json.dumps(payload),
-                structured_content=payload,
-            )
         except Exception as e:
-            err = {"error": format_http_error(e)}
-            return ToolResult(
-                content=json.dumps(err),
-                structured_content=err,
-            )
+            return {"error": format_http_error(e)}
