@@ -12,6 +12,7 @@ from datetime import date, datetime
 
 import httpx
 from fastmcp import FastMCP, Context
+from fastmcp.tools.tool import ToolResult
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import format_http_error
@@ -150,31 +151,45 @@ def register_tools(mcp: FastMCP) -> None:
         name="get_judgment",
         annotations={"title": "Get Full Judgment Text", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def case_law_get_judgment(params: CaseLawGetJudgmentInput, ctx: Context) -> dict:
+    async def case_law_get_judgment(params: CaseLawGetJudgmentInput, ctx: Context) -> ToolResult:
         """Retrieve the full LegalDocML XML for a judgment by TNA URI slug.
 
-        Returns a dict containing the LegalDocML XML as a string value. The dict
-        return type (rather than str) lets FastMCP auto-generate an MCP-spec-
-        compliant structured output schema — matching the documented pattern
-        for object-like tool returns. XML content is capped at 80,000 chars by
-        gateway middleware.
+        Returns a ToolResult with both a text content block (human/legacy
+        consumers) and structured_content (MCP spec structured output).
+
+        Why ToolResult explicitly: FastMCP 3.2.3's auto-wrapping for dict
+        returns does not reliably populate structuredContent when the dict
+        contains large payloads (like 80k-char LegalDocML XML). The bare
+        `{"type": "object", "additionalProperties": true}` output schema
+        then has no accompanying structuredContent on the wire, and strict
+        MCP clients (claude.ai) reject the response with "has an output
+        schema but did not return structured content". ToolResult bypasses
+        the auto-wrap path and sets structured_content directly.
 
         Args:
             params (CaseLawGetJudgmentInput): uri — TNA slug e.g. 'uksc/2024/12'.
 
         Returns:
-            dict: Keys 'uri', 'format', 'content' (LegalDocML XML string),
-                or 'error' on failure.
+            ToolResult: structured_content with 'uri', 'format', 'content'
+                (LegalDocML XML string), plus a matching text content block.
         """
         try:
             client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
             uri = params.uri.lstrip("/")
             resp = await client.get(f"{TNA_BASE}/{uri}/data.xml")
             resp.raise_for_status()
-            return {
+            payload = {
                 "uri": uri,
                 "format": "legaldocml-xml",
                 "content": resp.text,
             }
+            return ToolResult(
+                content=json.dumps(payload),
+                structured_content=payload,
+            )
         except Exception as e:
-            return {"error": format_http_error(e)}
+            err = {"error": format_http_error(e)}
+            return ToolResult(
+                content=json.dumps(err),
+                structured_content=err,
+            )
