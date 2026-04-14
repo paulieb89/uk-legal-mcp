@@ -46,7 +46,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0.0"]
+test = ["pytest>=7.0.0", "tiktoken>=0.8.0"]
 
 [project.urls]
 Repository = "https://github.com/paulieb89/uk-legal-mcp"
