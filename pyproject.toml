@@ -38,10 +38,11 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP",
 ]
 dependencies = [
-    "fastmcp>=3.0.0",
-    "httpx>=0.27.0",
-    "pydantic>=2.7.0",
-    "lxml>=5.2.0",
+    "fastmcp==3.2.3",
+    "mcp==1.27.0",
+    "httpx==0.28.1",
+    "pydantic==2.13.0",
+    "lxml==6.0.4",
 ]
 
 [project.optional-dependencies]
