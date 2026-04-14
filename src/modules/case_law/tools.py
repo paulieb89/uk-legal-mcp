@@ -66,13 +66,28 @@ class CaseLawGetJudgmentInput(BaseModel):
 
 
 def _parse_atom_feed(xml_bytes: bytes) -> JudgmentSearchResult:
-    """Parse TNA Atom feed into JudgmentSearchResult."""
+    """Parse TNA Atom feed into JudgmentSearchResult.
+
+    Two TNA contract changes this parser now adopts:
+
+    1. The namespace URI for TNA-specific elements is the bare host
+       ``https://caselaw.nationalarchives.gov.uk`` with conventional
+       prefix ``tna:`` — NOT the former ``/ns/properties`` path with
+       prefix ``uk:``. All tna:-prefixed lookups use the new URI.
+    2. The canonical slug (e.g. ``uksc/2024/12``) is carried as the
+       ``slug`` attribute on ``<tna:identifier type="ukncn">`` — a
+       dedicated, typed element. ``<atom:id>`` now carries an internal
+       UUID and is no longer a valid slug source.
+
+    See ``docs/patterns/pilot-case-law-get-judgment-discovery.md`` for
+    the full root-cause analysis.
+    """
     try:
         from lxml import etree
         root = etree.fromstring(xml_bytes)
         ns = {
             "atom": "http://www.w3.org/2005/Atom",
-            "uk": "https://caselaw.nationalarchives.gov.uk/ns/properties",
+            "tna": "https://caselaw.nationalarchives.gov.uk",
             "os": "http://a9.com/-/spec/opensearch/1.1/",
         }
         total_el = root.find(".//os:totalResults", ns)
@@ -86,31 +101,45 @@ def _parse_atom_feed(xml_bytes: bytes) -> JudgmentSearchResult:
         entries = root.findall("atom:entry", ns)
         summaries = []
         for entry in entries:
-            uri_el = entry.find("atom:id", ns)
             title_el = entry.find("atom:title", ns)
             published_el = entry.find("atom:published", ns)
             updated_el = entry.find("atom:updated", ns)
-            court_el = entry.find(".//uk:court", ns)
-            raw_uri = uri_el.text.strip() if uri_el is not None else ""
-            slug = raw_uri.replace(f"{TNA_BASE}/", "").lstrip("/")
+            author_name_el = entry.find("atom:author/atom:name", ns)
+
+            ncn_ident_el = entry.find('tna:identifier[@type="ukncn"]', ns)
+            slug = ncn_ident_el.get("slug", "") if ncn_ident_el is not None else ""
+            if not slug:
+                for link in entry.findall("atom:link", ns):
+                    if link.get("rel") == "alternate" and not link.get("type"):
+                        href = link.get("href", "")
+                        if href.startswith(f"{TNA_BASE}/"):
+                            slug = href[len(TNA_BASE) + 1 :].rstrip("/")
+                            break
+
             identifiers = []
-            for ncn_el in entry.findall(".//uk:cite", ns):
-                ncn_text = ncn_el.text.strip() if ncn_el.text else ""
+            if ncn_ident_el is not None and ncn_ident_el.text:
+                ncn_text = ncn_ident_el.text.strip()
                 if ncn_text:
-                    identifiers.append(JudgmentIdentifier(type="ukncn", value=ncn_text, slug=slug))
+                    identifiers.append(
+                        JudgmentIdentifier(type="ukncn", value=ncn_text, slug=slug)
+                    )
+
             xml_url = f"{TNA_BASE}/{slug}/data.xml" if slug else None
             pdf_url = f"{TNA_BASE}/{slug}/data.pdf" if slug else None
             for link in entry.findall("atom:link", ns):
-                if link.get("rel") == "alternate" and "xml" in link.get("type", ""):
+                link_type = link.get("type", "")
+                if link.get("rel") == "alternate" and "xml" in link_type:
                     xml_url = link.get("href", xml_url)
-                elif "pdf" in link.get("type", ""):
+                elif "pdf" in link_type:
                     pdf_url = link.get("href", pdf_url)
+
             title_text = title_el.text.strip() if title_el is not None and title_el.text else slug
             published_text = (published_el.text or "1970-01-01T00:00:00Z").strip()
             updated_text = (updated_el.text or published_text).strip()
+            court_text = author_name_el.text.strip() if author_name_el is not None and author_name_el.text else None
             summaries.append(JudgmentSummary(
                 uri=slug, title=title_text,
-                court=court_el.text.strip() if court_el is not None else None,
+                court=court_text,
                 published=datetime.fromisoformat(published_text.replace("Z", "+00:00")),
                 updated=datetime.fromisoformat(updated_text.replace("Z", "+00:00")),
                 identifiers=identifiers,

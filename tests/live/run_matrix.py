@@ -123,6 +123,10 @@ async def main() -> None:
         if uri:
             m, _ = await _call(client, "case_law_get_judgment", {"uri": uri, "max_chars": 50000})
             rows.append(m)
+        m, _ = await _call(
+            client, "case_law_get_judgment", {"uri": "uksc/2019/41", "max_chars": 50000}
+        )
+        rows.append(m)
 
         # ---------------- legislation ----------------
         m, _ = await _call(client, "legislation_search", {"query": "data protection"})
