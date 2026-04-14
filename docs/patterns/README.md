@@ -19,6 +19,28 @@ tokens per call because they dump the full payload and rely on a blunt
 `max_chars` cap that chops mid-clause and is useless to a lawyer, accountant,
 or anyone who needs the content to be semantically whole.
 
+## Motivating example — the error that made this non-optional
+
+On 2026-04-14, calling `case_law_get_judgment(uri="ewca/civ/2025/467", max_chars=400000)`
+against a live UK Court of Appeal judgment produced this from the Claude Code
+client:
+
+```
+Error: result (175,796 characters) exceeds maximum allowed tokens. Output has
+been saved to /home/bch/.claude/projects/.../tool-results/...txt.
+Format: JSON with schema: {uri: string, format: string, content: string, ...}
+Use offset and limit parameters to read specific portions of the file, search
+within it for specific content, and jq to make structured queries.
+```
+
+The client's workaround — "use offset and limit parameters" — is exactly the
+blunt byte-cap anti-pattern the navigator + leaf split exists to replace.
+A 175k-character XML blob is one realistic EWCA Civ judgment; a UKSC Supreme
+Court decision on a heavier topic will be worse. The tool literally cannot
+return its payload any more, and the fallback the client suggests is to treat
+a semantically-structured LegalDocML document as a byte stream and hope the
+user knows what offset to ask for. This pattern spec is how we fix it properly.
+
 ## The four tiers
 
 Every document-retrieval domain should be served by **up to** four tools,

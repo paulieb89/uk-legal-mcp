@@ -97,15 +97,30 @@ async def case_law_get_toc(params: CaseLawTocInput, ctx: Context) -> dict:
 | `parties` | `list[str]` | Claimant, defendant, etc. |
 | `judges` | `list[str]` | Presiding judges |
 | `date` | `str` | ISO date |
-| `sections` | `list[dict]` | TOC entries — see below |
+| `transform_date` | `str` | Value of `FRBRdate name="transform"` — ISO timestamp of the last TNA XML transform. Clients holding cached `section_id`s can compare this against a fresh TOC to detect staleness (see Phase 2 discovery Q2). |
+| `sections` | `list[dict]` | Flat TOC entries in discovery order — see below |
 | `total_sections` | `int` | Count of sections |
 | `original_length` | `int` | Characters in the full LegalDocML for reference |
 
-Each entry in `sections` is:
+Each entry in `sections` is a **flat** record. v1 does not represent
+hierarchy between levels and paragraphs — all entries are siblings in
+discovery order:
 
 ```python
-{"id": "para-42", "title": "Conclusion", "level": 1, "char_count": 1820}
+{
+    "id": "para_42",
+    "title": "Conclusion",         # level heading text, or first ~120 chars of paragraph text
+    "element": "paragraph",        # "paragraph" or "level"
+    "char_count": 1820,            # length of this element's own text, not its descendants
+}
 ```
+
+Why flat: UKSC and EWCA Civ emit `<level>` and `<paragraph>` as siblings
+under `<decision>`; EWHC Ch nests paragraphs inside their level (see
+Phase 2 discovery Q1b). A consistent tree shape across both layouts is
+extra parser complexity that v1 doesn't need — a flat list of addressable
+units is enough for the LLM to navigate. Revisit if callers start asking
+"which heading is this paragraph under."
 
 **Estimated context cost:** 500–1,500 tokens. A UKSC judgment typically has
 30-80 top-level paragraphs; each TOC entry is ~30 characters, so the whole
@@ -204,32 +219,46 @@ two tools above are how the LLM reads leaves.
 
 ## Migration steps
 
-1. **Add input models** — `CaseLawTocInput`, `CaseLawSectionInput` in
+1. **Phase 3 — atom feed parser fix (blocking prerequisite).** Before
+   any navigator work, fix the namespace mapping (`uk:` → `tna:`) AND
+   switch the slug source from `<atom:id>` to the `slug` attribute on
+   `<tna:identifier>` in [`src/modules/case_law/tools.py`](../../src/modules/case_law/tools.py)
+   `_parse_atom_feed`. Both bugs live in the same function and share
+   context; ship them as one commit. See the Phase 2 discovery
+   [Bonus section](pilot-case-law-get-judgment-discovery.md#bonus--the-case_law_search-slug-bug-is-now-confirmed-in-production)
+   for the root-cause analysis. No navigator code, no doc edits in
+   the same commit.
+2. **Add input models** — `CaseLawTocInput`, `CaseLawSectionInput` in
    [`src/modules/case_law/tools.py`](../../src/modules/case_law/tools.py).
    Keep the existing `CaseLawGetJudgmentInput` unchanged.
-2. **Parse LegalDocML structure** — add a helper
+3. **Parse LegalDocML structure** — add a helper
    `_parse_judgment_toc(xml_bytes) -> TocResult` using `lxml` that walks
-   `akomaNtoso/judgment/judgmentBody` and extracts the section tree with
-   stable IDs from the `eId` attribute. Test against 3 real judgments
-   (UKSC, EWCA Civ, EWHC Ch) to handle the structural variation.
-3. **Implement `case_law_get_toc`** using the helper. Fetch from TNA,
+   `akomaNtoso/judgment/judgmentBody` via descendant-axis XPath
+   (`//paragraph[@eId]` and `//level[@eId]`) so it handles both the flat
+   (UKSC / EWCA Civ) and nested (EWHC Ch) shapes without branching.
+   Filter out `<level>` elements that have no `@eId` (those are author
+   attribution, not real sections). Test against the three real
+   judgments in `/tmp/judgments/` used during Phase 2 discovery, plus
+   one from UKUT, FTT, EWFC, and EWCOP (Phase 4 open question — see
+   discovery doc).
+4. **Implement `case_law_get_toc`** using the helper. Fetch from TNA,
    parse, return the dict. Cache the full XML in memory keyed by URI so
    the subsequent `get_section` call doesn't refetch.
-4. **Implement `case_law_get_section`** — uses the cached XML from step 3
+5. **Implement `case_law_get_section`** — uses the cached XML from step 4
    (or refetches if not cached), walks to the requested `eId`, extracts
    the subtree, converts to plain text or returns XML based on `format`.
-5. **Register the `judgment://` resource template** in
+6. **Register the `judgment://` resource template** in
    [`src/modules/case_law/resources.py`](../../src/modules/case_law/resources.py).
-6. **Update `case_law_get_judgment` tool description** to point at the
+7. **Update `case_law_get_judgment` tool description** to point at the
    new tools, and lower `max_chars` default to 10,000.
-7. **Add scenarios** to [`tests/live/run_matrix.py`](../../tests/live/run_matrix.py)
-   for `case_law_get_toc(uri)` and `case_law_get_section(uri, "para-1")`.
-8. **Run the harness before** the refactor on main:
+8. **Add scenarios** to [`tests/live/run_matrix.py`](../../tests/live/run_matrix.py)
+   for `case_law_get_toc(uri)` and `case_law_get_section(uri, "para_1")`.
+9. **Run the harness before** the refactor on main:
    `.venv/bin/python -m tests.live.run_matrix | tee before.txt`
-9. **Commit** the implementation on a branch.
-10. **Run the harness after** on the branch, paste both outputs into the
+10. **Commit** the implementation on a branch.
+11. **Run the harness after** on the branch, paste both outputs into the
     Validation section below.
-11. **Merge** only if the numbers pass the validation rule.
+12. **Merge** only if the numbers pass the validation rule.
 
 ## Validation
 
@@ -252,18 +281,37 @@ Passes the validation rule? **Pending implementation.**
 
 ## Open questions
 
-- **LegalDocML variation across courts.** Does the `eId` attribute exist
-  consistently on all top-level sections across UKSC, EWCA, EWHC, UKUT, and
-  FTT judgments? Step 2 of the migration plan needs to answer this with
-  real test data before the navigator is reliable.
-- **Section ID stability.** TNA occasionally republishes judgments with
-  corrected typography. Do the `eId`s stay stable across republish, or do
-  they shift? If they shift, cached section IDs go stale — mitigation is
-  to include `eId` in the TOC response as-is rather than computing our own.
-- **Caching strategy for chained calls.** Step 3-4 assumes an in-memory
-  cache keyed by URI so `get_toc` → `get_section` doesn't double-fetch.
-  FastMCP's `lifespan` already owns the httpx client; the cache should
-  live alongside it. TTL: 10 minutes (TNA updates infrequently).
+- **LegalDocML variation across courts.** ~~Does the `eId` attribute
+  exist consistently on all top-level sections across UKSC, EWCA, EWHC,
+  UKUT, and FTT judgments?~~ **RESOLVED 2026-04-14** (partially). UKSC,
+  EWCA Civ and EWHC Ch confirmed consistent by Phase 2 discovery — see
+  [pilot-case-law-get-judgment-discovery.md](pilot-case-law-get-judgment-discovery.md#q1--eid-consistency).
+  Key finding: the navigator parser must handle **both** a flat
+  `<level>`/`<paragraph>` sibling layout (UKSC, EWCA Civ) **and** a
+  nested layout (EWHC Ch). Using descendant-axis XPath
+  (`//paragraph[@eId]`, `//level[@eId]`) works on both shapes without
+  branching. **Still open:** UKUT, FTT, EWFC, and EWCOP — deferred to
+  Phase 4 as a pre-merge harness assertion, not a design question.
+- **Section ID stability.** ~~TNA occasionally republishes judgments
+  with corrected typography. Do the `eId`s stay stable across
+  republish, or do they shift?~~ **RESOLVED 2026-04-14** (with a
+  mitigation, not a certainty). The LegalDocML meta block has no hash
+  or version field, so a true diff across republishes cannot be done
+  from a single fetch. But `FRBRdate name="transform"` is the change
+  marker: it updates on every republish. The navigator response must
+  include this date so clients can detect staleness of cached
+  `section_id`s. See
+  [discovery Q2](pilot-case-law-get-judgment-discovery.md#q2--eid-stability-across-republishes).
+- **Caching strategy for chained calls.** ~~Step 3-4 assumes an
+  in-memory cache keyed by URI…~~ **RESOLVED 2026-04-14**: cache slot
+  lives in `src/deps.py:http_lifespan` (not in the case_law module) per
+  the "gateway owns the lifespan" architecture rule. `cachetools` is
+  **not** currently a project dependency (pyproject.toml has
+  fastmcp/mcp/httpx/pydantic/lxml only); Phase 5 either adds
+  `cachetools>=5.0` or uses a plain dict with a manual timestamp check
+  (~15 lines for a 32-entry 10-minute TTL in a single-threaded async
+  process). Lean toward the plain dict to avoid a new dep. See
+  [discovery Q4](pilot-case-law-get-judgment-discovery.md#q4--cache-slot-in-depspy).
 - **Resource template vs navigator tool — overlap.** Both `case_law_get_toc`
   and the `judgment://` resource return the same data. Is that duplication
   a problem, or a feature (different access patterns for different clients)?
