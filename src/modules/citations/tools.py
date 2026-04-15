@@ -14,7 +14,7 @@ from fastmcp import FastMCP, Context
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import format_http_error
-from .models import CitationParseResult, CitationType, ParsedCitation
+from .models import CitationNetwork, CitationParseResult, CitationType, ParsedCitation
 from .patterns import (
     _compile_patterns,
     AMBIGUOUS_COURTS,
@@ -176,7 +176,7 @@ def register_tools(mcp: FastMCP) -> None:
         name="parse",
         annotations={"title": "Parse OSCOLA Citations", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
     )
-    async def citations_parse(params: CitationsParseInput, ctx: Context) -> str:
+    async def citations_parse(params: CitationsParseInput, ctx: Context) -> CitationParseResult:
         """Extract and classify all OSCOLA legal citations from free text.
 
         Identifies: neutral citations ([2024] UKSC 12), law reports ([2024] 1 WLR 100),
@@ -187,18 +187,13 @@ def register_tools(mcp: FastMCP) -> None:
         disambiguated via LLM sampling. Resolves citations to TNA / legislation.gov.uk URLs.
 
         Args:
-            params (CitationsParseInput): text (max 50,000 chars), disambiguate (bool).
-
-        Returns:
-            str: JSON CitationParseResult with citations (confident), ambiguous,
-                text_length, parse_duration_ms.
+            params: CitationsParseInput with text (max 50,000 chars) and disambiguate flag.
         """
         t0 = time.monotonic()
         patterns = _compile_patterns()
         confident, ambiguous = _extract_all_citations(params.text, patterns)
 
         if params.disambiguate and ambiguous:
-            upgraded = []
             still_ambiguous = []
             for c in ambiguous:
                 result = await _disambiguate_citation(ctx, c)
@@ -207,78 +202,75 @@ def register_tools(mcp: FastMCP) -> None:
 
         duration_ms = int((time.monotonic() - t0) * 1000)
         return CitationParseResult(
-            citations=confident, ambiguous=ambiguous,
-            text_length=len(params.text), parse_duration_ms=duration_ms,
-        ).model_dump_json(indent=2)
+            citations=confident,
+            ambiguous=ambiguous,
+            text_length=len(params.text),
+            parse_duration_ms=duration_ms,
+        )
 
     @mcp.tool(
         name="resolve",
         annotations={"title": "Resolve Single OSCOLA Citation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     )
-    async def citations_resolve(params: CitationsResolveInput) -> str:
+    async def citations_resolve(params: CitationsResolveInput) -> ParsedCitation:
         """Parse and resolve a single OSCOLA citation to its canonical URL.
 
         Supports: neutral citations, SIs, legislation sections, retained EU law.
-        Returns parsed fields and resolved_url if resolvable.
+        Returns parsed fields and resolved_url if resolvable. Raises ValueError
+        if no recognised citation is found in the input.
 
         Args:
-            params (CitationsResolveInput): A single citation string.
-
-        Returns:
-            str: JSON ParsedCitation with resolved_url if available, or error.
+            params: CitationsResolveInput with a single citation string.
         """
         patterns = _compile_patterns()
         confident, ambiguous = _extract_all_citations(params.citation.strip(), patterns)
         all_found = confident + ambiguous
         if not all_found:
-            return json.dumps({"error": (
+            raise ValueError(
                 f"No recognised OSCOLA citation found in '{params.citation}'. "
                 f"Supported: [YYYY] COURT N, [YYYY] N SERIES PAGE, s.N Act YYYY, SI YYYY/N, Regulation (EU) YYYY/N"
-            )})
-        return all_found[0].model_dump_json(indent=2)
+            )
+        return all_found[0]
 
     @mcp.tool(
         name="network",
         annotations={"title": "Get Case Citation Network", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def citations_network(params: CitationsNetworkInput, ctx: Context) -> str:
+    async def citations_network(params: CitationsNetworkInput, ctx: Context) -> CitationNetwork:
         """Map all citations within a judgment — cases cited, legislation referenced, SIs, EU law.
 
         Fetches the judgment XML from TNA and parses all OSCOLA citations within it.
-        Returns citations grouped by type for easy analysis.
+        Returns citations grouped by type for easy analysis. Each bucket is
+        de-duplicated and sorted.
 
         Args:
-            params (CitationsNetworkInput): case_uri — TNA slug e.g. 'uksc/2024/12'.
-
-        Returns:
-            str: JSON with case_uri, neutral_citations, legislation_refs, si_refs,
-                eu_refs, law_report_refs, total_citations.
+            params: CitationsNetworkInput with case_uri (TNA slug, e.g. 'uksc/2024/12').
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            uri = params.case_uri.lstrip("/")
-            resp = await client.get(f"{TNA_BASE}/{uri}/data.xml")
-            resp.raise_for_status()
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        uri = params.case_uri.lstrip("/")
+        resp = await client.get(f"{TNA_BASE}/{uri}/data.xml")
+        resp.raise_for_status()
 
-            patterns = _compile_patterns()
-            confident, ambiguous = _extract_all_citations(resp.text, patterns)
-            all_citations = confident + ambiguous
+        patterns = _compile_patterns()
+        confident, ambiguous = _extract_all_citations(resp.text, patterns)
+        all_citations = confident + ambiguous
 
-            network: dict[str, list[str]] = {
-                "neutral_citations": [], "legislation_refs": [], "si_refs": [], "eu_refs": [], "law_report_refs": [],
-            }
-            type_map = {
-                CitationType.NEUTRAL: "neutral_citations", CitationType.LEGISLATION: "legislation_refs",
-                CitationType.SI: "si_refs", CitationType.EU_RETAINED: "eu_refs", CitationType.LAW_REPORT: "law_report_refs",
-            }
-            for c in all_citations:
-                key = type_map.get(c.type)
-                if key:
-                    network[key].append(c.raw)
-            for key in network:
-                network[key] = sorted(set(network[key]))
+        buckets: dict[str, list[str]] = {
+            "neutral_citations": [], "legislation_refs": [], "si_refs": [], "eu_refs": [], "law_report_refs": [],
+        }
+        type_map = {
+            CitationType.NEUTRAL: "neutral_citations", CitationType.LEGISLATION: "legislation_refs",
+            CitationType.SI: "si_refs", CitationType.EU_RETAINED: "eu_refs", CitationType.LAW_REPORT: "law_report_refs",
+        }
+        for c in all_citations:
+            key = type_map.get(c.type)
+            if key:
+                buckets[key].append(c.raw)
+        for key in buckets:
+            buckets[key] = sorted(set(buckets[key]))
 
-            return json.dumps({"case_uri": uri, **network, "total_citations": sum(len(v) for v in network.values())}, indent=2)
-
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        return CitationNetwork(
+            case_uri=uri,
+            **buckets,
+            total_citations=sum(len(v) for v in buckets.values()),
+        )

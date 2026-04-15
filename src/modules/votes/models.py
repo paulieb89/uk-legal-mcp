@@ -42,3 +42,25 @@ class DivisionDetail(BaseModel):
     truncated: bool = Field(False, description="Whether voter lists were truncated to fit response limits")
     total_aye_voters: int = Field(0, description="Total number of Aye voters before truncation")
     total_noe_voters: int = Field(0, description="Total number of No voters before truncation")
+
+
+class DivisionsSearchResult(BaseModel):
+    """Result of a parliamentary divisions search.
+
+    Wraps the list of matching divisions with search metadata so the
+    LLM client sees a real nested object on the wire rather than a
+    stringified JSON blob.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    query: str | None = Field(None, description="The search term, if any (None = browse recent)")
+    house: str = Field(..., description="Commons or Lords")
+    total: int = Field(..., description="Number of divisions returned (capped upstream at 25)")
+    divisions: list[DivisionSummary] = Field(
+        default_factory=list,
+        description=(
+            "Matching divisions. Use the integer `id` field with "
+            "votes_get_division to fetch the full voter list."
+        ),
+    )

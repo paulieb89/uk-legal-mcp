@@ -14,7 +14,7 @@ from fastmcp import FastMCP, Context
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import format_http_error
-from .models import HMRCGuidanceResult, MTDStatus, VATRate
+from .models import HMRCGuidanceResult, HMRCGuidanceSearchResult, MTDStatus, VATRate
 
 HMRC_API_BASE = os.getenv("HMRC_API_BASE", "https://test-api.service.hmrc.gov.uk")
 GOVUK_SEARCH_BASE = "https://www.gov.uk/api/search.json"
@@ -174,39 +174,38 @@ def register_tools(mcp: FastMCP) -> None:
         name="search_guidance",
         annotations={"title": "Search HMRC Guidance", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def hmrc_search_guidance(params: HMRCGuidanceSearchInput, ctx: Context) -> str:
+    async def hmrc_search_guidance(params: HMRCGuidanceSearchInput, ctx: Context) -> HMRCGuidanceSearchResult:
         """Search GOV.UK for HMRC tax guidance documents.
 
         Returns matching guidance titles, URLs, summaries, and last-updated dates.
         Searches the official GOV.UK content API filtered to HMRC publications.
 
         Args:
-            params (HMRCGuidanceSearchInput): query — topic to search.
-
-        Returns:
-            str: JSON array of HMRCGuidanceResult objects (title, url, summary, updated).
+            params: HMRCGuidanceSearchInput with query (topic to search).
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            resp = await client.get(
-                GOVUK_SEARCH_BASE,
-                params={"q": params.query, "filter_organisations": "hm-revenue-customs", "fields[]": ["title", "description", "link", "public_timestamp"], "count": 10},
-            )
-            resp.raise_for_status()
-            results = []
-            for item in resp.json().get("results", []):
-                updated = None
-                ts = item.get("public_timestamp")
-                if ts:
-                    try:
-                        updated = date.fromisoformat(ts[:10])
-                    except ValueError:
-                        pass
-                results.append(HMRCGuidanceResult(
-                    title=item.get("title", "Unknown"),
-                    url=f"https://www.gov.uk{item.get('link', '')}",
-                    summary=item.get("description"), updated=updated,
-                ))
-            return json.dumps([r.model_dump(mode="json") for r in results], indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        resp = await client.get(
+            GOVUK_SEARCH_BASE,
+            params={"q": params.query, "filter_organisations": "hm-revenue-customs", "fields[]": ["title", "description", "link", "public_timestamp"], "count": 10},
+        )
+        resp.raise_for_status()
+        results: list[HMRCGuidanceResult] = []
+        for item in resp.json().get("results", []):
+            updated = None
+            ts = item.get("public_timestamp")
+            if ts:
+                try:
+                    updated = date.fromisoformat(ts[:10])
+                except ValueError:
+                    pass
+            results.append(HMRCGuidanceResult(
+                title=item.get("title", "Unknown"),
+                url=f"https://www.gov.uk{item.get('link', '')}",
+                summary=item.get("description"),
+                updated=updated,
+            ))
+        return HMRCGuidanceSearchResult(
+            query=params.query,
+            total=len(results),
+            results=results,
+        )

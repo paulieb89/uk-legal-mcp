@@ -42,3 +42,24 @@ class HMRCGuidanceResult(BaseModel):
     url: str = Field(..., description="GOV.UK URL for the guidance")
     summary: str | None = Field(None, description="Brief summary of the guidance content")
     updated: date | None = Field(None, description="Date the guidance was last updated")
+
+
+class HMRCGuidanceSearchResult(BaseModel):
+    """Result of an HMRC guidance search on GOV.UK.
+
+    Wraps the list of matching guidance documents with search metadata so
+    the LLM client sees a real nested object on the wire rather than a
+    stringified JSON blob.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    query: str = Field(..., description="The search query that was run")
+    total: int = Field(..., description="Number of guidance documents returned in this call")
+    results: list[HMRCGuidanceResult] = Field(
+        default_factory=list,
+        description=(
+            "Matching HMRC guidance pages. Each entry's `summary` is capped "
+            "per the max_summary_chars input parameter."
+        ),
+    )

@@ -14,7 +14,7 @@ from fastmcp import FastMCP, Context
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import format_http_error
-from .models import DivisionDetail, DivisionSummary, Voter
+from .models import DivisionDetail, DivisionSummary, DivisionsSearchResult, Voter
 
 COMMONS_VOTES_BASE = "https://commonsvotes-api.parliament.uk"
 LORDS_VOTES_BASE = "https://lordsvotes-api.parliament.uk"
@@ -102,46 +102,45 @@ def register_tools(mcp: FastMCP) -> None:
         name="search_divisions",
         annotations={"title": "Search Parliamentary Divisions", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def votes_search_divisions(params: DivisionSearchInput, ctx: Context) -> str:
+    async def votes_search_divisions(params: DivisionSearchInput, ctx: Context) -> DivisionsSearchResult:
         """Search parliamentary divisions (votes) in the Commons or Lords.
 
         Returns division summaries including title, date, vote counts, and whether the motion passed.
         Use votes_get_division with the division ID for full voter lists.
 
         Args:
-            params (DivisionSearchInput): optional query, house, date range, member filter.
-
-        Returns:
-            str: JSON array of DivisionSummary objects.
+            params: DivisionSearchInput with optional query, house, date range, member filter.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            url = _search_url(params.house)
-            qp: dict = {"queryParameters.take": 25}
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        url = _search_url(params.house)
+        qp: dict = {"queryParameters.take": 25}
 
-            if params.query:
-                qp["queryParameters.searchTerm"] = params.query
-            if params.from_date:
-                qp["queryParameters.startDate"] = params.from_date.isoformat()
-            if params.to_date:
-                qp["queryParameters.endDate"] = params.to_date.isoformat()
-            if params.member_id:
-                qp["queryParameters.memberId"] = params.member_id
+        if params.query:
+            qp["queryParameters.searchTerm"] = params.query
+        if params.from_date:
+            qp["queryParameters.startDate"] = params.from_date.isoformat()
+        if params.to_date:
+            qp["queryParameters.endDate"] = params.to_date.isoformat()
+        if params.member_id:
+            qp["queryParameters.memberId"] = params.member_id
 
-            resp = await client.get(url, params=qp)
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await client.get(url, params=qp)
+        resp.raise_for_status()
+        data = resp.json()
 
-            items = data if isinstance(data, list) else data.get("results", data.get("items", []))
+        items = data if isinstance(data, list) else data.get("results", data.get("items", []))
 
-            if params.house == "Lords":
-                divisions = [_parse_lords_summary(item) for item in items]
-            else:
-                divisions = [_parse_commons_summary(item) for item in items]
+        if params.house == "Lords":
+            divisions = [_parse_lords_summary(item) for item in items]
+        else:
+            divisions = [_parse_commons_summary(item) for item in items]
 
-            return json.dumps([d.model_dump(mode="json") for d in divisions], indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        return DivisionsSearchResult(
+            query=params.query,
+            house=params.house,
+            total=len(divisions),
+            divisions=divisions,
+        )
 
     @mcp.tool(
         name="get_division",

@@ -17,7 +17,18 @@ from fastmcp import FastMCP, Context
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import format_http_error
-from .models import HansardContribution, Interest, MemberInterestsPage, MemberResult, MemberSearchResult, PetitionSummary, PolicyVibeResult
+from .models import (
+    HansardContribution,
+    HansardSearchResult,
+    Interest,
+    MemberDebatesResult,
+    MemberInterestsPage,
+    MemberResult,
+    MemberSearchResult,
+    PetitionSearchResult,
+    PetitionSummary,
+    PolicyVibeResult,
+)
 
 HANSARD_API = "https://hansard-api.parliament.uk"
 QS_BASE = "https://questions-statements-api.parliament.uk/api"
@@ -180,41 +191,42 @@ def register_tools(mcp: FastMCP) -> None:
         name="search_hansard",
         annotations={"title": "Search Hansard Debates", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def parliament_search_hansard(params: HansardSearchInput, ctx: Context) -> str:
+    async def parliament_search_hansard(params: HansardSearchInput, ctx: Context) -> HansardSearchResult:
         """Search Hansard for parliamentary debates, questions, and speeches.
 
         Returns contributions from MPs and Lords including date, party, debate title,
-        and text. Useful for understanding legislative intent or political context.
+        and text (capped at 3000 chars per contribution). Useful for understanding
+        legislative intent or political context.
 
         Args:
-            params (HansardSearchInput): query, optional date range, optional member filter.
-
-        Returns:
-            str: JSON array of contributions (member_name, party, date,
-                debate_title, section, text, url).
+            params: HansardSearchInput with query, optional date range, optional member filter.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            qp: dict = {"searchTerm": f'"{params.query}"', "take": 20}
-            if params.from_date:
-                qp["startDate"] = params.from_date.isoformat()
-            if params.to_date:
-                qp["endDate"] = params.to_date.isoformat()
-            if params.member:
-                qp["member"] = params.member
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        qp: dict = {"searchTerm": f'"{params.query}"', "take": 20}
+        if params.from_date:
+            qp["startDate"] = params.from_date.isoformat()
+        if params.to_date:
+            qp["endDate"] = params.to_date.isoformat()
+        if params.member:
+            qp["member"] = params.member
 
-            resp = await client.get(f"{HANSARD_API}/search.json", params=qp)
-            resp.raise_for_status()
-            contributions = _parse_hansard_contributions(resp.json())
-            return json.dumps([c.model_dump(mode="json") for c in contributions], indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        resp = await client.get(f"{HANSARD_API}/search.json", params=qp)
+        resp.raise_for_status()
+        contributions = _parse_hansard_contributions(resp.json())
+        return HansardSearchResult(
+            query=params.query,
+            from_date=params.from_date,
+            to_date=params.to_date,
+            member=params.member,
+            total=len(contributions),
+            contributions=contributions,
+        )
 
     @mcp.tool(
         name="vibe_check",
         annotations={"title": "Parliamentary Policy Vibe Check", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
     )
-    async def parliament_vibe_check(params: PolicyVibeInput, ctx: Context) -> str:
+    async def parliament_vibe_check(params: PolicyVibeInput, ctx: Context) -> PolicyVibeResult:
         """Assess the likely parliamentary reception of a policy proposal.
 
         Searches Hansard for relevant debate contributions, then uses LLM sampling
@@ -223,64 +235,56 @@ def register_tools(mcp: FastMCP) -> None:
         Degrades gracefully if sampling is unavailable — returns contributions only.
 
         Args:
-            params (PolicyVibeInput): policy_text (full description), topic (search keyword).
-
-        Returns:
-            str: JSON PolicyVibeResult with contributions, sentiment_summary,
-                key_supporters, key_opponents, key_concerns.
+            params: PolicyVibeInput with policy_text (full description) and topic (search keyword).
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            resp = await client.get(
-                f"{HANSARD_API}/search.json",
-                params={"searchTerm": params.topic, "take": 15},
-            )
-            resp.raise_for_status()
-            contributions = _parse_hansard_contributions(resp.json())
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        resp = await client.get(
+            f"{HANSARD_API}/search.json",
+            params={"searchTerm": params.topic, "take": 15},
+        )
+        resp.raise_for_status()
+        contributions = _parse_hansard_contributions(resp.json())
 
-            if not contributions:
-                return PolicyVibeResult(
-                    query=params.topic, contributions=[],
-                    sentiment_summary="No Hansard contributions found for this topic.",
-                    key_supporters=[], key_opponents=[], key_concerns=[],
-                ).model_dump_json(indent=2)
-
-            contributions_text = "\n\n".join(
-                f"{c.member_name} ({c.party or 'Unknown'}, {c.date}):\n{c.text[:500]}"
-                for c in contributions[:10]
-            )
-            sample_prompt = (
-                f"Policy proposal: {params.policy_text}\n\n"
-                f"Relevant Hansard contributions:\n{contributions_text}\n\n"
-                f"Respond ONLY with a JSON object (no markdown fences):\n"
-                '{"sentiment_summary": "...", "key_supporters": [...], '
-                '"key_opponents": [...], "key_concerns": [...]}'
-            )
-
-            sentiment_summary = None
-            key_supporters: list[str] = []
-            key_opponents: list[str] = []
-            key_concerns: list[str] = []
-
-            try:
-                result = await ctx.sample(sample_prompt, result_type=str)
-                raw = (result.text or "").strip().lstrip("```json").lstrip("```").rstrip("```")
-                parsed = json.loads(raw)
-                sentiment_summary = parsed.get("sentiment_summary")
-                key_supporters = parsed.get("key_supporters", [])
-                key_opponents = parsed.get("key_opponents", [])
-                key_concerns = parsed.get("key_concerns", [])
-            except Exception:
-                sentiment_summary = "Sentiment analysis unavailable (sampling not supported by this client)."
-
+        if not contributions:
             return PolicyVibeResult(
-                query=params.topic, contributions=contributions,
-                sentiment_summary=sentiment_summary, key_supporters=key_supporters,
-                key_opponents=key_opponents, key_concerns=key_concerns,
-            ).model_dump_json(indent=2)
+                query=params.topic, contributions=[],
+                sentiment_summary="No Hansard contributions found for this topic.",
+                key_supporters=[], key_opponents=[], key_concerns=[],
+            )
 
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        contributions_text = "\n\n".join(
+            f"{c.member_name} ({c.party or 'Unknown'}, {c.date}):\n{c.text[:500]}"
+            for c in contributions[:10]
+        )
+        sample_prompt = (
+            f"Policy proposal: {params.policy_text}\n\n"
+            f"Relevant Hansard contributions:\n{contributions_text}\n\n"
+            f"Respond ONLY with a JSON object (no markdown fences):\n"
+            '{"sentiment_summary": "...", "key_supporters": [...], '
+            '"key_opponents": [...], "key_concerns": [...]}'
+        )
+
+        sentiment_summary: str | None = None
+        key_supporters: list[str] = []
+        key_opponents: list[str] = []
+        key_concerns: list[str] = []
+
+        try:
+            result = await ctx.sample(sample_prompt, result_type=str)
+            raw = (result.text or "").strip().lstrip("```json").lstrip("```").rstrip("```")
+            parsed = json.loads(raw)
+            sentiment_summary = parsed.get("sentiment_summary")
+            key_supporters = parsed.get("key_supporters", [])
+            key_opponents = parsed.get("key_opponents", [])
+            key_concerns = parsed.get("key_concerns", [])
+        except Exception:
+            sentiment_summary = "Sentiment analysis unavailable (sampling not supported by this client)."
+
+        return PolicyVibeResult(
+            query=params.topic, contributions=contributions,
+            sentiment_summary=sentiment_summary, key_supporters=key_supporters,
+            key_opponents=key_opponents, key_concerns=key_concerns,
+        )
 
     @mcp.tool(
         name="find_member",
@@ -319,28 +323,28 @@ def register_tools(mcp: FastMCP) -> None:
         name="member_debates",
         annotations={"title": "Get Member Debates", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def parliament_member_debates(params: MemberDebatesInput, ctx: Context) -> str:
+    async def parliament_member_debates(params: MemberDebatesInput, ctx: Context) -> MemberDebatesResult:
         """Retrieve Hansard contributions by a specific member, optionally filtered by topic.
 
-        Use parliament_find_member first to obtain the integer member ID.
+        Use parliament_find_member first to obtain the integer member ID. Each
+        contribution's text field is capped at 3000 characters.
 
         Args:
-            params (MemberDebatesInput): member_id (int), optional topic filter.
-
-        Returns:
-            str: JSON array of HansardContribution objects.
+            params: MemberDebatesInput with member_id and optional topic filter.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            qp: dict = {"member": params.member_id, "take": 20}
-            if params.topic:
-                qp["searchTerm"] = f'"{params.topic}"'
-            resp = await client.get(f"{HANSARD_API}/search.json", params=qp)
-            resp.raise_for_status()
-            contributions = _parse_hansard_contributions(resp.json())
-            return json.dumps([c.model_dump(mode="json") for c in contributions], indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        qp: dict = {"member": params.member_id, "take": 20}
+        if params.topic:
+            qp["searchTerm"] = f'"{params.topic}"'
+        resp = await client.get(f"{HANSARD_API}/search.json", params=qp)
+        resp.raise_for_status()
+        contributions = _parse_hansard_contributions(resp.json())
+        return MemberDebatesResult(
+            member_id=params.member_id,
+            topic=params.topic,
+            total=len(contributions),
+            contributions=contributions,
+        )
 
     @mcp.tool(
         name="member_interests",
@@ -404,47 +408,46 @@ def register_tools(mcp: FastMCP) -> None:
         name="search_petitions",
         annotations={"title": "Search UK Parliament Petitions", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def parliament_search_petitions(params: PetitionSearchInput, ctx: Context) -> str:
+    async def parliament_search_petitions(params: PetitionSearchInput, ctx: Context) -> PetitionSearchResult:
         """Search UK Parliament petitions by keyword.
 
         Returns petition title, state, signature count, and dates for government response
         or parliamentary debate if applicable.
 
         Args:
-            params (PetitionSearchInput): query and optional state filter.
-
-        Returns:
-            str: JSON array of PetitionSummary objects.
+            params: PetitionSearchInput with query and optional state filter.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            qp: dict = {"q": params.query, "count": 20}
-            if params.state != "all":
-                qp["state"] = params.state
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        qp: dict = {"q": params.query, "count": 20}
+        if params.state != "all":
+            qp["state"] = params.state
 
-            resp = await client.get(f"{PETITIONS_BASE}/petitions.json", params=qp)
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await client.get(f"{PETITIONS_BASE}/petitions.json", params=qp)
+        resp.raise_for_status()
+        data = resp.json()
 
-            petitions = []
-            for item in data.get("data", []):
-                attrs = item.get("attributes", item)
-                petition_id = item.get("id", 0)
+        petitions: list[PetitionSummary] = []
+        for item in data.get("data", []):
+            attrs = item.get("attributes", item)
+            petition_id = item.get("id", 0)
 
-                created = attrs.get("created_at")
-                gov_resp = attrs.get("government_response_at")
-                debate = attrs.get("debate_date") or attrs.get("scheduled_debate_date")
+            created = attrs.get("created_at")
+            gov_resp = attrs.get("government_response_at")
+            debate = attrs.get("debate_date") or attrs.get("scheduled_debate_date")
 
-                petitions.append(PetitionSummary(
-                    id=int(petition_id) if petition_id else 0,
-                    action=attrs.get("action", "Unknown"),
-                    state=attrs.get("state", "unknown"),
-                    signature_count=attrs.get("signature_count", 0),
-                    created_at=date.fromisoformat(created[:10]) if created else None,
-                    government_response_at=date.fromisoformat(gov_resp[:10]) if gov_resp else None,
-                    debate_date=date.fromisoformat(debate[:10]) if debate else None,
-                    url=f"https://petition.parliament.uk/petitions/{petition_id}",
-                ))
-            return json.dumps([p.model_dump(mode="json") for p in petitions], indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+            petitions.append(PetitionSummary(
+                id=int(petition_id) if petition_id else 0,
+                action=attrs.get("action", "Unknown"),
+                state=attrs.get("state", "unknown"),
+                signature_count=attrs.get("signature_count", 0),
+                created_at=date.fromisoformat(created[:10]) if created else None,
+                government_response_at=date.fromisoformat(gov_resp[:10]) if gov_resp else None,
+                debate_date=date.fromisoformat(debate[:10]) if debate else None,
+                url=f"https://petition.parliament.uk/petitions/{petition_id}",
+            ))
+        return PetitionSearchResult(
+            query=params.query,
+            state=params.state,
+            total=len(petitions),
+            petitions=petitions,
+        )

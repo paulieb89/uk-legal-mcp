@@ -63,3 +63,40 @@ class CitationParseResult(BaseModel):
     )
     text_length: int = Field(..., description="Character length of the input text")
     parse_duration_ms: int = Field(..., description="Time taken to parse, in milliseconds")
+
+
+class CitationNetwork(BaseModel):
+    """Citations found within a single judgment, grouped by type.
+
+    Each list contains the de-duplicated raw citation text as it appeared
+    in the source. To resolve any entry to a URL, pass it through
+    citations_resolve.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    case_uri: str = Field(..., description="The judgment URI that was fetched and parsed")
+    neutral_citations: list[str] = Field(
+        default_factory=list,
+        description="Neutral citations referenced, e.g. '[2020] UKSC 14'",
+    )
+    legislation_refs: list[str] = Field(
+        default_factory=list,
+        description="Legislation section references, e.g. 's.47 Companies Act 2006'",
+    )
+    si_refs: list[str] = Field(
+        default_factory=list,
+        description="Statutory Instrument references, e.g. 'SI 2018/1234'",
+    )
+    eu_refs: list[str] = Field(
+        default_factory=list,
+        description="Retained EU law references, e.g. 'Regulation (EU) 2016/679'",
+    )
+    law_report_refs: list[str] = Field(
+        default_factory=list,
+        description="Law report citations, e.g. '[2020] 1 WLR 100'",
+    )
+    total_citations: int = Field(
+        ...,
+        description="Sum of all de-duplicated citations across every bucket",
+    )
