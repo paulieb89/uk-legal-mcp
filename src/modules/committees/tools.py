@@ -14,7 +14,7 @@ from fastmcp import FastMCP, Context
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import format_http_error
-from .models import CommitteeDetail, CommitteeMember, CommitteeSummary, EvidenceItem
+from .models import CommitteeDetail, CommitteeMember, CommitteeSearchResult, CommitteeSummary, EvidenceItem
 
 COMMITTEES_BASE = "https://committees-api.parliament.uk/api"
 
@@ -30,6 +30,15 @@ class CommitteeSearchInput(BaseModel):
     ), max_length=300)
     house: Literal["Commons", "Lords", "Joint"] | None = Field(None, description="Filter by house.")
     active_only: bool = Field(True, description="If true, only return currently active committees.")
+    limit: int = Field(
+        100,
+        ge=1,
+        le=500,
+        description=(
+            "Maximum committees to return. Default 100 comfortably covers all "
+            "currently-active UK select committees. Raise only for historical sweeps."
+        ),
+    )
 
 
 class CommitteeDetailInput(BaseModel):
@@ -61,51 +70,51 @@ def register_tools(mcp: FastMCP) -> None:
         name="search_committees",
         annotations={"title": "Search Parliamentary Committees", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def committees_search_committees(params: CommitteeSearchInput, ctx: Context) -> str:
+    async def committees_search_committees(params: CommitteeSearchInput, ctx: Context) -> CommitteeSearchResult:
         """Search or list UK parliamentary select committees.
 
         Returns committee names, house, and active status.
         Use committees_get_committee with the committee ID for membership detail.
 
         Args:
-            params (CommitteeSearchInput): optional query, house, active_only filters.
-
-        Returns:
-            str: JSON array of CommitteeSummary objects.
+            params: CommitteeSearchInput with optional query, house, active_only, limit.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            qp: dict = {"Take": 200}
-            if params.active_only:
-                qp["CommitteeStatus"] = "Current"
-            if params.house:
-                qp["House"] = HOUSE_MAP.get(params.house)
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        qp: dict = {"Take": params.limit}
+        if params.active_only:
+            qp["CommitteeStatus"] = "Current"
+        if params.house:
+            qp["House"] = HOUSE_MAP.get(params.house)
 
-            resp = await client.get(f"{COMMITTEES_BASE}/Committees", params=qp)
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await client.get(f"{COMMITTEES_BASE}/Committees", params=qp)
+        resp.raise_for_status()
+        data = resp.json()
 
-            items = data.get("items", data.get("results", data)) if isinstance(data, dict) else data
-            if not isinstance(items, list):
-                items = []
+        items = data.get("items", data.get("results", data)) if isinstance(data, dict) else data
+        if not isinstance(items, list):
+            items = []
 
-            committees = []
-            for item in items:
-                name = item.get("name", "Unknown")
-                if params.query and params.query.lower() not in name.lower():
-                    continue
-                cid = item.get("id", 0)
-                committees.append(CommitteeSummary(
-                    id=cid,
-                    name=name,
-                    house=_parse_house(item.get("house")),
-                    is_active=True if params.active_only else None,
-                    url=f"https://committees.parliament.uk/committee/{cid}/",
-                ))
+        committees: list[CommitteeSummary] = []
+        for item in items:
+            name = item.get("name", "Unknown")
+            if params.query and params.query.lower() not in name.lower():
+                continue
+            cid = item.get("id", 0)
+            committees.append(CommitteeSummary(
+                id=cid,
+                name=name,
+                house=_parse_house(item.get("house")),
+                is_active=True if params.active_only else None,
+                url=f"https://committees.parliament.uk/committee/{cid}/",
+            ))
 
-            return json.dumps([c.model_dump() for c in committees], indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        return CommitteeSearchResult(
+            query=params.query,
+            house=params.house,
+            active_only=params.active_only,
+            total=len(committees),
+            committees=committees,
+        )
 
     @mcp.tool(
         name="get_committee",

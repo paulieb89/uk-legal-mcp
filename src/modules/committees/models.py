@@ -24,6 +24,21 @@ class CommitteeSummary(BaseModel):
     url: str | None = Field(None, description="Parliament URL for this committee")
 
 
+class CommitteeSearchResult(BaseModel):
+    """Result of a committees_search_committees call."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    query: str | None = Field(None, description="Name substring filter applied, or None")
+    house: str | None = Field(None, description="House filter applied, or None")
+    active_only: bool = Field(..., description="Whether results were restricted to currently active committees")
+    total: int = Field(..., description="Number of committees returned in this call")
+    committees: list[CommitteeSummary] = Field(
+        default_factory=list,
+        description="Matching committees. Use committees_get_committee for membership detail.",
+    )
+
+
 class CommitteeDetail(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
