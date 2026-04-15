@@ -134,53 +134,45 @@ def register_tools(mcp: FastMCP) -> None:
         name="search",
         annotations={"title": "Search UK Legislation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def legislation_search(params: LegislationSearchInput, ctx: Context) -> str:
+    async def legislation_search(params: LegislationSearchInput, ctx: Context) -> LegislationSearchResult:
         """Search UK legislation on legislation.gov.uk.
 
         Returns ranked results: title, type, year, number, and legislation.gov.uk URL.
         Use legislation_get_toc to explore structure, then legislation_get_section for provisions.
 
         Args:
-            params (LegislationSearchInput): query, optional type filter, optional year.
-
-        Returns:
-            str: JSON with results (title, type, year, number, url) and total count.
+            params: LegislationSearchInput with query, optional type filter, optional year.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
-            path = f"/{params.type}" if params.type else "/search"
-            qp: dict = {"text": params.query, "results-count": 20}
-            if params.year:
-                qp["year"] = params.year
+        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        path = f"/{params.type}" if params.type else "/search"
+        qp: dict = {"text": params.query, "results-count": 20}
+        if params.year:
+            qp["year"] = params.year
 
-            resp = await client.get(f"{LEGISLATION_BASE}{path}", params=qp)
-            resp.raise_for_status()
-            root = etree.fromstring(resp.content)
+        resp = await client.get(f"{LEGISLATION_BASE}{path}", params=qp)
+        resp.raise_for_status()
+        root = etree.fromstring(resp.content)
 
-            total_el = root.findtext(".//os:totalResults", namespaces=ATOM_NS)
-            total = int(total_el) if total_el else 0
+        total_el = root.findtext(".//os:totalResults", namespaces=ATOM_NS)
+        total = int(total_el) if total_el else 0
 
-            results = []
-            for entry in root.findall(".//a:entry", namespaces=ATOM_NS):
-                title = entry.findtext("a:title", namespaces=ATOM_NS) or "Unknown"
-                entry_id = entry.findtext("a:id", namespaces=ATOM_NS) or ""
+        results = []
+        for entry in root.findall(".//a:entry", namespaces=ATOM_NS):
+            title = entry.findtext("a:title", namespaces=ATOM_NS) or "Unknown"
+            entry_id = entry.findtext("a:id", namespaces=ATOM_NS) or ""
 
-                m = _ID_RE.search(entry_id)
-                if m:
-                    leg_type, yr, num = m.group(1), int(m.group(2)), int(m.group(3))
-                else:
-                    leg_type, yr, num = "unknown", 0, 0
+            m = _ID_RE.search(entry_id)
+            if m:
+                leg_type, yr, num = m.group(1), int(m.group(2)), int(m.group(3))
+            else:
+                leg_type, yr, num = "unknown", 0, 0
 
-                results.append(LegislationResult(
-                    title=title, type=leg_type, year=yr, number=num,
-                    score=None, url=f"{LEGISLATION_BASE}/{leg_type}/{yr}/{num}",
-                ))
+            results.append(LegislationResult(
+                title=title, type=leg_type, year=yr, number=num,
+                score=None, url=f"{LEGISLATION_BASE}/{leg_type}/{yr}/{num}",
+            ))
 
-            return LegislationSearchResult(
-                results=results, total=total or len(results),
-            ).model_dump_json(indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        return LegislationSearchResult(results=results, total=total or len(results))
 
     @mcp.tool(
         name="get_section",

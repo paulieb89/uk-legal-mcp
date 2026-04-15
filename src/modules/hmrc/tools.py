@@ -105,7 +105,7 @@ def register_tools(mcp: FastMCP) -> None:
         name="get_vat_rate",
         annotations={"title": "Get VAT Rate for Commodity", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     )
-    async def hmrc_get_vat_rate(params: HMRCVATRateInput) -> str:
+    async def hmrc_get_vat_rate(params: HMRCVATRateInput) -> VATRate:
         """Look up the UK VAT rate for a commodity or service type.
 
         Returns the rate category (standard 20%, reduced 5%, zero 0%, exempt),
@@ -114,21 +114,15 @@ def register_tools(mcp: FastMCP) -> None:
         Rates may have changed — always verify against GOV.UK for recent Budgets.
 
         Args:
-            params (HMRCVATRateInput): commodity_code — description of goods or service.
-
-        Returns:
-            str: JSON VATRate with commodity_code, rate, rate_percentage, effective_from, notes.
+            params: HMRCVATRateInput with the commodity_code (description of goods or service).
         """
-        try:
-            return _lookup_vat(params.commodity_code).model_dump_json(indent=2)
-        except Exception as e:
-            return json.dumps({"error": str(e)})
+        return _lookup_vat(params.commodity_code)
 
     @mcp.tool(
         name="check_mtd_status",
         annotations={"title": "Check MTD VAT Status", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def hmrc_check_mtd_status(params: HMRCMTDStatusInput, ctx: Context) -> str:
+    async def hmrc_check_mtd_status(params: HMRCMTDStatusInput, ctx: Context) -> MTDStatus:
         """Check a business's Making Tax Digital VAT mandate status via the HMRC API.
 
         NOTE: Connects to the HMRC sandbox by default. Set HMRC_API_BASE env var to
@@ -137,47 +131,44 @@ def register_tools(mcp: FastMCP) -> None:
         Returns whether the business is mandated for MTD, effective date, and trading name.
 
         Args:
-            params (HMRCMTDStatusInput): vrn — 9-digit VAT Registration Number.
-
-        Returns:
-            str: JSON MTDStatus with vrn, mandated, effective_date, trading_name.
+            params: HMRCMTDStatusInput with the 9-digit VAT Registration Number.
         """
         client_id = os.getenv("HMRC_CLIENT_ID")
         client_secret = os.getenv("HMRC_CLIENT_SECRET")
         if not client_id or not client_secret:
-            return json.dumps({"error": (
+            raise RuntimeError(
                 "HMRC OAuth credentials not configured. "
                 "Set HMRC_CLIENT_ID and HMRC_CLIENT_SECRET. "
                 "Register at https://developer.service.hmrc.gov.uk"
-            )})
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            token_resp = await client.post(
-                f"{HMRC_API_BASE}/oauth/token",
-                data={"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret, "scope": "read:vat"},
             )
-            token_resp.raise_for_status()
-            access_token = token_resp.json().get("access_token")
-            vrn = params.vrn.strip().lstrip("GB").lstrip("gb")
-            resp = await client.get(
-                f"{HMRC_API_BASE}/organisations/vat/{vrn}/obligations",
-                headers={"Authorization": f"Bearer {access_token}"},
-                params={"status": "O"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            obligations = data.get("obligations", [])
-            effective_date = None
-            if obligations:
-                start = obligations[0].get("start")
-                if start:
-                    effective_date = date.fromisoformat(start)
-            return MTDStatus(
-                vrn=vrn, mandated=len(obligations) > 0,
-                effective_date=effective_date, trading_name=data.get("tradingName"),
-            ).model_dump_json(indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        token_resp = await client.post(
+            f"{HMRC_API_BASE}/oauth/token",
+            data={"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret, "scope": "read:vat"},
+        )
+        token_resp.raise_for_status()
+        access_token = token_resp.json().get("access_token")
+        vrn = params.vrn.strip().lstrip("GB").lstrip("gb")
+        resp = await client.get(
+            f"{HMRC_API_BASE}/organisations/vat/{vrn}/obligations",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"status": "O"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        obligations = data.get("obligations", [])
+        effective_date = None
+        if obligations:
+            start = obligations[0].get("start")
+            if start:
+                effective_date = date.fromisoformat(start)
+        return MTDStatus(
+            vrn=vrn,
+            mandated=len(obligations) > 0,
+            effective_date=effective_date,
+            trading_name=data.get("tradingName"),
+        )
 
     @mcp.tool(
         name="search_guidance",

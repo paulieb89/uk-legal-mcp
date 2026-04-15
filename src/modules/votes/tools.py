@@ -147,59 +147,52 @@ def register_tools(mcp: FastMCP) -> None:
         name="get_division",
         annotations={"title": "Get Division Detail", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def votes_get_division(params: DivisionDetailInput, ctx: Context) -> str:
+    async def votes_get_division(params: DivisionDetailInput, ctx: Context) -> DivisionDetail:
         """Get full detail for a parliamentary division including how each member voted.
 
         Voter lists are truncated to 100 per side to fit response limits.
         Total voter counts are always accurate regardless of truncation.
 
         Args:
-            params (DivisionDetailInput): division_id and house.
-
-        Returns:
-            str: JSON DivisionDetail with vote counts and voter lists.
+            params: DivisionDetailInput with division_id and house.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            url = _detail_url(params.house, params.division_id)
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        url = _detail_url(params.house, params.division_id)
 
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await client.get(url)
+        resp.raise_for_status()
+        data = resp.json()
 
-            if params.house == "Lords":
-                title = data.get("title", data.get("Title", "Unknown"))
-                div_date = date.fromisoformat(data.get("date", data.get("Date", "1970-01-01"))[:10])
-                aye_list = data.get("contents", data.get("Contents", []))
-                noe_list = data.get("notContents", data.get("NotContents", []))
-                is_gov_win = data.get("isGovernmentWin", data.get("IsGovernmentWin"))
-            else:
-                title = data.get("Title", "Unknown")
-                div_date = date.fromisoformat(data.get("Date", "1970-01-01")[:10])
-                aye_list = data.get("Ayes", [])
-                noe_list = data.get("Noes", [])
-                is_gov_win = None
+        if params.house == "Lords":
+            title = data.get("title", data.get("Title", "Unknown"))
+            div_date = date.fromisoformat(data.get("date", data.get("Date", "1970-01-01"))[:10])
+            aye_list = data.get("contents", data.get("Contents", []))
+            noe_list = data.get("notContents", data.get("NotContents", []))
+            is_gov_win = data.get("isGovernmentWin", data.get("IsGovernmentWin"))
+        else:
+            title = data.get("Title", "Unknown")
+            div_date = date.fromisoformat(data.get("Date", "1970-01-01")[:10])
+            aye_list = data.get("Ayes", [])
+            noe_list = data.get("Noes", [])
+            is_gov_win = None
 
-            all_ayes = _parse_voters(aye_list)
-            all_noes = _parse_voters(noe_list)
+        all_ayes = _parse_voters(aye_list)
+        all_noes = _parse_voters(noe_list)
 
-            truncated = len(all_ayes) > MAX_VOTERS_PER_SIDE or len(all_noes) > MAX_VOTERS_PER_SIDE
+        truncated = len(all_ayes) > MAX_VOTERS_PER_SIDE or len(all_noes) > MAX_VOTERS_PER_SIDE
 
-            detail = DivisionDetail(
-                id=params.division_id,
-                title=title,
-                date=div_date,
-                house=params.house,
-                ayes_count=len(all_ayes),
-                noes_count=len(all_noes),
-                passed=len(all_ayes) > len(all_noes),
-                is_government_win=is_gov_win,
-                aye_voters=all_ayes[:MAX_VOTERS_PER_SIDE],
-                noe_voters=all_noes[:MAX_VOTERS_PER_SIDE],
-                truncated=truncated,
-                total_aye_voters=len(all_ayes),
-                total_noe_voters=len(all_noes),
-            )
-            return detail.model_dump_json(indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        return DivisionDetail(
+            id=params.division_id,
+            title=title,
+            date=div_date,
+            house=params.house,
+            ayes_count=len(all_ayes),
+            noes_count=len(all_noes),
+            passed=len(all_ayes) > len(all_noes),
+            is_government_win=is_gov_win,
+            aye_voters=all_ayes[:MAX_VOTERS_PER_SIDE],
+            noe_voters=all_noes[:MAX_VOTERS_PER_SIDE],
+            truncated=truncated,
+            total_aye_voters=len(all_ayes),
+            total_noe_voters=len(all_noes),
+        )

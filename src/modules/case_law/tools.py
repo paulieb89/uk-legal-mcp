@@ -160,33 +160,26 @@ def register_tools(mcp: FastMCP) -> None:
         name="search",
         annotations={"title": "Search UK Case Law", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def case_law_search(params: CaseLawSearchInput, ctx: Context) -> str:
+    async def case_law_search(params: CaseLawSearchInput, ctx: Context) -> JudgmentSearchResult:
         """Search UK case law via the TNA Find Case Law API.
 
         Returns paginated judgment summaries: neutral citations, court, dates, stable URIs.
         Use case_law_get_judgment with the returned uri to fetch full text.
 
         Args:
-            params (CaseLawSearchInput): query, optional filters (court, judge, party,
-                from_date, to_date), page number.
-
-        Returns:
-            str: JSON with results (uri, title, court, published, updated,
-                identifiers, xml_url, pdf_url), page, has_more, total_pages.
+            params: CaseLawSearchInput with query, optional filters (court, judge,
+                party, from_date, to_date), and page number.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
-            qp: dict = {"query": params.query, "page": params.page}
-            if params.court: qp["court"] = params.court
-            if params.judge: qp["judge"] = params.judge
-            if params.party: qp["party"] = params.party
-            if params.from_date: qp["from"] = params.from_date.isoformat()
-            if params.to_date: qp["to"] = params.to_date.isoformat()
-            resp = await client.get(f"{TNA_BASE}/atom.xml", params=qp)
-            resp.raise_for_status()
-            return _parse_atom_feed(resp.content).model_dump_json(indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        qp: dict = {"query": params.query, "page": params.page}
+        if params.court: qp["court"] = params.court
+        if params.judge: qp["judge"] = params.judge
+        if params.party: qp["party"] = params.party
+        if params.from_date: qp["from"] = params.from_date.isoformat()
+        if params.to_date: qp["to"] = params.to_date.isoformat()
+        resp = await client.get(f"{TNA_BASE}/atom.xml", params=qp)
+        resp.raise_for_status()
+        return _parse_atom_feed(resp.content)
 
     @mcp.tool(
         name="get_judgment",
