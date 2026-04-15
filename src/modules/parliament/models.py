@@ -45,6 +45,27 @@ class MemberResult(BaseModel):
     is_current: bool = Field(..., description="Whether the member currently sits")
 
 
+class MemberSearchResult(BaseModel):
+    """Result of a parliament member name search.
+
+    Wraps the list of matching members with search metadata so the
+    LLM client sees a real nested object on the wire rather than a
+    stringified JSON blob.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    query: str = Field(..., description="The name that was searched")
+    total: int = Field(..., description="Number of members matching the query")
+    members: list[MemberResult] = Field(
+        default_factory=list,
+        description=(
+            "Matching members. Use the integer `id` field from any member "
+            "to call parliament_member_debates or parliament_member_interests."
+        ),
+    )
+
+
 class Interest(BaseModel):
     """A single registered financial interest."""
 

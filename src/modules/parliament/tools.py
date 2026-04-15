@@ -17,7 +17,7 @@ from fastmcp import FastMCP, Context
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import format_http_error
-from .models import HansardContribution, Interest, MemberInterests, MemberResult, PetitionSummary, PolicyVibeResult
+from .models import HansardContribution, Interest, MemberInterests, MemberResult, MemberSearchResult, PetitionSummary, PolicyVibeResult
 
 HANSARD_API = "https://hansard-api.parliament.uk"
 QS_BASE = "https://questions-statements-api.parliament.uk/api"
@@ -258,37 +258,34 @@ def register_tools(mcp: FastMCP) -> None:
         name="find_member",
         annotations={"title": "Find Member of Parliament", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def parliament_find_member(params: FindMemberInput, ctx: Context) -> str:
+    async def parliament_find_member(params: FindMemberInput, ctx: Context) -> MemberSearchResult:
         """Search for a current or former MP or Lord by name.
 
-        Returns member ID, party, constituency, house, and current status.
-        Use the integer member_id with parliament_member_debates.
+        Returns all members matching the name query, each with the integer
+        `id` required by parliament_member_debates and parliament_member_interests,
+        plus party, constituency, house, and current-sitting status.
 
         Args:
-            params (FindMemberInput): name — full or partial member name.
-
-        Returns:
-            str: JSON array of MemberResult objects (id, name, party, constituency, house, is_current).
+            params: FindMemberInput with the name (full or partial).
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            resp = await client.get(f"{MEMBERS_BASE}/Members/Search", params={"Name": params.name})
-            resp.raise_for_status()
-            data = resp.json()
-            members = []
-            for item in data.get("items", []):
-                v = item.get("value", item)
-                house_id = v.get("latestHouseMembership", {}).get("house", 1)
-                members.append(MemberResult(
-                    id=v.get("id", 0), name=v.get("nameDisplayAs", "Unknown"),
-                    party=v.get("latestParty", {}).get("name", "Unknown"),
-                    constituency=v.get("latestHouseMembership", {}).get("membershipFrom"),
-                    house="Commons" if house_id == 1 else "Lords",
-                    is_current=v.get("latestHouseMembership", {}).get("membershipStatus", {}).get("statusIsActive", False),
-                ))
-            return json.dumps([m.model_dump() for m in members], indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        resp = await client.get(f"{MEMBERS_BASE}/Members/Search", params={"Name": params.name})
+        resp.raise_for_status()
+
+        members: list[MemberResult] = []
+        for item in resp.json().get("items", []):
+            v = item.get("value", item)
+            house_id = v.get("latestHouseMembership", {}).get("house", 1)
+            members.append(MemberResult(
+                id=v.get("id", 0),
+                name=v.get("nameDisplayAs", "Unknown"),
+                party=v.get("latestParty", {}).get("name", "Unknown"),
+                constituency=v.get("latestHouseMembership", {}).get("membershipFrom"),
+                house="Commons" if house_id == 1 else "Lords",
+                is_current=v.get("latestHouseMembership", {}).get("membershipStatus", {}).get("statusIsActive", False),
+            ))
+
+        return MemberSearchResult(query=params.name, total=len(members), members=members)
 
     @mcp.tool(
         name="member_debates",
