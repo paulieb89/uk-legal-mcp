@@ -43,6 +43,17 @@ class LegislationGetSectionInput(BaseModel):
     year: int = Field(..., description="Year of enactment", ge=1800, le=2100)
     number: int = Field(..., description="Chapter or SI number", ge=1)
     section: str = Field(..., description="Section number, e.g. '47' or '12A'. Use the numeric part only — not 'section-47'. Schedules are not currently supported.", min_length=1, max_length=50)
+    max_chars: int = Field(
+        10000,
+        ge=500,
+        le=200000,
+        description=(
+            "Maximum characters of section content to return. Default 10,000 "
+            "(~2,500 tokens) covers almost every section. Raise to 50,000+ "
+            "only for unusually long Finance Act definition sections. "
+            "Check content_truncated in the response to see if it was cut."
+        ),
+    )
 
 
 class LegislationGetTocInput(BaseModel):
@@ -53,8 +64,8 @@ class LegislationGetTocInput(BaseModel):
     number: int = Field(..., description="Chapter or SI number", ge=1)
 
 
-def _parse_clml_section(xml_text: str, section: str) -> LegislationSection:
-    """Extract a section from CLML XML."""
+def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> LegislationSection:
+    """Extract a section from CLML XML, truncating content to max_chars."""
     from lxml import etree
     root = etree.fromstring(xml_text.encode())
     ns = {
@@ -67,7 +78,10 @@ def _parse_clml_section(xml_text: str, section: str) -> LegislationSection:
 
     # Try to find the specific section element
     section_el = root.find(f".//leg:P1[@id='section-{section}']", ns)
-    content = extract_text(section_el) if section_el is not None else extract_text(root)
+    raw_content = extract_text(section_el) if section_el is not None else extract_text(root)
+    original_length = len(raw_content)
+    truncated = original_length > max_chars
+    content = raw_content[:max_chars] + " …[truncated]" if truncated else raw_content
 
     extent_el = root.find(".//ukm:Extent", ns)
     extent_text = extent_el.get("Value", "") if extent_el is not None else ""
@@ -87,10 +101,15 @@ def _parse_clml_section(xml_text: str, section: str) -> LegislationSection:
     title = title_el.text.strip() if title_el is not None and title_el.text else f"Section {section}"
 
     return LegislationSection(
-        title=title, section_number=section, content=content[:10000],
+        title=title,
+        section_number=section,
+        content=content,
+        content_truncated=truncated,
+        original_length=original_length,
         in_force=not prospective if extent else None,
         extent=extent or ["England", "Wales", "Scotland", "Northern Ireland"],
-        version_date=version_date, prospective=prospective,
+        version_date=version_date,
+        prospective=prospective,
     )
 
 
@@ -167,28 +186,25 @@ def register_tools(mcp: FastMCP) -> None:
         name="get_section",
         annotations={"title": "Get Legislation Section", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def legislation_get_section(params: LegislationGetSectionInput, ctx: Context) -> str:
+    async def legislation_get_section(params: LegislationGetSectionInput, ctx: Context) -> LegislationSection:
         """Retrieve a specific section of a UK Act or Statutory Instrument.
 
-        Returns section text, territorial extent, in-force status, and prospective flag.
+        Returns the full section text, territorial extent, in-force status,
+        and prospective flag. Content is capped per max_chars (default 10,000,
+        ~2,500 tokens) — raise max_chars for unusually long definition
+        sections. Check content_truncated in the response to see if it was cut.
 
-        IMPORTANT: Always check 'extent' — a section may apply to England & Wales
-        but not Scotland or Northern Ireland.
+        IMPORTANT: Always check `extent` — a section may apply to England &
+        Wales but not Scotland or Northern Ireland.
 
         Args:
-            params (LegislationGetSectionInput): type, year, number, section identifier.
-
-        Returns:
-            str: JSON with title, section_number, content, in_force, extent, version_date, prospective.
+            params: type, year, number, section identifier, optional max_chars.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
-            url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/section/{params.section}/data.xml"
-            resp = await client.get(url)
-            resp.raise_for_status()
-            return _parse_clml_section(resp.text, params.section).model_dump_json(indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/section/{params.section}/data.xml"
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return _parse_clml_section(resp.text, params.section, params.max_chars)
 
     @mcp.tool(
         name="get_toc",

@@ -46,7 +46,18 @@ class LegislationSection(BaseModel):
 
     title: str = Field(..., description="Section title or heading")
     section_number: str = Field(..., description="Section number, e.g. '47', '12A', 'Schedule 2'")
-    content: str = Field(..., description="Plain text content of the section")
+    content: str = Field(..., description=(
+        "Plain text content of the section, possibly truncated per max_chars. "
+        "Check content_truncated and original_length for full-text information."
+    ))
+    content_truncated: bool = Field(
+        False,
+        description="True if content was cut to fit max_chars",
+    )
+    original_length: int = Field(
+        0,
+        description="Original plain-text length in characters before any truncation",
+    )
     in_force: bool | None = Field(None, description="Whether this section is currently in force; None if unknown")
     extent: list[str] = Field(
         default_factory=list,
