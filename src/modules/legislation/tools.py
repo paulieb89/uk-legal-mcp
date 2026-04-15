@@ -16,7 +16,7 @@ from lxml import etree
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import format_http_error
-from .models import LegislationResult, LegislationSearchResult, LegislationSection
+from .models import LegislationResult, LegislationSearchResult, LegislationSection, LegislationTOC
 
 LEGISLATION_BASE = "https://www.legislation.gov.uk"
 
@@ -62,6 +62,25 @@ class LegislationGetTocInput(BaseModel):
     type: str = Field(..., description="Legislation type code: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). Use the value from legislation_search results.", min_length=2, max_length=10)
     year: int = Field(..., description="Year of enactment", ge=1800, le=2100)
     number: int = Field(..., description="Chapter or SI number", ge=1)
+    offset: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Number of items to skip from the flattened TOC. Use with "
+            "limit to page through very large statutes like the Companies "
+            "Act 2006 (1300+ items)."
+        ),
+    )
+    limit: int = Field(
+        200,
+        ge=1,
+        le=1000,
+        description=(
+            "Maximum items to return in this call (default 200, max 1000). "
+            "Raise only when you need a larger slice in one response. "
+            "Check has_more and total_items to know if further pages exist."
+        ),
+    )
 
 
 def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> LegislationSection:
@@ -114,7 +133,11 @@ def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> Legislat
 
 
 def _parse_toc_xml(xml_text: str) -> list[str]:
-    """Extract table of contents from CLML XML."""
+    """Extract the full table of contents from CLML XML.
+
+    Returns every structural element that has an @id and a <Title>, in
+    document order. No slicing — callers apply offset/limit themselves.
+    """
     from lxml import etree
     root = etree.fromstring(xml_text.encode())
     ns = {"leg": "http://www.legislation.gov.uk/namespaces/legislation"}
@@ -125,7 +148,7 @@ def _parse_toc_xml(xml_text: str) -> list[str]:
             title_el = el.find("leg:Title", ns)
             if title_el is not None and title_el.text:
                 items.append(f"{id_val}: {title_el.text.strip()}")
-    return items[:200]
+    return items
 
 
 def register_tools(mcp: FastMCP) -> None:
@@ -202,24 +225,36 @@ def register_tools(mcp: FastMCP) -> None:
         name="get_toc",
         annotations={"title": "Get Legislation Table of Contents", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def legislation_get_toc(params: LegislationGetTocInput, ctx: Context) -> str:
+    async def legislation_get_toc(params: LegislationGetTocInput, ctx: Context) -> LegislationTOC:
         """Retrieve the table of contents for a UK Act or SI.
 
         Returns structural elements (parts, chapters, sections, schedules) with XML id
         and title, e.g. 'section-47: Definitions'. When calling legislation_get_section,
         pass only the numeric part — use '47', not 'section-47'.
 
-        Args:
-            params (LegislationGetTocInput): type, year, number.
+        Large statutes (Companies Act 2006 has 1300+ items) are paginated
+        via offset/limit. Check has_more and total_items on the response.
 
-        Returns:
-            str: JSON array of strings in format 'section-N: Title text'.
+        Args:
+            params: LegislationGetTocInput with type, year, number, offset, limit.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
-            url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/data.xml"
-            resp = await client.get(url)
-            resp.raise_for_status()
-            return json.dumps(_parse_toc_xml(resp.text), indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/data.xml"
+        resp = await client.get(url)
+        resp.raise_for_status()
+
+        all_items = _parse_toc_xml(resp.text)
+        total_items = len(all_items)
+        page = all_items[params.offset : params.offset + params.limit]
+
+        return LegislationTOC(
+            type=params.type,
+            year=params.year,
+            number=params.number,
+            offset=params.offset,
+            limit=params.limit,
+            returned=len(page),
+            total_items=total_items,
+            has_more=(params.offset + len(page)) < total_items,
+            items=page,
+        )
