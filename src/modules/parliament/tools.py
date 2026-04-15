@@ -17,7 +17,7 @@ from fastmcp import FastMCP, Context
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import format_http_error
-from .models import HansardContribution, Interest, MemberInterests, MemberResult, MemberSearchResult, PetitionSummary, PolicyVibeResult
+from .models import HansardContribution, Interest, MemberInterestsPage, MemberResult, MemberSearchResult, PetitionSummary, PolicyVibeResult
 
 HANSARD_API = "https://hansard-api.parliament.uk"
 QS_BASE = "https://questions-statements-api.parliament.uk/api"
@@ -39,10 +39,6 @@ INTEREST_CATEGORIES: dict[str, int] = {
     "family_employed": 10,
     "family_lobbying": 11,
 }
-
-MAX_INTEREST_PAGES = 5
-INTERESTS_PAGE_SIZE = 20
-
 
 class HansardSearchInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -109,6 +105,38 @@ class MemberInterestsInput(BaseModel):
         "'employment' (employment and earnings), 'land' (land and property), "
         "'shareholdings', 'overseas_visits'. Omit for all categories."
     ))
+    offset: int = Field(
+        0,
+        ge=0,
+        le=500,
+        description=(
+            "Number of interests to skip before this page. Default 0 for "
+            "the first page. To paginate prolific members (100+ interests), "
+            "re-call with offset=offset+returned while the previous response "
+            "had has_more=true."
+        ),
+    )
+    limit: int = Field(
+        20,
+        ge=1,
+        le=100,
+        description=(
+            "Maximum interests to return in this call. Default 20 keeps "
+            "responses focused; raise to 50 or 100 only when you need a "
+            "bulk view and have context headroom to spend."
+        ),
+    )
+    max_description_chars: int = Field(
+        500,
+        ge=50,
+        le=5000,
+        description=(
+            "Per-entry cap on the free-text description field. Default 500 "
+            "prevents context blow-up on members with lengthy donation or "
+            "directorship narratives. Raise to 2000+ only for forensic "
+            "provenance work."
+        ),
+    )
 
 
 def _strip_html(text: str) -> str:
@@ -318,55 +346,59 @@ def register_tools(mcp: FastMCP) -> None:
         name="member_interests",
         annotations={"title": "Get Member Financial Interests", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def parliament_member_interests(params: MemberInterestsInput, ctx: Context) -> str:
+    async def parliament_member_interests(params: MemberInterestsInput, ctx: Context) -> MemberInterestsPage:
         """Look up registered financial interests for a member of Parliament.
 
-        Use parliament_find_member first to obtain the integer member ID.
-        Returns interests across categories like employment, donations, land,
-        shareholdings, and overseas visits.
+        Returns ONE PAGE of interests (default 20, caller controls via limit).
+        For prolific members (big donors, many directorships, extensive land
+        holdings), re-call with offset=offset+returned while has_more is true
+        to paginate. Description text is capped per max_description_chars;
+        raise it for forensic provenance work that needs the full narrative.
+
+        Use parliament_find_member first to obtain the integer member_id.
 
         Args:
-            params (MemberInterestsInput): member_id, optional category filter.
-
-        Returns:
-            str: JSON MemberInterests with list of Interest objects.
+            params: member_id, optional category filter, pagination (offset/limit),
+                and max_description_chars content cap.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            qp: dict = {"MemberId": params.member_id, "Take": INTERESTS_PAGE_SIZE, "Skip": 0}
-            if params.category:
-                qp["CategoryId"] = INTEREST_CATEGORIES.get(params.category)
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        qp: dict = {
+            "MemberId": params.member_id,
+            "Skip": params.offset,
+            "Take": params.limit,
+        }
+        if params.category:
+            qp["CategoryId"] = INTEREST_CATEGORIES.get(params.category)
 
-            all_interests: list[Interest] = []
-            for page in range(MAX_INTEREST_PAGES):
-                qp["Skip"] = page * INTERESTS_PAGE_SIZE
-                resp = await client.get(f"{INTERESTS_BASE}/Interests", params=qp)
-                resp.raise_for_status()
-                data = resp.json()
+        resp = await client.get(f"{INTERESTS_BASE}/Interests", params=qp)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("items", data.get("results", []))
 
-                items = data.get("items", data.get("results", []))
-                for item in items:
-                    created = item.get("registrationDate") or item.get("publishedDate")
-                    category_obj = item.get("category", {})
-                    category_name = category_obj.get("name", "Unknown") if isinstance(category_obj, dict) else str(category_obj)
-                    all_interests.append(Interest(
-                        category=category_name,
-                        description=item.get("summary", item.get("interest", "")),
-                        date_created=date.fromisoformat(created[:10]) if created else None,
-                        date_amended=None,
-                    ))
+        interests: list[Interest] = []
+        for item in items:
+            created = item.get("registrationDate") or item.get("publishedDate")
+            category_obj = item.get("category", {})
+            category_name = category_obj.get("name", "Unknown") if isinstance(category_obj, dict) else str(category_obj)
+            desc = item.get("summary", item.get("interest", ""))
+            if len(desc) > params.max_description_chars:
+                desc = desc[: params.max_description_chars] + " …[truncated]"
+            interests.append(Interest(
+                category=category_name,
+                description=desc,
+                date_created=date.fromisoformat(created[:10]) if created else None,
+                date_amended=None,
+            ))
 
-                if len(items) < INTERESTS_PAGE_SIZE:
-                    break
-
-            result = MemberInterests(
-                member_id=params.member_id,
-                interests=all_interests,
-                total=len(all_interests),
-            )
-            return result.model_dump_json(indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        return MemberInterestsPage(
+            member_id=params.member_id,
+            category=params.category,
+            offset=params.offset,
+            limit=params.limit,
+            returned=len(interests),
+            has_more=len(items) == params.limit,  # full page → there may be more
+            interests=interests,
+        )
 
     @mcp.tool(
         name="search_petitions",

@@ -77,14 +77,37 @@ class Interest(BaseModel):
     date_amended: Date | None = Field(None, description="Date the interest was last amended")
 
 
-class MemberInterests(BaseModel):
-    """A member's registered financial interests."""
+class MemberInterestsPage(BaseModel):
+    """A page of registered financial interests for a member.
+
+    Returned by parliament_member_interests. Callers paginate by
+    re-calling with offset=offset+returned while has_more is True.
+    """
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
     member_id: int = Field(..., description="Parliament Members API member ID")
-    interests: list[Interest] = Field(default_factory=list, description="Registered interests")
-    total: int = Field(0, description="Total number of interests returned")
+    category: str | None = Field(
+        None,
+        description="Category filter applied to this query, or None for all categories",
+    )
+    offset: int = Field(..., description="Number of interests skipped before this page")
+    limit: int = Field(..., description="Max interests requested for this page")
+    returned: int = Field(..., description="Number of interests actually returned in this call")
+    has_more: bool = Field(
+        ...,
+        description=(
+            "True if there may be more interests beyond this page. "
+            "Re-call with offset=offset+returned to fetch the next page."
+        ),
+    )
+    interests: list[Interest] = Field(
+        default_factory=list,
+        description=(
+            "The interests in this page. `description` text is capped per "
+            "the max_description_chars input parameter."
+        ),
+    )
 
 
 class PetitionSummary(BaseModel):
