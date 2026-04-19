@@ -8,7 +8,6 @@ This is the primary differentiator of uk-legal-mcp.
 from fastmcp import FastMCP
 
 from .tools import register_tools
-from .resources import register_resources
 
 citations_mcp = FastMCP(
     name="citations",
@@ -23,6 +22,9 @@ citations_mcp = FastMCP(
 )
 
 register_tools(citations_mcp)
-register_resources(citations_mcp)
+# Resources removed 2026-04-19: the two former templates (citations://resolve/{slug}
+# and citations://network/{tna_uri}) duplicated the tools, returned json.dumps
+# strings instead of structured data, and had a wildcard-substitution bug.
+# Use citations_resolve / citations_network tools directly.
 
 __all__ = ["citations_mcp"]

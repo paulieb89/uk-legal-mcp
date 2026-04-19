@@ -246,7 +246,10 @@ def register_tools(mcp: FastMCP) -> None:
         Args:
             params: CitationsNetworkInput with case_uri (TNA slug, e.g. 'uksc/2024/12').
         """
-        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        # xml_http has the right Accept headers (atom+xml, application/xml)
+        # for data.xml endpoints. The JSON `http` client was previously used
+        # here and caused content-negotiation issues on some URLs.
+        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
         uri = params.case_uri.lstrip("/")
         resp = await client.get(f"{TNA_BASE}/{uri}/data.xml")
         resp.raise_for_status()

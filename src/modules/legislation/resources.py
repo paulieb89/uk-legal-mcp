@@ -1,12 +1,24 @@
 """Resource templates for UK legislation (legislation.gov.uk CLML XML).
 
 Registered on the GATEWAY, not on the sub-MCP, because mounted sub-MCPs
-silently break RFC 6570 wildcard substitution. See issue #3.
+silently break RFC 6570 wildcard substitution (see issue #3).
 
 URI scheme `legislation` is RFC-3986 compliant.
+
+## Why these specific resources and no others
+
+The earlier `legislation://{type}/{year}/{number}` (whole Act) and
+`legislation://{type}/{year}/{number}/{date}` (whole Act at a date)
+were removed 2026-04-19 after the fleet audit flagged them as a
+context-blowout footgun — DPA 2018 is 5.9MB, Companies Act 2006 hits
+AWS WAF. Bulk consumers can hit legislation.gov.uk directly.
+
+Point-in-time research is preserved via an optional `{?date}` query
+parameter on the two bounded resources below. An LLM doing compliance
+research reads one section (or the TOC) at a specific historical date,
+not the whole Act.
 """
 
-import httpx
 from fastmcp import Context, FastMCP
 from lxml import etree
 
@@ -31,69 +43,62 @@ def register_legislation_resources(gateway: FastMCP) -> None:
     """Register legislation resource templates on the gateway."""
 
     @gateway.resource(
-        "legislation://{type}/{year}/{number}",
-        name="UK Legislation (full CLML XML)",
-        description="Full text of an Act or SI as CLML XML. Example: legislation://ukpga/2018/12",
-        mime_type="application/xml",
-        annotations={"readOnlyHint": True, "idempotentHint": True},
-        tags={"legislation", "clml", "full_text"},
-    )
-    async def legislation_full(type: str, year: str, number: str, ctx: Context) -> str:
-        client = ctx.lifespan_context["legislation_http"]
-        resp = await client.get(f"{LEGISLATION_BASE}/{type}/{year}/{number}/data.xml")
-        resp.raise_for_status()
-        return resp.text
-
-    @gateway.resource(
-        "legislation://{type}/{year}/{number}/section/{section}",
+        "legislation://{type}/{year}/{number}/section/{section}{?date}",
         name="UK Legislation Section (CLML XML)",
-        description="Specific section as CLML XML. Example: legislation://ukpga/2006/46/section/172",
+        description=(
+            "CLML XML for a specific section of an Act or SI. Example: "
+            "legislation://ukpga/2006/46/section/172. "
+            "Optional ?date=YYYY-MM-DD returns the section as it stood on "
+            "that date (for compliance audits, pre/post-amendment comparisons, "
+            "or historical legal research)."
+        ),
         mime_type="application/xml",
         annotations={"readOnlyHint": True, "idempotentHint": True},
         tags={"legislation", "clml", "section"},
     )
     async def legislation_section(
-        type: str, year: str, number: str, section: str, ctx: Context,
+        type: str,
+        year: str,
+        number: str,
+        section: str,
+        ctx: Context,
+        date: str | None = None,
     ) -> str:
         client = ctx.lifespan_context["legislation_http"]
-        url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}/data.xml"
+        if date:
+            url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}/{date}/data.xml"
+        else:
+            url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}/data.xml"
         resp = await client.get(url)
         resp.raise_for_status()
         return resp.text
 
     @gateway.resource(
-        "legislation://{type}/{year}/{number}/toc",
+        "legislation://{type}/{year}/{number}/toc{?date}",
         name="UK Legislation Table of Contents",
         description=(
             "Flat table of contents (parts, chapters, sections, schedules) as a "
-            "newline-separated 'id: title' list. Example: legislation://ukpga/2006/46/toc"
+            "newline-separated 'id: title' list. Example: "
+            "legislation://ukpga/2006/46/toc. Optional ?date=YYYY-MM-DD returns "
+            "the TOC as it stood on that date (for historical research)."
         ),
         mime_type="text/plain",
         annotations={"readOnlyHint": True, "idempotentHint": True},
         tags={"legislation", "toc"},
     )
-    async def legislation_toc(type: str, year: str, number: str, ctx: Context) -> str:
+    async def legislation_toc(
+        type: str,
+        year: str,
+        number: str,
+        ctx: Context,
+        date: str | None = None,
+    ) -> str:
         client = ctx.lifespan_context["legislation_http"]
-        resp = await client.get(f"{LEGISLATION_BASE}/{type}/{year}/{number}/data.xml")
+        if date:
+            url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/{date}/data.xml"
+        else:
+            url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/data.xml"
+        resp = await client.get(url)
         resp.raise_for_status()
         items = _parse_toc(resp.text)
         return "\n".join(items)
-
-    @gateway.resource(
-        "legislation://{type}/{year}/{number}/{date}",
-        name="UK Legislation point-in-time (CLML XML)",
-        description=(
-            "Act text as it stood on a specific date (point-in-time, immutable). "
-            "Date format: YYYY-MM-DD. Example: legislation://ukpga/1998/42/2020-01-01"
-        ),
-        mime_type="application/xml",
-        annotations={"readOnlyHint": True, "idempotentHint": True},
-        tags={"legislation", "clml", "point_in_time"},
-    )
-    async def legislation_point_in_time(
-        type: str, year: str, number: str, date: str, ctx: Context,
-    ) -> str:
-        client = ctx.lifespan_context["legislation_http"]
-        resp = await client.get(f"{LEGISLATION_BASE}/{type}/{year}/{number}/{date}/data.xml")
-        resp.raise_for_status()
-        return resp.text

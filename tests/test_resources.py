@@ -28,8 +28,8 @@ async def test_legislation_resource_templates_registered():
     async with Client(gateway) as client:
         templates = {t.uriTemplate for t in await client.list_resource_templates()}
 
-    assert "legislation://{type}/{year}/{number}/section/{section}" in templates
-    assert "legislation://{type}/{year}/{number}/toc" in templates
+    assert "legislation://{type}/{year}/{number}/section/{section}{?date}" in templates
+    assert "legislation://{type}/{year}/{number}/toc{?date}" in templates
 
 
 @pytest.mark.asyncio
@@ -65,19 +65,37 @@ async def test_judgment_wildcard_substitution_handles_deep_slug():
 
 
 @pytest.mark.asyncio
-async def test_legislation_full_text_resource_via_curl_cffi():
-    """Full-Act resource fetches via curl_cffi (defeats CloudFront 437).
-
-    Uses Human Rights Act 1998 — small enough to render synchronously and
-    not currently behind a WAF JS challenge.
-    """
+async def test_legislation_section_resource_fetches_clml():
+    """Section resource (HRA 1998 s.1) returns bounded CLML XML."""
     async with Client(gateway) as client:
-        result = await client.read_resource("legislation://ukpga/1998/42")
+        try:
+            result = await client.read_resource("legislation://ukpga/1998/42/section/1")
+        except Exception as e:
+            if "WAF" in str(e) or "437" in str(e):
+                pytest.skip(f"legislation.gov.uk WAF challenge — see issue #4: {e}")
+            raise
 
     text = result[0].text
     assert text.startswith("<Legislation"), f"Expected CLML, got: {text[:80]!r}"
-    assert "Human Rights Act" in text
-    assert len(text) > 50_000
+    # Section reads are bounded; this should be small
+    assert len(text) < 100_000
+
+
+@pytest.mark.asyncio
+async def test_legislation_section_point_in_time_via_date_query():
+    """Optional ?date=YYYY-MM-DD returns the section as it stood on that date."""
+    async with Client(gateway) as client:
+        try:
+            result = await client.read_resource(
+                "legislation://ukpga/1998/42/section/1?date=2020-01-01"
+            )
+        except Exception as e:
+            if "WAF" in str(e) or "437" in str(e):
+                pytest.skip(f"legislation.gov.uk WAF challenge — see issue #4: {e}")
+            raise
+
+    text = result[0].text
+    assert text.startswith("<Legislation"), f"Expected CLML, got: {text[:80]!r}"
 
 
 @pytest.mark.asyncio
@@ -98,19 +116,18 @@ async def test_legislation_toc_resource_returns_lines():
 
 
 @pytest.mark.asyncio
-async def test_legislation_resource_raises_clear_error_on_waf_challenge():
-    """Companies Act 2006 currently triggers the WAF — we surface a clear
-    LegislationUpstreamError rather than letting the parser blow up on HTML.
-
-    If legislation.gov.uk ever loosens the rule this test will start failing,
-    which is the right signal to remove the WAF-detection wrapper.
-    """
+async def test_whole_act_resources_removed():
+    """After the 2026-04-19 audit, the whole-Act resources were removed
+    because they caused context blowout (5.9MB for DPA 2018) and duplicated
+    the capability available via /toc + /section/{n}. Point-in-time is now
+    a ?date query param on the bounded resources."""
     async with Client(gateway) as client:
-        try:
-            await client.read_resource("legislation://ukpga/2006/46")
-        except Exception as e:
-            assert "WAF" in str(e) or "challenge" in str(e).lower(), (
-                f"Expected a clear WAF error, got: {e}"
-            )
-            return
-    pytest.skip("Companies Act 2006 no longer WAF-challenged — review wrapper")
+        templates = {t.uriTemplate for t in await client.list_resource_templates()}
+    # Deleted templates
+    assert "legislation://{type}/{year}/{number}" not in templates
+    assert "legislation://{type}/{year}/{number}/{date}" not in templates
+    # Surviving bounded templates (with optional ?date)
+    section_like = {t for t in templates if "section/{section}" in t}
+    toc_like = {t for t in templates if t.endswith("/toc") or "/toc{?" in t}
+    assert section_like, f"Expected a section template, got: {templates}"
+    assert toc_like, f"Expected a toc template, got: {templates}"
