@@ -206,6 +206,11 @@ def register_tools(mcp: FastMCP) -> None:
             results.append(LegislationResult(
                 title=title, type=leg_type, year=yr, number=num,
                 score=None, url=f"{LEGISLATION_BASE}/{leg_type}/{yr}/{num}",
+                next_steps=({
+                    "toc": f"legislation://{leg_type}/{yr}/{num}/toc",
+                    "section_template": f"legislation://{leg_type}/{yr}/{num}/section/{{section}}",
+                    "point_in_time_hint": "Append ?date=YYYY-MM-DD to either URI for historical research",
+                } if leg_type != "unknown" else {}),
             ))
 
         return LegislationSearchResult(results=results, total=total or len(results))

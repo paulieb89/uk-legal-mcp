@@ -48,6 +48,20 @@ async def test_legislation_search_default_finds_named_act():
     top3 = [(r.type, r.year, r.number) for r in result.data.results[:3]]
     assert ("ukpga", 1988, 50) in top3, f"Top 3 was {top3}"
 
+    # Each result should include canonical resource URIs in next_steps.
+    # We assert against the raw JSON wire format (what LLM clients actually
+    # consume) rather than result.data — fastmcp's Python Client materialises
+    # dict[str, str] fields as an empty Root sentinel, but the JSON on the
+    # wire is correct and visible to Codex / claude.ai / ChatGPT.
+    import json as _json
+    payload = _json.loads(result.content[0].text)
+    first = payload["results"][0]
+    assert first["next_steps"], "Expected next_steps hints on each result"
+    assert "toc" in first["next_steps"]
+    assert "section_template" in first["next_steps"]
+    expected_toc = f"legislation://{first['type']}/{first['year']}/{first['number']}/toc"
+    assert first["next_steps"]["toc"] == expected_toc
+
 
 @pytest.mark.asyncio
 async def test_judgment_wildcard_substitution_handles_deep_slug():

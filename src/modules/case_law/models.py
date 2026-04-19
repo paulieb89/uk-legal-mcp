@@ -32,6 +32,17 @@ class JudgmentSummary(BaseModel):
     content_hash: str | None = Field(None, description="SHA256 of body text — use for change detection in polling loops")
     xml_url: str | None = Field(None, description="URL to LegalDocML XML source")
     pdf_url: str | None = Field(None, description="URL to PDF version")
+    next_steps: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Canonical resource URIs and the search-within tool for reading "
+            "this judgment. Read `header` first for orientation (~1k tokens), "
+            "then `index` to discover paragraph eIds (~4k tokens), then "
+            "`paragraph_template` (substitute the eId from the index) for "
+            "specific paragraphs (~400-1700 tokens each). Use `grep_tool` for "
+            "content discovery instead of brute-forcing every paragraph."
+        ),
+    )
 
 
 class JudgmentSearchResult(BaseModel):

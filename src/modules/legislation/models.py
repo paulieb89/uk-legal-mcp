@@ -30,6 +30,15 @@ class LegislationResult(BaseModel):
     number: int = Field(..., description="Chapter or SI number")
     score: float | None = Field(None, description="Relevance score from Lex API (higher = more relevant)")
     url: str = Field(..., description="Canonical legislation.gov.uk URL")
+    next_steps: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Canonical resource URIs for reading this Act/SI. Read `toc` to "
+            "discover sections, then `section_template` (substitute the section "
+            "number) for the section text. Both URIs accept an optional "
+            "?date=YYYY-MM-DD query for point-in-time historical research."
+        ),
+    )
 
 
 class LegislationSearchResult(BaseModel):

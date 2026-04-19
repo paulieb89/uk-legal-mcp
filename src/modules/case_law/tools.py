@@ -125,6 +125,12 @@ def _parse_atom_feed(xml_bytes: bytes) -> JudgmentSearchResult:
                 identifiers=identifiers,
                 content_hash=hashlib.sha256((xml_url or "").encode()).hexdigest() if xml_url else None,
                 xml_url=xml_url, pdf_url=pdf_url,
+                next_steps=({
+                    "header": f"judgment://{slug}/header",
+                    "index": f"judgment://{slug}/index",
+                    "paragraph_template": f"judgment://{slug}/para/{{eId}}",
+                    "grep_tool": f"case_law_grep_judgment(slug={slug!r}, pattern=...)",
+                } if slug else {}),
             ))
         return JudgmentSearchResult(
             results=summaries, page=current_page,
