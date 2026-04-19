@@ -156,10 +156,11 @@ gateway.add_middleware(DetailedTimingMiddleware())
 # NOTE: ResponseLimitingMiddleware was removed because it silently drops
 # structured_content from oversize tool responses, which fails strict MCP
 # clients (claude.ai) that validate against the advertised outputSchema.
-# Per-tool truncation (via a max_chars parameter on the tool itself) is
-# the correct place to control payload size — the tool author knows what
-# can safely be cut and can keep the response a valid object. See
-# case_law/tools.py::case_law_get_judgment for the pattern.
+# Per-tool truncation (via a max_chars parameter on the tool itself) or
+# structural drill-down via resource sub-paths is the correct place to
+# control payload size. See case_law/resources.py for the drill-down
+# pattern (judgment://{slug*}/header, /index, /para/{eId}) and
+# legislation/tools.py for max_chars-based truncation.
 
 # ---------------------------------------------------------------------------
 # Mount sub-modules (in-process — zero network hop)
