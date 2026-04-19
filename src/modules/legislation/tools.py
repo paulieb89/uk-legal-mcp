@@ -166,7 +166,7 @@ def register_tools(mcp: FastMCP) -> None:
         Args:
             params: LegislationSearchInput with query, optional type filter, optional year.
         """
-        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        client = ctx.lifespan_context["legislation_http"]
         path = f"/{params.type}" if params.type else "/search"
         qp: dict = {"text": params.query, "results-count": 20}
         if params.year:
@@ -221,7 +221,7 @@ def register_tools(mcp: FastMCP) -> None:
         Args:
             params: type, year, number, section identifier, optional max_chars.
         """
-        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        client = ctx.lifespan_context["legislation_http"]
         url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/section/{params.section}/data.xml"
         resp = await client.get(url)
         resp.raise_for_status()
@@ -250,7 +250,7 @@ def register_tools(mcp: FastMCP) -> None:
         Args:
             params: LegislationGetTocInput with type, year, number, offset, limit.
         """
-        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        client = ctx.lifespan_context["legislation_http"]
         url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/data.xml"
         resp = await client.get(url)
         resp.raise_for_status()

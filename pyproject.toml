@@ -43,6 +43,7 @@ dependencies = [
     "httpx==0.28.1",
     "pydantic==2.13.0",
     "lxml==6.0.4",
+    "curl-cffi>=0.15.0",
 ]
 
 [project.optional-dependencies]
