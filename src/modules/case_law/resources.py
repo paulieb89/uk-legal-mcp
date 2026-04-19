@@ -20,8 +20,12 @@ TNA_BASE = "https://caselaw.nationalarchives.gov.uk"
 
 
 async def _fetch_xml(slug: str, ctx: Context) -> str:
-    """Fetch the full LegalDocML XML for a judgment slug. Cached upstream
-    by the case_law sub-module's ResponseCachingMiddleware (1h TTL)."""
+    """Fetch the full LegalDocML XML for a judgment slug.
+
+    Note: gateway-registered resources do NOT flow through the case_law
+    sub-MCP's ResponseCachingMiddleware. Repeated reads of the same
+    judgment hit TNA each time until gateway-level caching is added.
+    See audit follow-up."""
     client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
     url = f"{TNA_BASE}/{slug.lstrip('/')}/data.xml"
     resp = await client.get(url)
