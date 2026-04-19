@@ -33,6 +33,23 @@ async def test_legislation_resource_templates_registered():
 
 
 @pytest.mark.asyncio
+async def test_legislation_search_default_finds_named_act():
+    """Regression: 'Housing Act 1988' must rank ukpga/1988/50 in the top 3.
+
+    Before the curl_cffi Accept-header fix + title-search default, this query
+    returned 0 hits (parser saw HTML not Atom) or ranked SIs/regs first.
+    Caught by Codex during real-world s.21 query (2026-04-19).
+    """
+    async with Client(gateway) as client:
+        result = await client.call_tool(
+            "legislation_search",
+            {"params": {"query": "Housing Act 1988"}},
+        )
+    top3 = [(r.type, r.year, r.number) for r in result.data.results[:3]]
+    assert ("ukpga", 1988, 50) in top3, f"Top 3 was {top3}"
+
+
+@pytest.mark.asyncio
 async def test_judgment_wildcard_substitution_handles_deep_slug():
     """Multi-segment wildcard slug ('ewca/civ/2023/N') routes correctly via a sub-path."""
     async with Client(gateway) as client:

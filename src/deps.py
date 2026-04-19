@@ -124,6 +124,11 @@ async def http_lifespan(server: FastMCP):
         impersonate="chrome",
         timeout=30.0,
         allow_redirects=True,
+        # Without an explicit Accept, legislation.gov.uk's /search endpoint
+        # returns the HTML search page, not the Atom feed our parser needs.
+        # Real-world Codex test caught this — legislation_search returned 0 hits
+        # for "Housing Act 1988". See PR comment on issue #4.
+        headers={"Accept": "application/atom+xml, application/xml, text/xml"},
     ) as legislation_session:
         yield {
             "http": http,

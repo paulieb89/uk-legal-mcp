@@ -31,9 +31,19 @@ _ID_RE = re.compile(r"/id/([a-z]+)/(\d{4})/(\d+)$")
 class LegislationSearchInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    query: str = Field(..., description="Search query, e.g. 'data protection personal data'", min_length=1, max_length=500)
+    query: str = Field(..., description="Search query, e.g. 'Housing Act 1988' or 'data protection personal data'", min_length=1, max_length=500)
     type: str | None = Field(None, description="Filter by type: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts)")
     year: int | None = Field(None, description="Filter by year of enactment", ge=1800, le=2100)
+    fulltext: bool = Field(
+        False,
+        description=(
+            "Default false → searches Act/SI titles only (best for finding a named Act, "
+            "e.g. 'Housing Act 1988' returns ukpga/1988/50 first). Set true to search "
+            "the full text of every Act/SI for the query (returns SIs and regulations "
+            "that cite the term — e.g. 'rental deposits' would return many implementing "
+            "instruments)."
+        ),
+    )
 
 
 class LegislationGetSectionInput(BaseModel):
@@ -168,7 +178,10 @@ def register_tools(mcp: FastMCP) -> None:
         """
         client = ctx.lifespan_context["legislation_http"]
         path = f"/{params.type}" if params.type else "/search"
-        qp: dict = {"text": params.query, "results-count": 20}
+        # Title search by default — best ranking for "find me Act X". `fulltext`
+        # opens up content search across every Act/SI, useful for concept queries.
+        qp: dict = {"results-count": 20}
+        qp["text" if params.fulltext else "title"] = params.query
         if params.year:
             qp["year"] = params.year
 
