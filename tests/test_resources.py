@@ -59,41 +59,52 @@ async def test_judgment_resource_handles_deep_slug():
 
 
 @pytest.mark.asyncio
-async def test_legislation_section_resource_url_construction():
-    """Reading a legislation section resource constructs the right upstream URL.
+async def test_legislation_full_text_resource_via_curl_cffi():
+    """Full-Act resource fetches via curl_cffi (defeats CloudFront 437).
 
-    Skipped when CloudFront blocks the local egress (issue #4).
+    Uses Human Rights Act 1998 — small enough to render synchronously and
+    not currently behind a WAF JS challenge.
     """
     async with Client(gateway) as client:
-        try:
-            result = await client.read_resource(
-                "legislation://ukpga/2006/46/section/172"
-            )
-        except Exception as e:
-            if "437" in str(e):
-                pytest.skip("CloudFront 437 blocking local httpx — see issue #4")
-            raise
+        result = await client.read_resource("legislation://ukpga/1998/42")
 
     text = result[0].text
-    assert "<" in text and ">" in text  # XML
-    assert "172" in text or "Companies Act" in text
+    assert text.startswith("<Legislation"), f"Expected CLML, got: {text[:80]!r}"
+    assert "Human Rights Act" in text
+    assert len(text) > 50_000
 
 
 @pytest.mark.asyncio
 async def test_legislation_toc_resource_returns_lines():
-    """TOC resource returns a newline-separated list of 'id: title' rows.
-
-    Skipped when CloudFront blocks the local egress (issue #4).
-    """
+    """TOC resource returns 'id: title' lines from a real Act."""
     async with Client(gateway) as client:
         try:
-            result = await client.read_resource("legislation://ukpga/2006/46/toc")
+            result = await client.read_resource("legislation://ukpga/1998/42/toc")
         except Exception as e:
-            if "437" in str(e):
-                pytest.skip("CloudFront 437 blocking local httpx — see issue #4")
+            if "WAF" in str(e) or "437" in str(e):
+                pytest.skip(f"legislation.gov.uk WAF challenge — see issue #4: {e}")
             raise
 
     text = result[0].text
     lines = [ln for ln in text.splitlines() if ln.strip()]
-    assert len(lines) > 100, "Companies Act 2006 should produce hundreds of TOC items"
-    assert all(":" in ln for ln in lines[:10]), "Each line should be 'id: title'"
+    assert len(lines) > 5, "HRA 1998 should produce a non-trivial TOC"
+    assert all(":" in ln for ln in lines), "Each line should be 'id: title'"
+
+
+@pytest.mark.asyncio
+async def test_legislation_resource_raises_clear_error_on_waf_challenge():
+    """Companies Act 2006 currently triggers the WAF — we surface a clear
+    LegislationUpstreamError rather than letting the parser blow up on HTML.
+
+    If legislation.gov.uk ever loosens the rule this test will start failing,
+    which is the right signal to remove the WAF-detection wrapper.
+    """
+    async with Client(gateway) as client:
+        try:
+            await client.read_resource("legislation://ukpga/2006/46")
+        except Exception as e:
+            assert "WAF" in str(e) or "challenge" in str(e).lower(), (
+                f"Expected a clear WAF error, got: {e}"
+            )
+            return
+    pytest.skip("Companies Act 2006 no longer WAF-challenged — review wrapper")

@@ -39,7 +39,7 @@ def register_legislation_resources(gateway: FastMCP) -> None:
         tags={"legislation", "clml", "full_text"},
     )
     async def legislation_full(type: str, year: str, number: str, ctx: Context) -> str:
-        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        client = ctx.lifespan_context["legislation_http"]
         resp = await client.get(f"{LEGISLATION_BASE}/{type}/{year}/{number}/data.xml")
         resp.raise_for_status()
         return resp.text
@@ -55,7 +55,7 @@ def register_legislation_resources(gateway: FastMCP) -> None:
     async def legislation_section(
         type: str, year: str, number: str, section: str, ctx: Context,
     ) -> str:
-        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        client = ctx.lifespan_context["legislation_http"]
         url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}/data.xml"
         resp = await client.get(url)
         resp.raise_for_status()
@@ -73,7 +73,7 @@ def register_legislation_resources(gateway: FastMCP) -> None:
         tags={"legislation", "toc"},
     )
     async def legislation_toc(type: str, year: str, number: str, ctx: Context) -> str:
-        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        client = ctx.lifespan_context["legislation_http"]
         resp = await client.get(f"{LEGISLATION_BASE}/{type}/{year}/{number}/data.xml")
         resp.raise_for_status()
         items = _parse_toc(resp.text)
@@ -93,7 +93,7 @@ def register_legislation_resources(gateway: FastMCP) -> None:
     async def legislation_point_in_time(
         type: str, year: str, number: str, date: str, ctx: Context,
     ) -> str:
-        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        client = ctx.lifespan_context["legislation_http"]
         resp = await client.get(f"{LEGISLATION_BASE}/{type}/{year}/{number}/{date}/data.xml")
         resp.raise_for_status()
         return resp.text
