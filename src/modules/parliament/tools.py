@@ -62,6 +62,14 @@ class HansardSearchInput(BaseModel):
     from_date: date | None = Field(None, description="Start date (YYYY-MM-DD)")
     to_date: date | None = Field(None, description="End date (YYYY-MM-DD)")
     member: str | None = Field(None, description="Filter by member name")
+    offset: int = Field(0, ge=0, le=2000, description=(
+        "Number of contributions to skip before this page. Default 0. "
+        "Re-call with offset=offset+returned while has_more is true to paginate."
+    ))
+    limit: int = Field(20, ge=1, le=100, description=(
+        "Maximum contributions to return in this call. Default 20 keeps "
+        "responses focused; raise to 100 for a bulk sweep."
+    ))
 
 
 class PolicyVibeInput(BaseModel):
@@ -89,6 +97,13 @@ class MemberDebatesInput(BaseModel):
         "Optional phrase to filter this member's contributions by topic, "
         "e.g. 'housing benefit' or 'net zero'. Searched as an exact phrase."
     ))
+    offset: int = Field(0, ge=0, le=2000, description=(
+        "Number of contributions to skip before this page. Default 0. "
+        "Re-call with offset=offset+returned while has_more is true."
+    ))
+    limit: int = Field(20, ge=1, le=100, description=(
+        "Maximum contributions to return. Default 20."
+    ))
 
 
 class PetitionSearchInput(BaseModel):
@@ -98,6 +113,13 @@ class PetitionSearchInput(BaseModel):
         "Search term for petition titles, e.g. 'ban trophy hunting' or 'NHS funding'."
     ), min_length=2, max_length=300)
     state: Literal["open", "closed", "all"] = Field("all", description="Filter by petition state.")
+    offset: int = Field(0, ge=0, le=2000, description=(
+        "Number of petitions to skip before this page. Default 0. "
+        "Re-call with offset=offset+returned while has_more is true."
+    ))
+    limit: int = Field(20, ge=1, le=100, description=(
+        "Maximum petitions to return. Default 20."
+    ))
 
 
 class MemberInterestsInput(BaseModel):
@@ -202,7 +224,11 @@ def register_tools(mcp: FastMCP) -> None:
             params: HansardSearchInput with query, optional date range, optional member filter.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
-        qp: dict = {"searchTerm": f'"{params.query}"', "take": 20}
+        qp: dict = {
+            "searchTerm": f'"{params.query}"',
+            "take": params.limit,
+            "skip": params.offset,
+        }
         if params.from_date:
             qp["startDate"] = params.from_date.isoformat()
         if params.to_date:
@@ -218,7 +244,10 @@ def register_tools(mcp: FastMCP) -> None:
             from_date=params.from_date,
             to_date=params.to_date,
             member=params.member,
+            offset=params.offset,
+            limit=params.limit,
             total=len(contributions),
+            has_more=len(contributions) == params.limit,
             contributions=contributions,
         )
 
@@ -333,7 +362,11 @@ def register_tools(mcp: FastMCP) -> None:
             params: MemberDebatesInput with member_id and optional topic filter.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
-        qp: dict = {"member": params.member_id, "take": 20}
+        qp: dict = {
+            "member": params.member_id,
+            "take": params.limit,
+            "skip": params.offset,
+        }
         if params.topic:
             qp["searchTerm"] = f'"{params.topic}"'
         resp = await client.get(f"{HANSARD_API}/search.json", params=qp)
@@ -342,7 +375,10 @@ def register_tools(mcp: FastMCP) -> None:
         return MemberDebatesResult(
             member_id=params.member_id,
             topic=params.topic,
+            offset=params.offset,
+            limit=params.limit,
             total=len(contributions),
+            has_more=len(contributions) == params.limit,
             contributions=contributions,
         )
 
@@ -418,7 +454,9 @@ def register_tools(mcp: FastMCP) -> None:
             params: PetitionSearchInput with query and optional state filter.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
-        qp: dict = {"q": params.query, "count": 20}
+        # petition.parliament.uk uses 1-indexed `page` and a `count` param (page size).
+        page_num = (params.offset // params.limit) + 1
+        qp: dict = {"q": params.query, "count": params.limit, "page": page_num}
         if params.state != "all":
             qp["state"] = params.state
 
@@ -448,6 +486,9 @@ def register_tools(mcp: FastMCP) -> None:
         return PetitionSearchResult(
             query=params.query,
             state=params.state,
+            offset=params.offset,
+            limit=params.limit,
             total=len(petitions),
+            has_more=len(petitions) == params.limit,
             petitions=petitions,
         )

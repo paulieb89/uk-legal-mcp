@@ -34,7 +34,10 @@ class HansardSearchResult(BaseModel):
     from_date: Date | None = Field(None, description="Start date filter applied, if any")
     to_date: Date | None = Field(None, description="End date filter applied, if any")
     member: str | None = Field(None, description="Member name filter applied, if any")
+    offset: int = Field(0, description="Skip applied to this page (Hansard API: skip)")
+    limit: int = Field(20, description="Page size requested")
     total: int = Field(..., description="Number of contributions returned in this call")
+    has_more: bool = Field(False, description="True if a full page was returned (more may exist; re-call with offset=offset+limit)")
     contributions: list[HansardContribution] = Field(
         default_factory=list,
         description="Matching Hansard contributions. Each `text` field is capped at 3000 characters.",
@@ -52,7 +55,10 @@ class MemberDebatesResult(BaseModel):
 
     member_id: int = Field(..., description="Parliament Members API member ID")
     topic: str | None = Field(None, description="Topic phrase filter applied, if any")
+    offset: int = Field(0, description="Skip applied to this page")
+    limit: int = Field(20, description="Page size requested")
     total: int = Field(..., description="Number of contributions returned in this call")
+    has_more: bool = Field(False, description="True if a full page was returned (more may exist)")
     contributions: list[HansardContribution] = Field(
         default_factory=list,
         description="Hansard contributions for the member. Each `text` field is capped at 3000 characters.",
@@ -176,7 +182,10 @@ class PetitionSearchResult(BaseModel):
     state: Literal["open", "closed", "all"] = Field(
         ..., description="Petition state filter applied to this query"
     )
+    offset: int = Field(0, description="Skip applied to this page")
+    limit: int = Field(20, description="Page size requested")
     total: int = Field(..., description="Number of petitions returned in this call")
+    has_more: bool = Field(False, description="True if a full page was returned (more may exist)")
     petitions: list[PetitionSummary] = Field(
         default_factory=list,
         description="Matching petitions (title, state, signature count, key dates, URL).",

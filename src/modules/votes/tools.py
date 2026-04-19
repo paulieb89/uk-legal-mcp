@@ -36,6 +36,13 @@ class DivisionSearchInput(BaseModel):
         "Filter to divisions where this member voted. "
         "Get the member ID from parliament_find_member."
     ), ge=1)
+    offset: int = Field(0, ge=0, le=2000, description=(
+        "Number of divisions to skip before this page. Default 0. "
+        "Re-call with offset=offset+returned while has_more is true."
+    ))
+    limit: int = Field(25, ge=1, le=100, description=(
+        "Maximum divisions to return. Default 25 (Commons API max-per-page)."
+    ))
 
 
 class DivisionDetailInput(BaseModel):
@@ -113,7 +120,10 @@ def register_tools(mcp: FastMCP) -> None:
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         url = _search_url(params.house)
-        qp: dict = {"queryParameters.take": 25}
+        qp: dict = {
+            "queryParameters.take": params.limit,
+            "queryParameters.skip": params.offset,
+        }
 
         if params.query:
             qp["queryParameters.searchTerm"] = params.query
@@ -138,7 +148,10 @@ def register_tools(mcp: FastMCP) -> None:
         return DivisionsSearchResult(
             query=params.query,
             house=params.house,
+            offset=params.offset,
+            limit=params.limit,
             total=len(divisions),
+            has_more=len(divisions) == params.limit,
             divisions=divisions,
         )
 

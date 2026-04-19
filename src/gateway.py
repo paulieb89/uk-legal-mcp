@@ -27,6 +27,11 @@ from datetime import datetime, timezone
 
 from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware, MiddlewareContext
+from fastmcp.server.middleware.caching import (
+    CallToolSettings,
+    ReadResourceSettings,
+    ResponseCachingMiddleware,
+)
 from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.logging import StructuredLoggingMiddleware
 from fastmcp.server.middleware.timing import DetailedTimingMiddleware
@@ -152,6 +157,21 @@ gateway.add_middleware(tool_counter)
 
 # Per-tool timing — logs "Tool 'X' completed in Y ms"
 gateway.add_middleware(DetailedTimingMiddleware())
+
+# Response caching at the gateway level — covers resources/read (gateway-
+# registered judgment:// and legislation:// templates) AND tools/call
+# on the gateway surface. Sub-MCP-level caching remains on case_law and
+# legislation sub-MCPs for their tools (belt-and-braces).
+#
+# Judgments rarely change (append-only corrections over months); statute
+# text at a point-in-time is immutable; search results stable over short
+# windows. 1-hour TTL is the sweet spot — balances freshness with upstream
+# load. In-memory only (single Fly machine); move to Redis if we scale
+# horizontally.
+gateway.add_middleware(ResponseCachingMiddleware(
+    read_resource_settings=ReadResourceSettings(ttl=3600),
+    call_tool_settings=CallToolSettings(ttl=3600),
+))
 
 # NOTE: ResponseLimitingMiddleware was removed because it silently drops
 # structured_content from oversize tool responses, which fails strict MCP

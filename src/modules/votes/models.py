@@ -56,7 +56,10 @@ class DivisionsSearchResult(BaseModel):
 
     query: str | None = Field(None, description="The search term, if any (None = browse recent)")
     house: str = Field(..., description="Commons or Lords")
-    total: int = Field(..., description="Number of divisions returned (capped upstream at 25)")
+    offset: int = Field(0, description="Skip applied to this page")
+    limit: int = Field(25, description="Page size requested")
+    total: int = Field(..., description="Number of divisions returned in this call")
+    has_more: bool = Field(False, description="True if a full page was returned (more may exist)")
     divisions: list[DivisionSummary] = Field(
         default_factory=list,
         description=(
