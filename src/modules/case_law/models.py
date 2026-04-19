@@ -41,3 +41,43 @@ class JudgmentSearchResult(BaseModel):
     page: int = Field(..., description="Current page number (1-indexed)")
     has_more: bool = Field(..., description="Whether additional pages exist")
     total_pages: int | None = Field(None, description="Total page count if available from API")
+
+
+class CaseLawGrepInput(BaseModel):
+    """Input schema for case_law_grep_judgment."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    slug: str = Field(
+        ...,
+        min_length=8,
+        description="TNA judgment slug, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450'.",
+    )
+    pattern: str = Field(
+        ...,
+        min_length=2,
+        max_length=200,
+        description=(
+            "Regex pattern (or plain substring) to search within paragraph text. "
+            "If the pattern doesn't compile as regex, falls back to literal substring match."
+        ),
+    )
+    case_insensitive: bool = Field(True, description="Default true. Set false for case-sensitive matching.")
+    max_hits: int = Field(25, ge=1, le=100, description="Cap on number of hits returned.")
+
+
+class GrepHit(BaseModel):
+    """A single paragraph match from grep_judgment."""
+
+    eId: str = Field(..., description="LegalDocML paragraph identifier, e.g. 'para_12'")
+    snippet: str = Field(..., description="~200 chars of context around the match")
+    match: str = Field(..., description="The exact text that matched the pattern")
+
+
+class GrepResult(BaseModel):
+    """Output schema for case_law_grep_judgment."""
+
+    slug: str = Field(..., description="The judgment slug that was searched")
+    pattern: str = Field(..., description="The pattern that was searched for")
+    hits: list[GrepHit] = Field(..., description="Matching paragraphs in document order")
+    truncated: bool = Field(..., description="True if hit count reached max_hits and more matches may exist")

@@ -110,8 +110,9 @@ gateway = FastMCP(
     lifespan=http_lifespan,
     instructions=(
         "UK legal research server. Eight namespaced modules:\n\n"
-        "• case_law_search / case_law_get_judgment\n"
-        "  Search and retrieve UK court judgments from TNA Find Case Law.\n\n"
+        "• case_law_search / case_law_grep_judgment\n"
+        "  Search UK court judgments from TNA Find Case Law and grep within them.\n"
+        "  Read judgment content via judgment://{slug}/{header,index,para/{eId}} resources.\n\n"
         "• legislation_search / legislation_get_toc / legislation_get_section\n"
         "  Find Acts of Parliament and Statutory Instruments. Always check 'extent' field.\n\n"
         "• parliament_search_hansard / parliament_vibe_check / parliament_find_member / parliament_member_interests / parliament_search_petitions\n"
@@ -180,6 +181,17 @@ gateway.mount(hmrc_mcp,        namespace="hmrc")
 
 register_case_law_resources(gateway)
 register_legislation_resources(gateway)
+
+
+# ---------------------------------------------------------------------------
+# Tool-only client coverage (Apps, ChatGPT, anything that can't speak
+# resources/read). The transform auto-generates list_resources +
+# read_resource tools at the gateway level. All middleware applies.
+# ---------------------------------------------------------------------------
+
+from fastmcp.server.transforms import ResourcesAsTools  # noqa: E402
+
+gateway.add_transform(ResourcesAsTools(gateway))
 
 
 # ---------------------------------------------------------------------------
