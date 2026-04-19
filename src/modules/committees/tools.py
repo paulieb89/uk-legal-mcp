@@ -14,7 +14,7 @@ from fastmcp import FastMCP, Context
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import format_http_error
-from .models import CommitteeDetail, CommitteeMember, CommitteeSummary, EvidenceItem
+from .models import CommitteeDetail, CommitteeEvidencePage, CommitteeMember, CommitteeSearchResult, CommitteeSummary, EvidenceItem
 
 COMMITTEES_BASE = "https://committees-api.parliament.uk/api"
 
@@ -30,6 +30,15 @@ class CommitteeSearchInput(BaseModel):
     ), max_length=300)
     house: Literal["Commons", "Lords", "Joint"] | None = Field(None, description="Filter by house.")
     active_only: bool = Field(True, description="If true, only return currently active committees.")
+    limit: int = Field(
+        100,
+        ge=1,
+        le=500,
+        description=(
+            "Maximum committees to return. Default 100 comfortably covers all "
+            "currently-active UK select committees. Raise only for historical sweeps."
+        ),
+    )
 
 
 class CommitteeDetailInput(BaseModel):
@@ -43,6 +52,34 @@ class CommitteeEvidenceInput(BaseModel):
 
     committee_id: int = Field(..., description="Committee ID from committees_search_committees results.", ge=1)
     evidence_type: Literal["oral", "written", "both"] = Field("both", description="Type of evidence to search.")
+    offset: int = Field(
+        0,
+        ge=0,
+        le=2000,
+        description=(
+            "Number of evidence items to skip before this page. Default 0. "
+            "Re-call with offset=offset+returned while has_more is true."
+        ),
+    )
+    limit: int = Field(
+        20,
+        ge=1,
+        le=100,
+        description=(
+            "Maximum evidence items to return. Default 20. When evidence_type='both' "
+            "the limit is split across oral and written (roughly half each)."
+        ),
+    )
+    max_title_chars: int = Field(
+        300,
+        ge=50,
+        le=2000,
+        description=(
+            "Per-item cap on the free-text title field. Default 300 prevents "
+            "context blow-up from verbose inquiry titles. Raise to 1000+ only "
+            "when you need the full title text."
+        ),
+    )
 
 
 def _parse_house(house_val) -> str | None:
@@ -61,193 +98,207 @@ def register_tools(mcp: FastMCP) -> None:
         name="search_committees",
         annotations={"title": "Search Parliamentary Committees", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def committees_search_committees(params: CommitteeSearchInput, ctx: Context) -> str:
+    async def committees_search_committees(params: CommitteeSearchInput, ctx: Context) -> CommitteeSearchResult:
         """Search or list UK parliamentary select committees.
 
         Returns committee names, house, and active status.
         Use committees_get_committee with the committee ID for membership detail.
 
         Args:
-            params (CommitteeSearchInput): optional query, house, active_only filters.
-
-        Returns:
-            str: JSON array of CommitteeSummary objects.
+            params: CommitteeSearchInput with optional query, house, active_only, limit.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            qp: dict = {"Take": 200}
-            if params.active_only:
-                qp["CommitteeStatus"] = "Current"
-            if params.house:
-                qp["House"] = HOUSE_MAP.get(params.house)
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        qp: dict = {"Take": params.limit}
+        if params.active_only:
+            qp["CommitteeStatus"] = "Current"
+        if params.house:
+            qp["House"] = HOUSE_MAP.get(params.house)
 
-            resp = await client.get(f"{COMMITTEES_BASE}/Committees", params=qp)
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await client.get(f"{COMMITTEES_BASE}/Committees", params=qp)
+        resp.raise_for_status()
+        data = resp.json()
 
-            items = data.get("items", data.get("results", data)) if isinstance(data, dict) else data
-            if not isinstance(items, list):
-                items = []
+        items = data.get("items", data.get("results", data)) if isinstance(data, dict) else data
+        if not isinstance(items, list):
+            items = []
 
-            committees = []
-            for item in items:
-                name = item.get("name", "Unknown")
-                if params.query and params.query.lower() not in name.lower():
-                    continue
-                cid = item.get("id", 0)
-                committees.append(CommitteeSummary(
-                    id=cid,
-                    name=name,
-                    house=_parse_house(item.get("house")),
-                    is_active=True if params.active_only else None,
-                    url=f"https://committees.parliament.uk/committee/{cid}/",
-                ))
+        committees: list[CommitteeSummary] = []
+        for item in items:
+            name = item.get("name", "Unknown")
+            if params.query and params.query.lower() not in name.lower():
+                continue
+            cid = item.get("id", 0)
+            committees.append(CommitteeSummary(
+                id=cid,
+                name=name,
+                house=_parse_house(item.get("house")),
+                is_active=True if params.active_only else None,
+                url=f"https://committees.parliament.uk/committee/{cid}/",
+            ))
 
-            return json.dumps([c.model_dump() for c in committees], indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        return CommitteeSearchResult(
+            query=params.query,
+            house=params.house,
+            active_only=params.active_only,
+            total=len(committees),
+            committees=committees,
+        )
 
     @mcp.tool(
         name="get_committee",
         annotations={"title": "Get Committee Detail", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def committees_get_committee(params: CommitteeDetailInput, ctx: Context) -> str:
+    async def committees_get_committee(params: CommitteeDetailInput, ctx: Context) -> CommitteeDetail:
         """Get detail for a parliamentary committee including current membership.
 
         Fetches committee metadata and member list in parallel.
 
         Args:
-            params (CommitteeDetailInput): committee_id from committees_search_committees.
-
-        Returns:
-            str: JSON CommitteeDetail with members list.
+            params: CommitteeDetailInput with committee_id from committees_search_committees.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            detail_req = client.get(f"{COMMITTEES_BASE}/Committees/{params.committee_id}")
-            members_req = client.get(f"{COMMITTEES_BASE}/Committees/{params.committee_id}/Members")
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        detail_req = client.get(f"{COMMITTEES_BASE}/Committees/{params.committee_id}")
+        members_req = client.get(f"{COMMITTEES_BASE}/Committees/{params.committee_id}/Members")
 
-            detail_resp, members_resp = await asyncio.gather(detail_req, members_req)
-            detail_resp.raise_for_status()
-            members_resp.raise_for_status()
+        detail_resp, members_resp = await asyncio.gather(detail_req, members_req)
+        detail_resp.raise_for_status()
+        members_resp.raise_for_status()
 
-            detail_data = detail_resp.json()
-            members_data = members_resp.json()
+        detail_data = detail_resp.json()
+        members_data = members_resp.json()
 
-            members = []
-            member_items = members_data.get("items", members_data.get("results", members_data)) if isinstance(members_data, dict) else members_data
-            if not isinstance(member_items, list):
-                member_items = []
+        member_items = members_data.get("items", members_data.get("results", members_data)) if isinstance(members_data, dict) else members_data
+        if not isinstance(member_items, list):
+            member_items = []
 
-            for m in member_items:
-                member_info = m.get("memberInfo", {})
-                roles = m.get("roles", [])
-                role_name = None
-                if roles:
-                    role_obj = roles[0].get("role", {})
-                    if isinstance(role_obj, dict):
-                        role_name = role_obj.get("name")
-                        if role_obj.get("isChair"):
-                            role_name = "Chair"
-                members.append(CommitteeMember(
-                    name=m.get("name", "Unknown"),
-                    party=member_info.get("party") if isinstance(member_info, dict) else None,
-                    role=role_name,
-                ))
+        members: list[CommitteeMember] = []
+        for m in member_items:
+            member_info = m.get("memberInfo", {})
+            roles = m.get("roles", [])
+            role_name = None
+            if roles:
+                role_obj = roles[0].get("role", {})
+                if isinstance(role_obj, dict):
+                    role_name = role_obj.get("name")
+                    if role_obj.get("isChair"):
+                        role_name = "Chair"
+            members.append(CommitteeMember(
+                name=m.get("name", "Unknown"),
+                party=member_info.get("party") if isinstance(member_info, dict) else None,
+                role=role_name,
+            ))
 
-            cid = params.committee_id
-            result = CommitteeDetail(
-                id=cid,
-                name=detail_data.get("name", "Unknown"),
-                house=_parse_house(detail_data.get("house")),
-                phone=detail_data.get("phone"),
-                email=detail_data.get("email"),
-                url=f"https://committees.parliament.uk/committee/{cid}/",
-                members=members,
-            )
-            return result.model_dump_json(indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        cid = params.committee_id
+        return CommitteeDetail(
+            id=cid,
+            name=detail_data.get("name", "Unknown"),
+            house=_parse_house(detail_data.get("house")),
+            phone=detail_data.get("phone"),
+            email=detail_data.get("email"),
+            url=f"https://committees.parliament.uk/committee/{cid}/",
+            members=members,
+        )
 
     @mcp.tool(
         name="search_evidence",
         annotations={"title": "Search Committee Evidence", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def committees_search_evidence(params: CommitteeEvidenceInput, ctx: Context) -> str:
+    async def committees_search_evidence(params: CommitteeEvidenceInput, ctx: Context) -> CommitteeEvidencePage:
         """Search oral and written evidence submitted to a parliamentary committee.
 
-        Returns evidence titles, dates, and witness names (for oral evidence).
+        Returns ONE PAGE of evidence (default 20). Free-text titles are capped
+        per max_title_chars; witness lists are capped at 10 per item. For
+        committees with many submissions, re-call with offset=offset+returned
+        while has_more is true.
 
         Args:
-            params (CommitteeEvidenceInput): committee_id and evidence_type filter.
-
-        Returns:
-            str: JSON array of EvidenceItem objects.
+            params: CommitteeEvidenceInput with committee_id, evidence_type,
+                offset/limit pagination, and max_title_chars.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            evidence: list[EvidenceItem] = []
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
 
-            async def fetch_oral():
-                resp = await client.get(
-                    f"{COMMITTEES_BASE}/OralEvidence",
-                    params={"CommitteeId": params.committee_id, "Take": 20},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                items = data.get("items", data.get("results", data)) if isinstance(data, dict) else data
-                if not isinstance(items, list):
-                    return []
-                results = []
-                for item in items:
-                    ev_date = item.get("evidenceDate") or item.get("date")
-                    witnesses = []
-                    for w in item.get("witnesses", []):
-                        if isinstance(w, str):
-                            witnesses.append(w)
-                        elif isinstance(w, dict):
-                            witnesses.append(w.get("name", str(w)))
-                    results.append(EvidenceItem(
-                        id=item.get("id", 0),
-                        type="oral",
-                        title=item.get("title", item.get("sessionTitle", "Oral evidence session")),
-                        date=date.fromisoformat(ev_date[:10]) if ev_date else None,
-                        witnesses=witnesses or None,
-                        url=item.get("url"),
-                    ))
-                return results
+        def _cap_title(t: str) -> str:
+            if len(t) > params.max_title_chars:
+                return t[: params.max_title_chars] + " …[truncated]"
+            return t
 
-            async def fetch_written():
-                resp = await client.get(
-                    f"{COMMITTEES_BASE}/WrittenEvidence",
-                    params={"CommitteeId": params.committee_id, "Take": 20},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                items = data.get("items", data.get("results", data)) if isinstance(data, dict) else data
-                if not isinstance(items, list):
-                    return []
-                results = []
-                for item in items:
-                    ev_date = item.get("dateReceived") or item.get("date")
-                    results.append(EvidenceItem(
-                        id=item.get("id", 0),
-                        type="written",
-                        title=item.get("title", "Written evidence"),
-                        date=date.fromisoformat(ev_date[:10]) if ev_date else None,
-                        witnesses=None,
-                        url=item.get("url"),
-                    ))
-                return results
+        async def fetch_oral(skip: int, take: int) -> tuple[list[EvidenceItem], int]:
+            resp = await client.get(
+                f"{COMMITTEES_BASE}/OralEvidence",
+                params={"CommitteeId": params.committee_id, "Skip": skip, "Take": take},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("items", data.get("results", data)) if isinstance(data, dict) else data
+            if not isinstance(items, list):
+                return [], 0
+            results: list[EvidenceItem] = []
+            for item in items:
+                ev_date = item.get("evidenceDate") or item.get("date")
+                witnesses: list[str] = []
+                for w in item.get("witnesses", []):
+                    if isinstance(w, str):
+                        witnesses.append(w)
+                    elif isinstance(w, dict):
+                        witnesses.append(w.get("name", str(w)))
+                results.append(EvidenceItem(
+                    id=item.get("id", 0),
+                    type="oral",
+                    title=_cap_title(item.get("title", item.get("sessionTitle", "Oral evidence session"))),
+                    date=date.fromisoformat(ev_date[:10]) if ev_date else None,
+                    witnesses=(witnesses[:10] or None),
+                    url=item.get("url"),
+                ))
+            return results, len(items)
 
-            if params.evidence_type == "oral":
-                evidence = await fetch_oral()
-            elif params.evidence_type == "written":
-                evidence = await fetch_written()
-            else:
-                oral, written = await asyncio.gather(fetch_oral(), fetch_written())
-                evidence = oral + written
+        async def fetch_written(skip: int, take: int) -> tuple[list[EvidenceItem], int]:
+            resp = await client.get(
+                f"{COMMITTEES_BASE}/WrittenEvidence",
+                params={"CommitteeId": params.committee_id, "Skip": skip, "Take": take},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("items", data.get("results", data)) if isinstance(data, dict) else data
+            if not isinstance(items, list):
+                return [], 0
+            results: list[EvidenceItem] = []
+            for item in items:
+                ev_date = item.get("dateReceived") or item.get("date")
+                results.append(EvidenceItem(
+                    id=item.get("id", 0),
+                    type="written",
+                    title=_cap_title(item.get("title", "Written evidence")),
+                    date=date.fromisoformat(ev_date[:10]) if ev_date else None,
+                    witnesses=None,
+                    url=item.get("url"),
+                ))
+            return results, len(items)
 
-            return json.dumps([e.model_dump(mode="json") for e in evidence], indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        evidence: list[EvidenceItem] = []
+        has_more = False
+
+        if params.evidence_type == "oral":
+            evidence, raw = await fetch_oral(params.offset, params.limit)
+            has_more = raw == params.limit
+        elif params.evidence_type == "written":
+            evidence, raw = await fetch_written(params.offset, params.limit)
+            has_more = raw == params.limit
+        else:
+            oral_take = (params.limit + 1) // 2  # remainder to oral
+            written_take = params.limit // 2
+            (oral, oral_raw), (written, written_raw) = await asyncio.gather(
+                fetch_oral(params.offset, oral_take),
+                fetch_written(params.offset, written_take),
+            )
+            evidence = oral + written
+            has_more = (oral_raw == oral_take) or (written_raw == written_take)
+
+        return CommitteeEvidencePage(
+            committee_id=params.committee_id,
+            evidence_type=params.evidence_type,
+            offset=params.offset,
+            limit=params.limit,
+            returned=len(evidence),
+            has_more=has_more,
+            evidence=evidence,
+        )

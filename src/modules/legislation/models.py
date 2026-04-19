@@ -39,6 +39,46 @@ class LegislationSearchResult(BaseModel):
     total: int = Field(..., description="Total number of matches")
 
 
+class LegislationTOC(BaseModel):
+    """Paginated table of contents for an Act or Statutory Instrument.
+
+    The upstream XML is fetched in one shot (legislation.gov.uk has no
+    server-side pagination), then sliced client-side via offset/limit.
+    For very large statutes like the Companies Act 2006 (1300+ items)
+    use offset to page through. Check has_more and total_items to
+    know the full size.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    type: str = Field(..., description="Legislation type code echoed from the request")
+    year: int = Field(..., description="Year of enactment echoed from the request")
+    number: int = Field(..., description="Chapter or SI number echoed from the request")
+    offset: int = Field(..., description="Offset applied to the full TOC item list")
+    limit: int = Field(..., description="Page size applied after offset")
+    returned: int = Field(..., description="Number of items in this response")
+    total_items: int = Field(
+        ...,
+        description=(
+            "Total number of structural items parsed from the XML, "
+            "before offset/limit. Use this to know the full size of the TOC."
+        ),
+    )
+    has_more: bool = Field(
+        ...,
+        description="True if more items remain beyond offset+returned",
+    )
+    items: list[str] = Field(
+        default_factory=list,
+        description=(
+            "TOC entries in XML document order, formatted as "
+            "'<id>: <title>', e.g. 'section-47: Definitions'. When calling "
+            "legislation_get_section pass only the numeric part ('47', not "
+            "'section-47')."
+        ),
+    )
+
+
 class LegislationSection(BaseModel):
     """A single section of an Act or SI, with full metadata."""
 
@@ -46,7 +86,18 @@ class LegislationSection(BaseModel):
 
     title: str = Field(..., description="Section title or heading")
     section_number: str = Field(..., description="Section number, e.g. '47', '12A', 'Schedule 2'")
-    content: str = Field(..., description="Plain text content of the section")
+    content: str = Field(..., description=(
+        "Plain text content of the section, possibly truncated per max_chars. "
+        "Check content_truncated and original_length for full-text information."
+    ))
+    content_truncated: bool = Field(
+        False,
+        description="True if content was cut to fit max_chars",
+    )
+    original_length: int = Field(
+        0,
+        description="Original plain-text length in characters before any truncation",
+    )
     in_force: bool | None = Field(None, description="Whether this section is currently in force; None if unknown")
     extent: list[str] = Field(
         default_factory=list,

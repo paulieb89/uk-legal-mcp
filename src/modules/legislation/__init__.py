@@ -4,7 +4,6 @@ from fastmcp import FastMCP
 from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
 
 from .tools import register_tools
-from .resources import register_resources
 from .prompts import register_prompts
 
 legislation_mcp = FastMCP(
@@ -21,7 +20,7 @@ legislation_mcp = FastMCP(
 legislation_mcp.add_middleware(ResponseCachingMiddleware(call_tool_settings=CallToolSettings(ttl=86400)))
 
 register_tools(legislation_mcp)
-register_resources(legislation_mcp)
 register_prompts(legislation_mcp)
+# Resources are registered on the gateway, not here — see resources.py and issue #3
 
 __all__ = ["legislation_mcp"]

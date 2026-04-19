@@ -4,7 +4,6 @@ from fastmcp import FastMCP
 from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
 
 from .tools import register_tools
-from .resources import register_resources
 
 case_law_mcp = FastMCP(
     name="case_law",
@@ -19,6 +18,6 @@ case_law_mcp = FastMCP(
 case_law_mcp.add_middleware(ResponseCachingMiddleware(call_tool_settings=CallToolSettings(ttl=3600)))
 
 register_tools(case_law_mcp)
-register_resources(case_law_mcp)
+# Resources are registered on the gateway, not here — see resources.py and issue #3
 
 __all__ = ["case_law_mcp"]

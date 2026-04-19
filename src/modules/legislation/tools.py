@@ -16,7 +16,7 @@ from lxml import etree
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import format_http_error
-from .models import LegislationResult, LegislationSearchResult, LegislationSection
+from .models import LegislationResult, LegislationSearchResult, LegislationSection, LegislationTOC
 
 LEGISLATION_BASE = "https://www.legislation.gov.uk"
 
@@ -43,6 +43,17 @@ class LegislationGetSectionInput(BaseModel):
     year: int = Field(..., description="Year of enactment", ge=1800, le=2100)
     number: int = Field(..., description="Chapter or SI number", ge=1)
     section: str = Field(..., description="Section number, e.g. '47' or '12A'. Use the numeric part only — not 'section-47'. Schedules are not currently supported.", min_length=1, max_length=50)
+    max_chars: int = Field(
+        10000,
+        ge=500,
+        le=200000,
+        description=(
+            "Maximum characters of section content to return. Default 10,000 "
+            "(~2,500 tokens) covers almost every section. Raise to 50,000+ "
+            "only for unusually long Finance Act definition sections. "
+            "Check content_truncated in the response to see if it was cut."
+        ),
+    )
 
 
 class LegislationGetTocInput(BaseModel):
@@ -51,10 +62,29 @@ class LegislationGetTocInput(BaseModel):
     type: str = Field(..., description="Legislation type code: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). Use the value from legislation_search results.", min_length=2, max_length=10)
     year: int = Field(..., description="Year of enactment", ge=1800, le=2100)
     number: int = Field(..., description="Chapter or SI number", ge=1)
+    offset: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Number of items to skip from the flattened TOC. Use with "
+            "limit to page through very large statutes like the Companies "
+            "Act 2006 (1300+ items)."
+        ),
+    )
+    limit: int = Field(
+        200,
+        ge=1,
+        le=1000,
+        description=(
+            "Maximum items to return in this call (default 200, max 1000). "
+            "Raise only when you need a larger slice in one response. "
+            "Check has_more and total_items to know if further pages exist."
+        ),
+    )
 
 
-def _parse_clml_section(xml_text: str, section: str) -> LegislationSection:
-    """Extract a section from CLML XML."""
+def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> LegislationSection:
+    """Extract a section from CLML XML, truncating content to max_chars."""
     from lxml import etree
     root = etree.fromstring(xml_text.encode())
     ns = {
@@ -67,7 +97,10 @@ def _parse_clml_section(xml_text: str, section: str) -> LegislationSection:
 
     # Try to find the specific section element
     section_el = root.find(f".//leg:P1[@id='section-{section}']", ns)
-    content = extract_text(section_el) if section_el is not None else extract_text(root)
+    raw_content = extract_text(section_el) if section_el is not None else extract_text(root)
+    original_length = len(raw_content)
+    truncated = original_length > max_chars
+    content = raw_content[:max_chars] + " …[truncated]" if truncated else raw_content
 
     extent_el = root.find(".//ukm:Extent", ns)
     extent_text = extent_el.get("Value", "") if extent_el is not None else ""
@@ -87,15 +120,24 @@ def _parse_clml_section(xml_text: str, section: str) -> LegislationSection:
     title = title_el.text.strip() if title_el is not None and title_el.text else f"Section {section}"
 
     return LegislationSection(
-        title=title, section_number=section, content=content[:10000],
+        title=title,
+        section_number=section,
+        content=content,
+        content_truncated=truncated,
+        original_length=original_length,
         in_force=not prospective if extent else None,
         extent=extent or ["England", "Wales", "Scotland", "Northern Ireland"],
-        version_date=version_date, prospective=prospective,
+        version_date=version_date,
+        prospective=prospective,
     )
 
 
 def _parse_toc_xml(xml_text: str) -> list[str]:
-    """Extract table of contents from CLML XML."""
+    """Extract the full table of contents from CLML XML.
+
+    Returns every structural element that has an @id and a <Title>, in
+    document order. No slicing — callers apply offset/limit themselves.
+    """
     from lxml import etree
     root = etree.fromstring(xml_text.encode())
     ns = {"leg": "http://www.legislation.gov.uk/namespaces/legislation"}
@@ -106,7 +148,7 @@ def _parse_toc_xml(xml_text: str) -> list[str]:
             title_el = el.find("leg:Title", ns)
             if title_el is not None and title_el.text:
                 items.append(f"{id_val}: {title_el.text.strip()}")
-    return items[:200]
+    return items
 
 
 def register_tools(mcp: FastMCP) -> None:
@@ -115,103 +157,116 @@ def register_tools(mcp: FastMCP) -> None:
         name="search",
         annotations={"title": "Search UK Legislation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def legislation_search(params: LegislationSearchInput, ctx: Context) -> str:
+    async def legislation_search(params: LegislationSearchInput, ctx: Context) -> LegislationSearchResult:
         """Search UK legislation on legislation.gov.uk.
 
         Returns ranked results: title, type, year, number, and legislation.gov.uk URL.
         Use legislation_get_toc to explore structure, then legislation_get_section for provisions.
 
         Args:
-            params (LegislationSearchInput): query, optional type filter, optional year.
-
-        Returns:
-            str: JSON with results (title, type, year, number, url) and total count.
+            params: LegislationSearchInput with query, optional type filter, optional year.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
-            path = f"/{params.type}" if params.type else "/search"
-            qp: dict = {"text": params.query, "results-count": 20}
-            if params.year:
-                qp["year"] = params.year
+        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        path = f"/{params.type}" if params.type else "/search"
+        qp: dict = {"text": params.query, "results-count": 20}
+        if params.year:
+            qp["year"] = params.year
 
-            resp = await client.get(f"{LEGISLATION_BASE}{path}", params=qp)
-            resp.raise_for_status()
-            root = etree.fromstring(resp.content)
+        resp = await client.get(f"{LEGISLATION_BASE}{path}", params=qp)
+        resp.raise_for_status()
+        root = etree.fromstring(resp.content)
 
-            total_el = root.findtext(".//os:totalResults", namespaces=ATOM_NS)
-            total = int(total_el) if total_el else 0
+        total_el = root.findtext(".//os:totalResults", namespaces=ATOM_NS)
+        total = int(total_el) if total_el else 0
 
-            results = []
-            for entry in root.findall(".//a:entry", namespaces=ATOM_NS):
-                title = entry.findtext("a:title", namespaces=ATOM_NS) or "Unknown"
-                entry_id = entry.findtext("a:id", namespaces=ATOM_NS) or ""
+        results = []
+        for entry in root.findall(".//a:entry", namespaces=ATOM_NS):
+            title = entry.findtext("a:title", namespaces=ATOM_NS) or "Unknown"
+            entry_id = entry.findtext("a:id", namespaces=ATOM_NS) or ""
 
-                m = _ID_RE.search(entry_id)
-                if m:
-                    leg_type, yr, num = m.group(1), int(m.group(2)), int(m.group(3))
-                else:
-                    leg_type, yr, num = "unknown", 0, 0
+            m = _ID_RE.search(entry_id)
+            if m:
+                leg_type, yr, num = m.group(1), int(m.group(2)), int(m.group(3))
+            else:
+                leg_type, yr, num = "unknown", 0, 0
 
-                results.append(LegislationResult(
-                    title=title, type=leg_type, year=yr, number=num,
-                    score=None, url=f"{LEGISLATION_BASE}/{leg_type}/{yr}/{num}",
-                ))
+            results.append(LegislationResult(
+                title=title, type=leg_type, year=yr, number=num,
+                score=None, url=f"{LEGISLATION_BASE}/{leg_type}/{yr}/{num}",
+            ))
 
-            return LegislationSearchResult(
-                results=results, total=total or len(results),
-            ).model_dump_json(indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        return LegislationSearchResult(results=results, total=total or len(results))
 
     @mcp.tool(
         name="get_section",
         annotations={"title": "Get Legislation Section", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def legislation_get_section(params: LegislationGetSectionInput, ctx: Context) -> str:
+    async def legislation_get_section(params: LegislationGetSectionInput, ctx: Context) -> LegislationSection:
         """Retrieve a specific section of a UK Act or Statutory Instrument.
 
-        Returns section text, territorial extent, in-force status, and prospective flag.
+        DEPRECATED: prefer the resource template
+        `legislation://{type}/{year}/{number}/section/{section}` for clients
+        that support `resources/read`. This tool will be removed in v0.4.
+        The resource returns raw CLML XML without the `max_chars` cap
+        (Phase 4 will introduce structural drill-down).
 
-        IMPORTANT: Always check 'extent' — a section may apply to England & Wales
-        but not Scotland or Northern Ireland.
+        Returns the full section text, territorial extent, in-force status,
+        and prospective flag. Content is capped per max_chars (default 10,000,
+        ~2,500 tokens) — raise max_chars for unusually long definition
+        sections. Check content_truncated in the response to see if it was cut.
+
+        IMPORTANT: Always check `extent` — a section may apply to England &
+        Wales but not Scotland or Northern Ireland.
 
         Args:
-            params (LegislationGetSectionInput): type, year, number, section identifier.
-
-        Returns:
-            str: JSON with title, section_number, content, in_force, extent, version_date, prospective.
+            params: type, year, number, section identifier, optional max_chars.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
-            url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/section/{params.section}/data.xml"
-            resp = await client.get(url)
-            resp.raise_for_status()
-            return _parse_clml_section(resp.text, params.section).model_dump_json(indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/section/{params.section}/data.xml"
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return _parse_clml_section(resp.text, params.section, params.max_chars)
 
     @mcp.tool(
         name="get_toc",
         annotations={"title": "Get Legislation Table of Contents", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def legislation_get_toc(params: LegislationGetTocInput, ctx: Context) -> str:
+    async def legislation_get_toc(params: LegislationGetTocInput, ctx: Context) -> LegislationTOC:
         """Retrieve the table of contents for a UK Act or SI.
+
+        DEPRECATED: prefer the resource template
+        `legislation://{type}/{year}/{number}/toc` for clients that support
+        `resources/read`. This tool will be removed in v0.4. The resource
+        returns the full TOC without offset/limit pagination (Phase 4 will
+        introduce search-within for large statutes).
 
         Returns structural elements (parts, chapters, sections, schedules) with XML id
         and title, e.g. 'section-47: Definitions'. When calling legislation_get_section,
         pass only the numeric part — use '47', not 'section-47'.
 
-        Args:
-            params (LegislationGetTocInput): type, year, number.
+        Large statutes (Companies Act 2006 has 1300+ items) are paginated
+        via offset/limit. Check has_more and total_items on the response.
 
-        Returns:
-            str: JSON array of strings in format 'section-N: Title text'.
+        Args:
+            params: LegislationGetTocInput with type, year, number, offset, limit.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
-            url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/data.xml"
-            resp = await client.get(url)
-            resp.raise_for_status()
-            return json.dumps(_parse_toc_xml(resp.text), indent=2)
-        except Exception as e:
-            return json.dumps({"error": format_http_error(e)})
+        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/data.xml"
+        resp = await client.get(url)
+        resp.raise_for_status()
+
+        all_items = _parse_toc_xml(resp.text)
+        total_items = len(all_items)
+        page = all_items[params.offset : params.offset + params.limit]
+
+        return LegislationTOC(
+            type=params.type,
+            year=params.year,
+            number=params.number,
+            offset=params.offset,
+            limit=params.limit,
+            returned=len(page),
+            total_items=total_items,
+            has_more=(params.offset + len(page)) < total_items,
+            items=page,
+        )

@@ -1,0 +1,28 @@
+tool                            tokens     chars  blocks        ms  err
+-----------------------------------------------------------------------
+case_law_get_judgment            16669     53137       1     116.3  
+case_law_get_judgment            14169     51917       1      28.2  
+case_law_search                  13981     37122       1     111.2  
+votes_get_division                6050     19597       1     467.9  
+committees_search_evidence        2421      7370       1     569.4  
+legislation_search                2341      8096       1     312.7  
+parliament_search_petitions       2024      6476       1     146.9  
+parliament_member_interests       1081      4033       1    2152.1  
+committees_get_committee           917      3113       1    3991.2  
+hmrc_search_guidance               865      3365       1     171.5  
+legislation_get_toc                698      2475       1     415.7  
+parliament_search_hansard          532      1896       1     389.3  
+parliament_member_debates          491      1855       1   11676.1  
+bills_search_bills                 478      1614       1    1840.7  
+citations_parse                    269       858       1       5.1  
+bills_get_bill                     264       980       1      40.7  
+legislation_get_section            225       989       1     157.2  
+votes_search_divisions             156       422       1     465.6  
+citations_resolve                  126       343       1       3.8  
+committees_search_committees       113       372       1     908.5  
+parliament_find_member              61       175       1     493.6  
+-----------------------------------------------------------------------
+TOTAL                            63931    206205
+% of 200k ctx                    32.0%
+
+wrote tests/live/context_costs.csv

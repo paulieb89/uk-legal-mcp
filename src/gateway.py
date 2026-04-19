@@ -29,7 +29,6 @@ from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.logging import StructuredLoggingMiddleware
-from fastmcp.server.middleware.response_limiting import ResponseLimitingMiddleware
 from fastmcp.server.middleware.timing import DetailedTimingMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -37,10 +36,12 @@ from starlette.responses import JSONResponse, Response
 from .deps import http_lifespan
 from .modules.bills import bills_mcp
 from .modules.case_law import case_law_mcp
+from .modules.case_law.resources import register_case_law_resources
 from .modules.citations import citations_mcp
 from .modules.committees import committees_mcp
 from .modules.hmrc import hmrc_mcp
 from .modules.legislation import legislation_mcp
+from .modules.legislation.resources import register_legislation_resources
 from .modules.parliament import parliament_mcp
 from .modules.votes import votes_mcp
 
@@ -151,8 +152,13 @@ gateway.add_middleware(tool_counter)
 # Per-tool timing — logs "Tool 'X' completed in Y ms"
 gateway.add_middleware(DetailedTimingMiddleware())
 
-# LegalDocML XML can run to 200k+ characters; cap before it floods LLM context
-gateway.add_middleware(ResponseLimitingMiddleware(max_size=80000))
+# NOTE: ResponseLimitingMiddleware was removed because it silently drops
+# structured_content from oversize tool responses, which fails strict MCP
+# clients (claude.ai) that validate against the advertised outputSchema.
+# Per-tool truncation (via a max_chars parameter on the tool itself) is
+# the correct place to control payload size — the tool author knows what
+# can safely be cut and can keep the response a valid object. See
+# case_law/tools.py::case_law_get_judgment for the pattern.
 
 # ---------------------------------------------------------------------------
 # Mount sub-modules (in-process — zero network hop)
@@ -166,6 +172,14 @@ gateway.mount(votes_mcp,       namespace="votes")
 gateway.mount(committees_mcp,  namespace="committees")
 gateway.mount(citations_mcp,   namespace="citations")
 gateway.mount(hmrc_mcp,        namespace="hmrc")
+
+# ---------------------------------------------------------------------------
+# Resource templates — registered at GATEWAY level (not on sub-MCPs).
+# Mounting silently breaks RFC 6570 wildcard substitution; see issue #3.
+# ---------------------------------------------------------------------------
+
+register_case_law_resources(gateway)
+register_legislation_resources(gateway)
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +228,11 @@ async def stats(request: Request) -> Response:
 def main() -> None:
     """Run the gateway server on Streamable HTTP transport."""
     port = int(os.getenv("PORT", "8000"))
-    gateway.run(transport="streamable-http", host="0.0.0.0", port=port)
+    # stateless_http=True: Lesson 2 — without it, clients hit "Missing
+    # session ID" on any request not preceded by initialize on the same
+    # machine. Required for safe deploys (machine restart drops sessions)
+    # and future horizontal scaling.
+    gateway.run(transport="streamable-http", host="0.0.0.0", port=port, stateless_http=True)
 
 
 if __name__ == "__main__":
