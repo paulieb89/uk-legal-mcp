@@ -204,6 +204,12 @@ def register_tools(mcp: FastMCP) -> None:
     async def legislation_get_section(params: LegislationGetSectionInput, ctx: Context) -> LegislationSection:
         """Retrieve a specific section of a UK Act or Statutory Instrument.
 
+        DEPRECATED: prefer the resource template
+        `legislation://{type}/{year}/{number}/section/{section}` for clients
+        that support `resources/read`. This tool will be removed in v0.4.
+        The resource returns raw CLML XML without the `max_chars` cap
+        (Phase 4 will introduce structural drill-down).
+
         Returns the full section text, territorial extent, in-force status,
         and prospective flag. Content is capped per max_chars (default 10,000,
         ~2,500 tokens) — raise max_chars for unusually long definition
@@ -227,6 +233,12 @@ def register_tools(mcp: FastMCP) -> None:
     )
     async def legislation_get_toc(params: LegislationGetTocInput, ctx: Context) -> LegislationTOC:
         """Retrieve the table of contents for a UK Act or SI.
+
+        DEPRECATED: prefer the resource template
+        `legislation://{type}/{year}/{number}/toc` for clients that support
+        `resources/read`. This tool will be removed in v0.4. The resource
+        returns the full TOC without offset/limit pagination (Phase 4 will
+        introduce search-within for large statutes).
 
         Returns structural elements (parts, chapters, sections, schedules) with XML id
         and title, e.g. 'section-47: Definitions'. When calling legislation_get_section,

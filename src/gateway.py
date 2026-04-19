@@ -36,10 +36,12 @@ from starlette.responses import JSONResponse, Response
 from .deps import http_lifespan
 from .modules.bills import bills_mcp
 from .modules.case_law import case_law_mcp
+from .modules.case_law.resources import register_case_law_resources
 from .modules.citations import citations_mcp
 from .modules.committees import committees_mcp
 from .modules.hmrc import hmrc_mcp
 from .modules.legislation import legislation_mcp
+from .modules.legislation.resources import register_legislation_resources
 from .modules.parliament import parliament_mcp
 from .modules.votes import votes_mcp
 
@@ -170,6 +172,14 @@ gateway.mount(votes_mcp,       namespace="votes")
 gateway.mount(committees_mcp,  namespace="committees")
 gateway.mount(citations_mcp,   namespace="citations")
 gateway.mount(hmrc_mcp,        namespace="hmrc")
+
+# ---------------------------------------------------------------------------
+# Resource templates — registered at GATEWAY level (not on sub-MCPs).
+# Mounting silently breaks RFC 6570 wildcard substitution; see issue #3.
+# ---------------------------------------------------------------------------
+
+register_case_law_resources(gateway)
+register_legislation_resources(gateway)
 
 
 # ---------------------------------------------------------------------------

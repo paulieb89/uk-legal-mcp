@@ -188,15 +188,15 @@ def register_tools(mcp: FastMCP) -> None:
     async def case_law_get_judgment(params: CaseLawGetJudgmentInput, ctx: Context) -> dict:
         """Retrieve the full LegalDocML XML for a judgment by TNA URI slug.
 
+        DEPRECATED: prefer the resource template `judgment://{slug}` for
+        clients that support `resources/read`. This tool will be removed in
+        v0.4. The resource returns the same XML without the `max_chars`
+        truncation parameter (Phase 4 will introduce structural drill-down).
+
         Returns a dict with the LegalDocML XML, truncated to `max_chars`
         if necessary. Caller controls payload size via the max_chars
         parameter — defaults to 50,000 chars to stay well under typical
         LLM context budgets.
-
-        FastMCP handles serialisation, schema generation, and structured
-        output wrapping automatically. The dict return type is the
-        idiomatic FastMCP pattern — no manual json.dumps, no ToolResult
-        unless you need explicit content/structured_content control.
 
         Args:
             params (CaseLawGetJudgmentInput): uri (TNA slug), max_chars (cap).
