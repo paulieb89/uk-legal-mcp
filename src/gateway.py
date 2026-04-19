@@ -218,7 +218,11 @@ async def stats(request: Request) -> Response:
 def main() -> None:
     """Run the gateway server on Streamable HTTP transport."""
     port = int(os.getenv("PORT", "8000"))
-    gateway.run(transport="streamable-http", host="0.0.0.0", port=port)
+    # stateless_http=True: Lesson 2 — without it, clients hit "Missing
+    # session ID" on any request not preceded by initialize on the same
+    # machine. Required for safe deploys (machine restart drops sessions)
+    # and future horizontal scaling.
+    gateway.run(transport="streamable-http", host="0.0.0.0", port=port, stateless_http=True)
 
 
 if __name__ == "__main__":
