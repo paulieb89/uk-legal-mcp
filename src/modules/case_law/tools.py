@@ -7,15 +7,21 @@ Rate limit: 1,000 requests / 5 min per IP.
 """
 
 import hashlib
-import json
 from datetime import date, datetime
 
 import httpx
 from fastmcp import FastMCP, Context
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...deps import format_http_error
-from .models import JudgmentIdentifier, JudgmentSearchResult, JudgmentSummary
+from . import parsers
+from .models import (
+    CaseLawGrepInput,
+    GrepHit,
+    GrepResult,
+    JudgmentIdentifier,
+    JudgmentSearchResult,
+    JudgmentSummary,
+)
 
 TNA_BASE = "https://caselaw.nationalarchives.gov.uk"
 
@@ -37,32 +43,6 @@ class CaseLawSearchInput(BaseModel):
     from_date: date | None = Field(None, description="Earliest judgment date (YYYY-MM-DD)")
     to_date: date | None = Field(None, description="Latest judgment date (YYYY-MM-DD)")
     page: int = Field(1, description="Result page number (1-indexed)", ge=1, le=50)
-
-
-class CaseLawGetJudgmentInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    uri: str = Field(
-        ...,
-        description=(
-            "TNA judgment URI slug, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450'. "
-            "Always use the 'uri' field returned by case_law_search — do not construct manually."
-        ),
-        min_length=8,
-    )
-    max_chars: int = Field(
-        50000,
-        description=(
-            "Maximum number of characters of LegalDocML XML to return. "
-            "Default 50,000 (~12,500 tokens) keeps a single judgment under "
-            "10% of a 200k-token context window. Set higher (e.g. 200000) "
-            "to fetch a complete judgment when you need every clause; the "
-            "tool will return up to that many chars and flag if truncation "
-            "occurred."
-        ),
-        ge=1000,
-        le=400000,
-    )
 
 
 def _parse_atom_feed(xml_bytes: bytes) -> JudgmentSearchResult:
@@ -164,7 +144,10 @@ def register_tools(mcp: FastMCP) -> None:
         """Search UK case law via the TNA Find Case Law API.
 
         Returns paginated judgment summaries: neutral citations, court, dates, stable URIs.
-        Use case_law_get_judgment with the returned uri to fetch full text.
+        Use the judgment://{slug}/header resource to inspect a result, then
+        judgment://{slug}/index to discover paragraphs and judgment://{slug}/para/{eId}
+        to read individual paragraphs. For content-based discovery within a
+        judgment, use case_law_grep_judgment.
 
         Args:
             params: CaseLawSearchInput with query, optional filters (court, judge,
@@ -182,48 +165,44 @@ def register_tools(mcp: FastMCP) -> None:
         return _parse_atom_feed(resp.content)
 
     @mcp.tool(
-        name="get_judgment",
-        annotations={"title": "Get Full Judgment Text", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+        name="grep_judgment",
+        annotations={
+            "title": "Search within a UK Court Judgment",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
     )
-    async def case_law_get_judgment(params: CaseLawGetJudgmentInput, ctx: Context) -> dict:
-        """Retrieve the full LegalDocML XML for a judgment by TNA URI slug.
+    async def case_law_grep_judgment(params: CaseLawGrepInput, ctx: Context) -> GrepResult:
+        """Find paragraphs in a single judgment whose text matches a pattern.
 
-        DEPRECATED: prefer the resource template `judgment://{slug}` for
-        clients that support `resources/read`. This tool will be removed in
-        v0.4. The resource returns the same XML without the `max_chars`
-        truncation parameter (Phase 4 will introduce structural drill-down).
+        Returns a list of `{eId, snippet, match}` hits — small per-paragraph
+        snippets centred on the match — so the LLM can decide which full
+        paragraphs to read via judgment://{slug}/para/{eId}.
 
-        Returns a dict with the LegalDocML XML, truncated to `max_chars`
-        if necessary. Caller controls payload size via the max_chars
-        parameter — defaults to 50,000 chars to stay well under typical
-        LLM context budgets.
+        Use this when answering content-based questions ("what did the judges
+        say about negligence?", "find the test for foreseeability", "did this
+        case cite Donoghue?") rather than navigating by paragraph number
+        (which uses the index resource).
 
-        Args:
-            params (CaseLawGetJudgmentInput): uri (TNA slug), max_chars (cap).
-
-        Returns:
-            dict: Keys 'uri', 'format', 'content' (LegalDocML XML),
-                'truncated' (bool), 'original_length' (int).
-                On failure: 'error' key.
+        Pattern is regex; if it doesn't compile, falls back to literal
+        substring search.
         """
-        try:
-            client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
-            uri = params.uri.lstrip("/")
-            resp = await client.get(f"{TNA_BASE}/{uri}/data.xml")
-            resp.raise_for_status()
+        client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+        slug = params.slug.lstrip("/")
+        resp = await client.get(f"{TNA_BASE}/{slug}/data.xml")
+        resp.raise_for_status()
 
-            xml_text = resp.text
-            original_length = len(xml_text)
-            truncated = original_length > params.max_chars
-            if truncated:
-                xml_text = xml_text[: params.max_chars] + "\n<!-- ...truncated -->"
-
-            return {
-                "uri": uri,
-                "format": "legaldocml-xml",
-                "content": xml_text,
-                "truncated": truncated,
-                "original_length": original_length,
-            }
-        except Exception as e:
-            return {"error": format_http_error(e)}
+        hits = parsers.grep_paragraphs(
+            resp.text,
+            params.pattern,
+            case_insensitive=params.case_insensitive,
+            max_hits=params.max_hits,
+        )
+        return GrepResult(
+            slug=slug,
+            pattern=params.pattern,
+            hits=[GrepHit(**h) for h in hits],
+            truncated=len(hits) >= params.max_hits,
+        )

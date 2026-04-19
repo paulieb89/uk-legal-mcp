@@ -20,37 +20,26 @@ from src.gateway import gateway
 
 
 @pytest.mark.asyncio
-async def test_resource_templates_registered_at_gateway():
-    """The three Phase 3 resource templates must be exposed."""
+async def test_legislation_resource_templates_registered():
+    """Phase 3 legislation resource templates must be exposed.
+
+    Case-law resource templates are covered by tests/test_phase4_drilldown.py.
+    """
     async with Client(gateway) as client:
         templates = {t.uriTemplate for t in await client.list_resource_templates()}
 
-    assert "judgment://{slug*}" in templates
     assert "legislation://{type}/{year}/{number}/section/{section}" in templates
     assert "legislation://{type}/{year}/{number}/toc" in templates
 
 
 @pytest.mark.asyncio
-async def test_judgment_resource_returns_legaldocml():
-    """Reading a known TNA judgment slug returns LegalDocML XML."""
-    async with Client(gateway) as client:
-        result = await client.read_resource("judgment://uksc/2024/12")
-
-    assert len(result) == 1
-    text = result[0].text
-    assert text.startswith("<akomaNtoso")
-    assert "legaldocml" in text or "akn/3.0" in text
-    assert len(text) > 10_000  # Non-trivial judgment
-
-
-@pytest.mark.asyncio
-async def test_judgment_resource_handles_deep_slug():
-    """Multi-segment wildcard slug ('ewca/civ/2023/N') routes correctly."""
+async def test_judgment_wildcard_substitution_handles_deep_slug():
+    """Multi-segment wildcard slug ('ewca/civ/2023/N') routes correctly via a sub-path."""
     async with Client(gateway) as client:
         # 404 is expected for a made-up slug; the test is that the URL is
         # constructed with the wildcard substituted, not that this case exists.
         with pytest.raises(Exception) as exc_info:
-            await client.read_resource("judgment://ewca/civ/2099/99999")
+            await client.read_resource("judgment://ewca/civ/2099/99999/header")
 
     msg = str(exc_info.value)
     assert "ewca/civ/2099/99999" in msg, (
