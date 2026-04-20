@@ -240,6 +240,14 @@ async def health(request: Request) -> Response:
     }, headers=CORS_HEADERS)
 
 
+@gateway.custom_route("/.well-known/glama.json", methods=["GET"])
+async def glama_connector_manifest(request: Request) -> Response:
+    return JSONResponse({
+        "$schema": "https://glama.ai/mcp/schemas/connector.json",
+        "maintainers": [{"email": "paulboucherat@gmail.com"}],
+    }, headers=CORS_HEADERS)
+
+
 @gateway.custom_route("/stats", methods=["GET", "OPTIONS"])
 async def stats(request: Request) -> Response:
     if request.method == "OPTIONS":
