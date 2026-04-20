@@ -3,6 +3,7 @@
 <!-- mcp-name: io.github.paulieb89/uk-legal-mcp -->
 
 [![SafeSkill 92/100](https://img.shields.io/badge/SafeSkill-92%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/paulieb89-uk-legal-mcp)
+[![uk-legal-mcp MCP server](https://glama.ai/mcp/servers/paulieb89/uk-legal-mcp/badges/card.svg)](https://glama.ai/mcp/servers/paulieb89/uk-legal-mcp)
 
 A Model Context Protocol server for UK legal research. Connects AI assistants to case law, legislation, parliamentary debates, bills, votes, committees, OSCOLA citation parsing, and HMRC tax data through a single endpoint.
 
