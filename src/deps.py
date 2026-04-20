@@ -92,6 +92,24 @@ class LegislationClient:
                 resp = await self._session.get(url, **kwargs)
                 if resp.status_code != 202:
                     break
+            else:
+                # Polls exhausted — AWS WAF is silently blocking the XML endpoint
+                # (Companies Act 2006 returns 202 + empty body for all polls).
+                # The HTML Accept variant returns the JS challenge; XML gets nothing.
+                raise LegislationUpstreamError(
+                    f"legislation.gov.uk did not serve XML for {url} after "
+                    f"{sum(self.POLL_DELAYS):.0f}s. AWS WAF is blocking the XML "
+                    f"endpoint for this Act (known: Companies Act 2006, ukpga/2006/46). "
+                    f"Use legislation.gov.uk directly or legislation_search with fulltext=True."
+                )
+
+        # Poll exhausted — still getting 202
+        if resp.status_code == 202:
+            raise LegislationUpstreamError(
+                f"legislation.gov.uk is still rendering the document after "
+                f"{sum(self.POLL_DELAYS):.0f}s ({url}). Very large Acts can "
+                f"take longer to render. Retry in a few minutes."
+            )
 
         # WAF JS challenge — 200 + HTML "please solve this challenge" page
         ct = (resp.headers.get("content-type") or "").lower()
@@ -102,6 +120,15 @@ class LegislationClient:
                 f"Act 2006) intermittently. Retry in a few minutes, or use "
                 f"legislation_search to find an alternative. See issue #4."
             )
+
+        # Empty body — WAF blocking without a challenge page (XML Accept header path)
+        if not resp.content.strip():
+            raise LegislationUpstreamError(
+                f"legislation.gov.uk returned an empty response for {url}. "
+                f"The XML endpoint for this Act is blocked. "
+                f"Use legislation.gov.uk directly or legislation_search with fulltext=True."
+            )
+
         return resp
 
 

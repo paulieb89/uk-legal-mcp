@@ -38,7 +38,9 @@ from fastmcp.server.middleware.timing import DetailedTimingMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from .deps import http_lifespan
+from curl_cffi.requests import AsyncSession as CurlAsyncSession
+
+from .deps import LegislationClient, LegislationUpstreamError, http_lifespan
 from .modules.bills import bills_mcp
 from .modules.case_law import case_law_mcp
 from .modules.case_law.resources import register_case_law_resources
@@ -251,6 +253,72 @@ async def stats(request: Request) -> Response:
         "avg_ms_by_tool": tool_counter.avg_ms(),
         "errors_by_tool": tool_counter.errors if tool_counter.errors else None,
         "recent_calls": list(tool_counter.recent),
+    }, headers=CORS_HEADERS)
+
+
+@gateway.custom_route("/legislation-probe", methods=["GET", "OPTIONS"])
+async def legislation_probe(request: Request) -> Response:
+    """Temporary diagnostic: test Housing Act 1988 + Companies Act 2006 from this IP.
+
+    Returns per-Act status, byte count, and timing. Verdict distinguishes
+    act-specific WAF blocking from IP-range blocking.
+    Remove once Companies Act 2006 situation is resolved.
+    """
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=CORS_HEADERS)
+
+    LEGISLATION_BASE = "https://www.legislation.gov.uk"
+    probe_acts = [
+        ("housing_act_1988",   f"{LEGISLATION_BASE}/ukpga/1988/50/section/1/data.xml"),
+        ("companies_act_2006", f"{LEGISLATION_BASE}/ukpga/2006/46/section/1/data.xml"),
+    ]
+
+    async with CurlAsyncSession(
+        impersonate="chrome",
+        timeout=35.0,
+        allow_redirects=True,
+        headers={"Accept": "application/atom+xml, application/xml, text/xml"},
+    ) as session:
+        client = LegislationClient(session)
+
+        async def _probe(key: str, url: str) -> tuple[str, dict]:
+            t0 = time.perf_counter()
+            result: dict = {}
+            try:
+                resp = await client.get(url)
+                result = {
+                    "ok": True,
+                    "status": resp.status_code,
+                    "bytes": len(resp.content),
+                    "content_type": (resp.headers.get("content-type") or "")[:80],
+                }
+            except LegislationUpstreamError as e:
+                result = {"ok": False, "status": None, "bytes": 0, "error": str(e)[:300]}
+            except Exception as e:
+                result = {"ok": False, "status": None, "bytes": 0, "error": f"{type(e).__name__}: {e}"[:300]}
+            finally:
+                result["ms"] = round((time.perf_counter() - t0) * 1000, 1)
+            return key, result
+
+        pairs = await asyncio.gather(*(_probe(k, u) for k, u in probe_acts))
+        results = dict(pairs)
+
+    h_ok = results.get("housing_act_1988",   {}).get("ok", False)
+    c_ok = results.get("companies_act_2006", {}).get("ok", False)
+
+    if h_ok and not c_ok:
+        verdict = "act-specific"
+    elif not h_ok and not c_ok:
+        verdict = "ip-range-or-both-blocked"
+    elif h_ok and c_ok:
+        verdict = "both-working"
+    else:
+        verdict = "housing-blocked-companies-ok"
+
+    return JSONResponse({
+        **results,
+        "verdict": verdict,
+        "probe_at": datetime.now(timezone.utc).isoformat(),
     }, headers=CORS_HEADERS)
 
 
