@@ -68,6 +68,12 @@ class LegislationClient:
 
     3. Very large Acts can return 202 + render-pending HTML on the first
        call. We poll briefly and re-request the XML.
+
+    We deliberately do NOT fall back to the Wayback Machine. Wayback is
+    an archive, not a live CDN — routing production traffic through it
+    violates IA's operational norms, and its snapshots can be weeks
+    stale. For a legal tool that must reflect current statute, stale
+    silently-substituted content is worse than a clear error.
     """
 
     POLL_DELAYS = (1.0, 2.0, 4.0)  # ~7s total before giving up
