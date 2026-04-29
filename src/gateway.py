@@ -41,14 +41,23 @@ from starlette.responses import JSONResponse, Response
 from curl_cffi.requests import AsyncSession as CurlAsyncSession
 
 from .deps import LegislationClient, LegislationUpstreamError, http_lifespan
+from typing import Annotated
+
+from pydantic import Field
+
 from .modules.bills import bills_mcp
 from .modules.case_law import case_law_mcp
-from .modules.case_law.resources import register_case_law_resources
+from .modules.case_law.resources import TNA_BASE, register_case_law_resources
+from .modules.case_law import parsers as case_law_parsers
 from .modules.citations import citations_mcp
 from .modules.committees import committees_mcp
 from .modules.hmrc import hmrc_mcp
 from .modules.legislation import legislation_mcp
-from .modules.legislation.resources import register_legislation_resources
+from .modules.legislation.resources import (
+    LEGISLATION_BASE,
+    _parse_toc,
+    register_legislation_resources,
+)
 from .modules.parliament import parliament_mcp
 from .modules.votes import votes_mcp
 
@@ -207,14 +216,145 @@ register_legislation_resources(gateway)
 
 
 # ---------------------------------------------------------------------------
-# Tool-only client coverage (Apps, ChatGPT, anything that can't speak
-# resources/read). The transform auto-generates list_resources +
-# read_resource tools at the gateway level. All middleware applies.
+# Named companion tools for tool-only clients (lesson 35 pattern).
+# Mirrors the judgment:// and legislation:// resources but returns dict
+# instead of str, so FastMCP emits clean structuredContent without the
+# double-encoding caused by ResourcesAsTools.
 # ---------------------------------------------------------------------------
 
-from fastmcp.server.transforms import ResourcesAsTools  # noqa: E402
+from fastmcp import Context  # noqa: E402 (after gateway instantiation)
 
-gateway.add_transform(ResourcesAsTools(gateway))
+
+@gateway.tool(
+    name="judgment_get_header",
+    annotations={"title": "Get Judgment Header", "readOnlyHint": True, "idempotentHint": True},
+)
+async def judgment_get_header(
+    slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450'", min_length=3, max_length=200)],
+    ctx: Context,
+) -> dict:
+    """Get metadata for a UK court judgment: parties, judges, neutral citation, court, dates.
+
+    Use case_law_search to find the slug, then call this for orientation before
+    reading specific paragraphs via judgment_get_paragraph.
+    """
+    import httpx
+    client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+    resp = await client.get(f"{TNA_BASE}/{slug.lstrip('/')}/data.xml")
+    resp.raise_for_status()
+    return {"slug": slug, "header": case_law_parsers.extract_header(resp.text)}
+
+
+@gateway.tool(
+    name="judgment_get_index",
+    annotations={"title": "Get Judgment Paragraph Index", "readOnlyHint": True, "idempotentHint": True},
+)
+async def judgment_get_index(
+    slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12'", min_length=3, max_length=200)],
+    ctx: Context,
+) -> dict:
+    """Get the paragraph navigation index for a UK court judgment.
+
+    Returns eId: first_line pairs for every paragraph. Use this to discover
+    paragraph identifiers, then call judgment_get_paragraph to read specific ones.
+    """
+    import httpx
+    client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+    resp = await client.get(f"{TNA_BASE}/{slug.lstrip('/')}/data.xml")
+    resp.raise_for_status()
+    raw = case_law_parsers.extract_index(resp.text)
+    paragraphs = []
+    for line in raw.strip().splitlines():
+        if ":" in line:
+            eid, _, preview = line.partition(":")
+            paragraphs.append({"eId": eid.strip(), "preview": preview.strip()})
+    return {"slug": slug, "paragraphs": paragraphs}
+
+
+@gateway.tool(
+    name="judgment_get_paragraph",
+    annotations={"title": "Get Judgment Paragraph", "readOnlyHint": True, "idempotentHint": True},
+)
+async def judgment_get_paragraph(
+    slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12'", min_length=3, max_length=200)],
+    eId: Annotated[str, Field(description="Paragraph eId from judgment_get_index, e.g. 'para_12'", min_length=1, max_length=100)],
+    ctx: Context,
+) -> dict:
+    """Get a single paragraph from a UK court judgment by its LegalDocML eId.
+
+    Use judgment_get_index first to discover available eIds. Returns the paragraph
+    XML content (400–1,700 tokens typical).
+    """
+    import httpx
+    client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+    resp = await client.get(f"{TNA_BASE}/{slug.lstrip('/')}/data.xml")
+    resp.raise_for_status()
+    content = case_law_parsers.extract_paragraph(resp.text, eId)
+    return {"slug": slug, "eId": eId, "content": content}
+
+
+@gateway.tool(
+    name="legislation_get_toc",
+    annotations={"title": "Get Legislation Table of Contents", "readOnlyHint": True, "idempotentHint": True},
+)
+async def legislation_toc_tool(
+    type: Annotated[str, Field(description="Legislation type, e.g. 'ukpga', 'uksi'", min_length=3, max_length=20)],
+    year: Annotated[str, Field(description="Year, e.g. '2006'", min_length=4, max_length=4)],
+    number: Annotated[str, Field(description="Number, e.g. '46'", min_length=1, max_length=10)],
+    ctx: Context,
+    date: Annotated[str | None, Field(description="Optional point-in-time date YYYY-MM-DD for historical version")] = None,
+) -> dict:
+    """Get the table of contents for a UK Act or Statutory Instrument.
+
+    Returns a flat list of sections with their IDs and titles. Use
+    legislation_get_section to read the text of a specific section.
+    Example: type='ukpga', year='2006', number='46' for Companies Act 2006.
+    """
+    client = ctx.lifespan_context["legislation_http"]
+    if date:
+        url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/{date}/data.xml"
+    else:
+        url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/data.xml"
+    resp = await client.get(url)
+    resp.raise_for_status()
+    items = _parse_toc(resp.text)
+    sections = []
+    for line in items:
+        if ":" in line:
+            id_, _, title = line.partition(":")
+            sections.append({"id": id_.strip(), "title": title.strip()})
+    return {"type": type, "year": year, "number": number, "date": date, "sections": sections}
+
+
+@gateway.tool(
+    name="legislation_get_section",
+    annotations={"title": "Get Legislation Section", "readOnlyHint": True, "idempotentHint": True},
+)
+async def legislation_section_tool(
+    type: Annotated[str, Field(description="Legislation type, e.g. 'ukpga', 'uksi'", min_length=3, max_length=20)],
+    year: Annotated[str, Field(description="Year, e.g. '2006'", min_length=4, max_length=4)],
+    number: Annotated[str, Field(description="Number, e.g. '46'", min_length=1, max_length=10)],
+    section: Annotated[str, Field(description="Section number or ID, e.g. '172' or 'section-172'", min_length=1, max_length=50)],
+    ctx: Context,
+    date: Annotated[str | None, Field(description="Optional point-in-time date YYYY-MM-DD for historical version")] = None,
+) -> dict:
+    """Get the text of a specific section of a UK Act or SI.
+
+    Returns the CLML XML for the section. Use legislation_get_toc first to
+    browse available sections. Optional date returns the section as it stood
+    on that date (for historical or compliance research).
+    """
+    client = ctx.lifespan_context["legislation_http"]
+    if date:
+        url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}/{date}/data.xml"
+    else:
+        url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}/data.xml"
+    resp = await client.get(url)
+    resp.raise_for_status()
+    return {
+        "type": type, "year": year, "number": number,
+        "section": section, "date": date, "content": resp.text,
+    }
 
 
 # ---------------------------------------------------------------------------
