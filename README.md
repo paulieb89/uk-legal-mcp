@@ -181,6 +181,19 @@ Self-contained. No external API. Zero network dependency (except `citations_netw
 
 ---
 
+## Prompts
+
+Four workflow prompts are available for multi-step legal research. Exposed as tools via `PromptsAsTools` for ChatGPT; accessible natively on protocol-aware clients (Claude, Inspector).
+
+| Prompt | Module | Description |
+|--------|--------|-------------|
+| `summarise_act` | legislation | Structured summary of a UK Act or SI |
+| `compare_legislation` | legislation | Comparative analysis of two pieces of legislation on a topic |
+| `policy_vibe_check` | parliament | Parliamentary reception assessment for a policy |
+| `member_position_analysis` | parliament | A member's position and voting record on a topic |
+
+---
+
 ## Architecture
 
 ```
