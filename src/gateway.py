@@ -35,6 +35,7 @@ from fastmcp.server.middleware.caching import (
 from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.logging import StructuredLoggingMiddleware
 from fastmcp.server.middleware.timing import DetailedTimingMiddleware
+from fastmcp.server.transforms import PromptsAsTools
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -183,6 +184,7 @@ gateway.add_middleware(ResponseCachingMiddleware(
     read_resource_settings=ReadResourceSettings(ttl=3600),
     call_tool_settings=CallToolSettings(ttl=3600),
 ))
+gateway.add_transform(PromptsAsTools(gateway))
 
 # NOTE: ResponseLimitingMiddleware was removed because it silently drops
 # structured_content from oversize tool responses, which fails strict MCP
@@ -291,70 +293,6 @@ async def judgment_get_paragraph(
     resp.raise_for_status()
     content = case_law_parsers.extract_paragraph(resp.text, eId)
     return {"slug": slug, "eId": eId, "content": content}
-
-
-@gateway.tool(
-    name="legislation_get_toc",
-    annotations={"title": "Get Legislation Table of Contents", "readOnlyHint": True, "idempotentHint": True},
-)
-async def legislation_toc_tool(
-    type: Annotated[str, Field(description="Legislation type, e.g. 'ukpga', 'uksi'", min_length=3, max_length=20)],
-    year: Annotated[str, Field(description="Year, e.g. '2006'", min_length=4, max_length=4)],
-    number: Annotated[str, Field(description="Number, e.g. '46'", min_length=1, max_length=10)],
-    ctx: Context,
-    date: Annotated[str | None, Field(description="Optional point-in-time date YYYY-MM-DD for historical version")] = None,
-) -> dict:
-    """Get the table of contents for a UK Act or Statutory Instrument.
-
-    Returns a flat list of sections with their IDs and titles. Use
-    legislation_get_section to read the text of a specific section.
-    Example: type='ukpga', year='2006', number='46' for Companies Act 2006.
-    """
-    client = ctx.lifespan_context["legislation_http"]
-    if date:
-        url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/{date}/data.xml"
-    else:
-        url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/data.xml"
-    resp = await client.get(url)
-    resp.raise_for_status()
-    items = _parse_toc(resp.text)
-    sections = []
-    for line in items:
-        if ":" in line:
-            id_, _, title = line.partition(":")
-            sections.append({"id": id_.strip(), "title": title.strip()})
-    return {"type": type, "year": year, "number": number, "date": date, "sections": sections}
-
-
-@gateway.tool(
-    name="legislation_get_section",
-    annotations={"title": "Get Legislation Section", "readOnlyHint": True, "idempotentHint": True},
-)
-async def legislation_section_tool(
-    type: Annotated[str, Field(description="Legislation type, e.g. 'ukpga', 'uksi'", min_length=3, max_length=20)],
-    year: Annotated[str, Field(description="Year, e.g. '2006'", min_length=4, max_length=4)],
-    number: Annotated[str, Field(description="Number, e.g. '46'", min_length=1, max_length=10)],
-    section: Annotated[str, Field(description="Section number or ID, e.g. '172' or 'section-172'", min_length=1, max_length=50)],
-    ctx: Context,
-    date: Annotated[str | None, Field(description="Optional point-in-time date YYYY-MM-DD for historical version")] = None,
-) -> dict:
-    """Get the text of a specific section of a UK Act or SI.
-
-    Returns the CLML XML for the section. Use legislation_get_toc first to
-    browse available sections. Optional date returns the section as it stood
-    on that date (for historical or compliance research).
-    """
-    client = ctx.lifespan_context["legislation_http"]
-    if date:
-        url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}/{date}/data.xml"
-    else:
-        url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}/data.xml"
-    resp = await client.get(url)
-    resp.raise_for_status()
-    return {
-        "type": type, "year": year, "number": number,
-        "section": section, "date": date, "content": resp.text,
-    }
 
 
 # ---------------------------------------------------------------------------
