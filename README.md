@@ -40,7 +40,7 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 {
   "mcpServers": {
     "uk-legal": {
-      "type": "streamable-http",
+      "type": "http",
       "url": "https://uk-legal-mcp.fly.dev/mcp"
     }
   }
