@@ -2,7 +2,8 @@
 
 <!-- mcp-name: io.github.paulieb89/uk-legal-mcp -->
 
-[![SafeSkill 92/100](https://img.shields.io/badge/SafeSkill-92%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/paulieb89-uk-legal-mcp)
+[![PyPI](https://img.shields.io/pypi/v/uk-legal-mcp)](https://pypi.org/project/uk-legal-mcp/)
+[![SafeSkill](https://safeskill.dev/api/badge/paulieb89-uk-legal-mcp)](https://safeskill.dev/scan/paulieb89-uk-legal-mcp)
 [![uk-legal-mcp MCP server](https://glama.ai/mcp/servers/paulieb89/uk-legal-mcp/badges/card.svg)](https://glama.ai/mcp/servers/paulieb89/uk-legal-mcp)
 [![smithery badge](https://smithery.ai/badge/bouch/uk-legal)](https://smithery.ai/servers/bouch/uk-legal)
 
