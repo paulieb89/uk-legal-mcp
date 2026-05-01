@@ -421,7 +421,7 @@ async def legislation_probe(request: Request) -> Response:
 
 def main() -> None:
     """Run the gateway server on Streamable HTTP transport."""
-    port = int(os.getenv("PORT", "8000"))
+    port = int(os.getenv("PORT", "8080"))
     # stateless_http=True: Lesson 2 — without it, clients hit "Missing
     # session ID" on any request not preceded by initialize on the same
     # machine. Required for safe deploys (machine restart drops sessions)
