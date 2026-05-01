@@ -329,7 +329,7 @@ async def smithery_server_card(request: Request) -> Response:
 async def glama_connector_manifest(request: Request) -> Response:
     return JSONResponse({
         "$schema": "https://glama.ai/mcp/schemas/connector.json",
-        "maintainers": [{"email": "paulboucherat@gmail.com"}],
+        "maintainers": [{"email": "paul@bouch.dev"}],
     }, headers=CORS_HEADERS)
 
 
