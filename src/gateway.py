@@ -19,11 +19,10 @@ Transport: Streamable HTTP, port 8000
 Region:    lhr (London) — co-located with UK legal data sources
 """
 
-import collections
+import asyncio
 import logging
 import os
 import time
-from datetime import datetime, timezone
 
 from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware, MiddlewareContext
@@ -36,6 +35,7 @@ from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.logging import StructuredLoggingMiddleware
 from fastmcp.server.middleware.timing import DetailedTimingMiddleware
 from fastmcp.server.transforms import PromptsAsTools
+from prometheus_client import CONTENT_TYPE_LATEST, Counter as PromCounter, Histogram, generate_latest
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -63,60 +63,42 @@ from .modules.parliament import parliament_mcp
 from .modules.votes import votes_mcp
 
 # ---------------------------------------------------------------------------
-# Tool call counter middleware
+# Prometheus metrics
 # ---------------------------------------------------------------------------
 
-_server_start = datetime.now(timezone.utc)
+TRANSPORT = os.getenv("FASTMCP_TRANSPORT", "http")
+REGION = os.getenv("FLY_REGION", "local")
+
+tool_calls_total = PromCounter(
+    "uk_legal_tool_calls_total",
+    "Count of MCP tool invocations.",
+    labelnames=["tool", "transport", "region", "status"],
+)
+tool_duration_seconds = Histogram(
+    "uk_legal_tool_duration_seconds",
+    "Tool invocation latency in seconds.",
+    labelnames=["tool", "transport", "region"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+)
 
 
-class ToolCounterMiddleware(Middleware):
-    """Per-tool call counter with timing and recent call log. Feeds /stats."""
-
-    MAX_RECENT = 50
-
-    def __init__(self):
-        self.calls: dict[str, int] = {}
-        self.errors: dict[str, int] = {}
-        self.total_ms: dict[str, float] = {}
-        self.total_calls: int = 0
-        self.total_errors: int = 0
-        self.last_call_at: str | None = None
-        self.recent: collections.deque[dict] = collections.deque(maxlen=self.MAX_RECENT)
+class PrometheusMiddleware(Middleware):
+    """Emit fleet-standard Prometheus metrics on every tool call."""
 
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         tool_name = context.message.name
-        self.calls[tool_name] = self.calls.get(tool_name, 0) + 1
-        self.total_calls += 1
-        now = datetime.now(timezone.utc)
-        self.last_call_at = now.isoformat()
-
         t0 = time.perf_counter()
-        error_msg = None
         try:
             result = await call_next(context)
+            tool_calls_total.labels(tool_name, TRANSPORT, REGION, "ok").inc()
             return result
-        except Exception as e:
-            self.errors[tool_name] = self.errors.get(tool_name, 0) + 1
-            self.total_errors += 1
-            error_msg = str(e)
+        except BaseException:
+            tool_calls_total.labels(tool_name, TRANSPORT, REGION, "error").inc()
             raise
         finally:
-            duration_ms = round((time.perf_counter() - t0) * 1000, 1)
-            self.total_ms[tool_name] = self.total_ms.get(tool_name, 0.0) + duration_ms
-            entry = {"tool": tool_name, "at": now.isoformat(), "ms": duration_ms}
-            if error_msg:
-                entry["error"] = error_msg[:200]
-            self.recent.append(entry)
-
-    def avg_ms(self) -> dict[str, float]:
-        return {
-            tool: round(self.total_ms[tool] / self.calls[tool], 1)
-            for tool in self.calls
-            if self.calls[tool] > 0
-        }
-
-
-tool_counter = ToolCounterMiddleware()
+            tool_duration_seconds.labels(tool_name, TRANSPORT, REGION).observe(
+                time.perf_counter() - t0
+            )
 
 # ---------------------------------------------------------------------------
 # Gateway server
@@ -164,8 +146,8 @@ gateway.add_middleware(StructuredLoggingMiddleware(
     estimate_payload_tokens=True,
 ))
 
-# Per-tool call counter — feeds /stats endpoint
-gateway.add_middleware(tool_counter)
+# Prometheus metrics — fleet-standard tool_calls_total + tool_duration_seconds
+gateway.add_middleware(PrometheusMiddleware())
 
 # Per-tool timing — logs "Tool 'X' completed in Y ms"
 gateway.add_middleware(DetailedTimingMiddleware())
@@ -314,14 +296,18 @@ async def health(request: Request) -> Response:
         "status": "ok",
         "server": "uk-legal-mcp",
         "modules": 8,
-        "uptime_seconds": int((datetime.now(timezone.utc) - _server_start).total_seconds()),
     }, headers=CORS_HEADERS)
+
+
+@gateway.custom_route("/metrics", methods=["GET"])
+async def metrics_endpoint(request: Request) -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @gateway.custom_route("/.well-known/mcp/server-card.json", methods=["GET"])
 async def smithery_server_card(request: Request) -> Response:
     return JSONResponse({
-        "serverInfo": {"name": "uk-legal-mcp", "version": "0.4.1"},
+        "serverInfo": {"name": "uk-legal-mcp", "version": "0.4.2"},
     }, headers=CORS_HEADERS)
 
 
@@ -330,22 +316,6 @@ async def glama_connector_manifest(request: Request) -> Response:
     return JSONResponse({
         "$schema": "https://glama.ai/mcp/schemas/connector.json",
         "maintainers": [{"email": "paul@bouch.dev"}],
-    }, headers=CORS_HEADERS)
-
-
-@gateway.custom_route("/stats", methods=["GET", "OPTIONS"])
-async def stats(request: Request) -> Response:
-    if request.method == "OPTIONS":
-        return Response(status_code=204, headers=CORS_HEADERS)
-    return JSONResponse({
-        "uptime_seconds": int((datetime.now(timezone.utc) - _server_start).total_seconds()),
-        "total_calls": tool_counter.total_calls,
-        "total_errors": tool_counter.total_errors,
-        "last_call_at": tool_counter.last_call_at,
-        "calls_by_tool": dict(sorted(tool_counter.calls.items(), key=lambda x: x[1], reverse=True)),
-        "avg_ms_by_tool": tool_counter.avg_ms(),
-        "errors_by_tool": tool_counter.errors if tool_counter.errors else None,
-        "recent_calls": list(tool_counter.recent),
     }, headers=CORS_HEADERS)
 
 

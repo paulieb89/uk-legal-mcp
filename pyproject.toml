@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "uk-legal-mcp"
-version = "0.4.1"
+version = "0.4.2"
 description = "UK legal research MCP server — case law, legislation, parliament, bills, votes, committees, citations, HMRC"
 readme = "README.md"
 license = "MIT"
@@ -44,6 +44,7 @@ dependencies = [
     "pydantic==2.13.0",
     "lxml==6.0.4",
     "curl-cffi>=0.15.0",
+    "prometheus-client==0.24.1",
 ]
 
 [project.optional-dependencies]

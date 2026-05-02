@@ -30,3 +30,7 @@ primary_region = "lhr"
 [env]
   PORT = "8080"
   LOG_LEVEL = "INFO"
+
+[metrics]
+  port = 8080
+  path = "/metrics"
