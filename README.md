@@ -9,7 +9,6 @@
 [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect/mcp/install?name=uk-legal&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fuk-legal-mcp.fly.dev%2Fmcp%22%7D)
 [![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_Server-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=uk-legal&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fuk-legal-mcp.fly.dev%2Fmcp%22%7D&quality=insiders)
 [![Install in Cursor](https://img.shields.io/badge/Cursor-Install_Server-000000?style=flat-square&logoColor=white)](https://cursor.com/en/install-mcp?name=uk-legal&config=eyJ0eXBlIjoiaHR0cCIsInVybCI6Imh0dHBzOi8vdWstbGVnYWwtbWNwLmZseS5kZXYvbWNwIn0=)
-[![Install in VS Code (local)](https://img.shields.io/badge/VS_Code-Install_Local-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect/mcp/install?name=uk-legal&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22uk-legal-mcp%22%5D%7D)
 
 A Model Context Protocol server for UK legal research. Connects AI assistants to case law, legislation, parliamentary debates, bills, votes, committees, OSCOLA citation parsing, and HMRC tax data through a single endpoint.
 
@@ -38,11 +37,30 @@ MCP Client (Claude, Cursor, etc.)
 
 ### Connect to the hosted server
 
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Use this URL when adding a remote/custom MCP connector in Claude, Claude Desktop, VS Code, Cursor, or another MCP client:
+
+```text
+https://uk-legal-mcp.fly.dev/mcp
+```
+
+For clients that use `mcpServers` JSON:
 
 ```json
 {
   "mcpServers": {
+    "uk-legal": {
+      "type": "http",
+      "url": "https://uk-legal-mcp.fly.dev/mcp"
+    }
+  }
+}
+```
+
+For VS Code workspace config, use `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
     "uk-legal": {
       "type": "http",
       "url": "https://uk-legal-mcp.fly.dev/mcp"
@@ -58,15 +76,20 @@ Then try:
 - *"Parse the citations in: The court applied Donoghue v Stevenson [1932] AC 562 and s.2 Occupiers' Liability Act 1957"*
 - *"What is parliament saying about short selling?"*
 
-### Local (uvx)
+### Local HTTP server (advanced)
+
+Most users should connect to the hosted server above. If you specifically want to run the server locally, start it with `uvx` and connect to the local HTTP endpoint:
+
+```bash
+PORT=8765 uvx uk-legal-mcp
+```
 
 ```json
 {
   "mcpServers": {
     "uk-legal": {
-      "type": "stdio",
-      "command": "uvx",
-      "args": ["uk-legal-mcp"]
+      "type": "http",
+      "url": "http://127.0.0.1:8765/mcp"
     }
   }
 }
