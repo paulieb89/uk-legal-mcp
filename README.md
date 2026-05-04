@@ -58,18 +58,18 @@ Then try:
 - *"Parse the citations in: The court applied Donoghue v Stevenson [1932] AC 562 and s.2 Occupiers' Liability Act 1957"*
 - *"What is parliament saying about short selling?"*
 
-### Run locally
+### Local (uvx)
 
-```bash
-pip install -e .
-python -m src.gateway
-# Server starts on http://localhost:8000/mcp
-```
-
-Inspect with the MCP Inspector:
-
-```bash
-npx @modelcontextprotocol/inspector http://localhost:8000/mcp
+```json
+{
+  "mcpServers": {
+    "uk-legal": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["uk-legal-mcp"]
+    }
+  }
+}
 ```
 
 ---
