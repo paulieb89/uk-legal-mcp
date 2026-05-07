@@ -279,7 +279,7 @@ fly secrets set HMRC_API_BASE=https://api.service.hmrc.gov.uk
 
 ```bash
 docker build -t uk-legal-mcp .
-docker run -p 8000:8000 uk-legal-mcp
+docker run -p 8080:8080 uk-legal-mcp
 ```
 
 ---
