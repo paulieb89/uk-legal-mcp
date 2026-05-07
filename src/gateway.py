@@ -307,7 +307,7 @@ async def metrics_endpoint(request: Request) -> Response:
 @gateway.custom_route("/.well-known/mcp/server-card.json", methods=["GET"])
 async def smithery_server_card(request: Request) -> Response:
     return JSONResponse({
-        "serverInfo": {"name": "uk-legal-mcp", "version": "0.4.2"},
+        "serverInfo": {"name": "uk-legal-mcp", "version": "0.4.3"},
     }, headers=CORS_HEADERS)
 
 
@@ -319,84 +319,59 @@ async def glama_connector_manifest(request: Request) -> Response:
     }, headers=CORS_HEADERS)
 
 
-@gateway.custom_route("/legislation-probe", methods=["GET", "OPTIONS"])
-async def legislation_probe(request: Request) -> Response:
-    """Temporary diagnostic: test Housing Act 1988 + Companies Act 2006 from this IP.
-
-    Returns per-Act status, byte count, and timing. Verdict distinguishes
-    act-specific WAF blocking from IP-range blocking.
-    Remove once Companies Act 2006 situation is resolved.
-    """
-    if request.method == "OPTIONS":
-        return Response(status_code=204, headers=CORS_HEADERS)
-
-    LEGISLATION_BASE = "https://www.legislation.gov.uk"
-    probe_acts = [
-        ("housing_act_1988",   f"{LEGISLATION_BASE}/ukpga/1988/50/section/1/data.xml"),
-        ("companies_act_2006", f"{LEGISLATION_BASE}/ukpga/2006/46/section/1/data.xml"),
-    ]
-
-    async with CurlAsyncSession(
-        impersonate="chrome",
-        timeout=35.0,
-        allow_redirects=True,
-        headers={"Accept": "application/atom+xml, application/xml, text/xml"},
-    ) as session:
-        client = LegislationClient(session)
-
-        async def _probe(key: str, url: str) -> tuple[str, dict]:
-            t0 = time.perf_counter()
-            result: dict = {}
-            try:
-                resp = await client.get(url)
-                result = {
-                    "ok": True,
-                    "status": resp.status_code,
-                    "bytes": len(resp.content),
-                    "content_type": (resp.headers.get("content-type") or "")[:80],
-                }
-            except LegislationUpstreamError as e:
-                result = {"ok": False, "status": None, "bytes": 0, "error": str(e)[:300]}
-            except Exception as e:
-                result = {"ok": False, "status": None, "bytes": 0, "error": f"{type(e).__name__}: {e}"[:300]}
-            finally:
-                result["ms"] = round((time.perf_counter() - t0) * 1000, 1)
-            return key, result
-
-        pairs = await asyncio.gather(*(_probe(k, u) for k, u in probe_acts))
-        results = dict(pairs)
-
-    h_ok = results.get("housing_act_1988",   {}).get("ok", False)
-    c_ok = results.get("companies_act_2006", {}).get("ok", False)
-
-    if h_ok and not c_ok:
-        verdict = "act-specific"
-    elif not h_ok and not c_ok:
-        verdict = "ip-range-or-both-blocked"
-    elif h_ok and c_ok:
-        verdict = "both-working"
-    else:
-        verdict = "housing-blocked-companies-ok"
-
-    return JSONResponse({
-        **results,
-        "verdict": verdict,
-        "probe_at": datetime.now(timezone.utc).isoformat(),
-    }, headers=CORS_HEADERS)
-
 
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 
+class _AcceptNormalizer:
+    """Stamp Accept to the MCP-spec value on /mcp only, so json_response=True never 406s.
+
+    Anthropic sends mixed Accept headers per request type (application/json for
+    initialize, text/event-stream for tools/list). Only stamp the MCP endpoint —
+    leave /metrics, /health, /.well-known/* with their original Accept headers.
+    """
+    def __init__(self, app, mcp_path: bytes = b"/mcp"):
+        self.app = app
+        self._mcp_path = mcp_path.rstrip(b"/")
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and scope.get("path", "").rstrip("/").encode() == self._mcp_path:
+            headers = [
+                (b"accept", b"application/json, text/event-stream")
+                if name.lower() == b"accept"
+                else (name, value)
+                for name, value in scope.get("headers", [])
+            ]
+            scope = {**scope, "headers": headers}
+        await self.app(scope, receive, send)
+
+
 def main() -> None:
     """Run the gateway server on Streamable HTTP transport."""
+    import uvicorn
+    from fastmcp.server.http import create_streamable_http_app
+
     port = int(os.getenv("PORT", "8080"))
     # stateless_http=True: Lesson 2 — without it, clients hit "Missing
     # session ID" on any request not preceded by initialize on the same
     # machine. Required for safe deploys (machine restart drops sessions)
     # and future horizontal scaling.
-    gateway.run(transport="streamable-http", host="0.0.0.0", port=port, stateless_http=True)
+    app = create_streamable_http_app(
+        gateway,
+        streamable_http_path="/mcp",
+        json_response=True,
+        stateless_http=True,
+    )
+    uvicorn.run(
+        _AcceptNormalizer(app),
+        host="0.0.0.0",
+        port=port,
+        forwarded_allow_ips="*",
+        proxy_headers=True,
+        lifespan="on",
+        log_level="info",
+    )
 
 
 if __name__ == "__main__":
