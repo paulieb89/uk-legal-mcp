@@ -1,0 +1,44 @@
+name: Fly.io Preview
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+
+permissions:
+  contents: read
+
+env:
+  FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    # Do not expose Fly deploy credentials to fork PRs.
+    # Fork PRs do not receive repository secrets anyway, except GITHUB_TOKEN.
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    concurrency:
+      group: fly-preview-pr-${{ github.event.number }}
+      cancel-in-progress: true
+    environment:
+      name: pr-${{ github.event.number }}
+      url: ${{ steps.deploy.outputs.url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare review Fly config
+        run: |
+          cp fly.toml fly.review.toml
+          # Review apps should scale to zero when idle.
+          perl -0pi -e 's/auto_stop_machines = "off"/auto_stop_machines = "stop"/' fly.review.toml
+          perl -0pi -e 's/min_machines_running = 1/min_machines_running = 0/' fly.review.toml
+
+      - name: Deploy FastMCP preview server
+        id: deploy
+        uses: superfly/fly-pr-review-apps@1.5.0
+        with:
+          name: uk-legal-mcp-pr-${{ github.event.number }}
+          config: fly.review.toml
+          region: lhr
+          org: personal
+          memory: "512"
