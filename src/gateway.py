@@ -86,7 +86,7 @@ client_connections_total = PromCounter(
     labelnames=["client_name", "client_version", "transport", "region"],
 )
 
-_log = logging.getLogger("uk_legal_mcp.clients")
+_log = logging.getLogger("fastmcp.uk_legal_mcp.clients")
 
 
 class ClientTrackingMiddleware(Middleware):
