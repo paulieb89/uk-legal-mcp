@@ -261,7 +261,7 @@ async def judgment_get_index(
 )
 async def judgment_get_paragraph(
     slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12'", min_length=3, max_length=200)],
-    eId: Annotated[str, Field(description="Paragraph eId from judgment_get_index, e.g. 'para_12'", min_length=1, max_length=100)],
+    eId: Annotated[str, Field(description="Paragraph eId from judgment_get_index, e.g. 'para_12'. Numeric strings like '12' are accepted and normalized to 'para_12'.", min_length=1, max_length=100)],
     ctx: Context,
 ) -> dict:
     """Get a single paragraph from a UK court judgment by its LegalDocML eId.
@@ -273,8 +273,11 @@ async def judgment_get_paragraph(
     client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
     resp = await client.get(f"{TNA_BASE}/{slug.lstrip('/')}/data.xml")
     resp.raise_for_status()
-    content = case_law_parsers.extract_paragraph(resp.text, eId)
-    return {"slug": slug, "eId": eId, "content": content}
+    normalized_eid = eId.strip()
+    if normalized_eid.isdigit():
+        normalized_eid = f"para_{normalized_eid}"
+    content = case_law_parsers.extract_paragraph(resp.text, normalized_eid)
+    return {"slug": slug, "eId": normalized_eid, "content": content}
 
 
 # ---------------------------------------------------------------------------
@@ -425,6 +428,11 @@ def main() -> None:
         lifespan="on",
         log_level="info",
     )
+
+
+def main_stdio() -> None:
+    """Run the gateway on stdio transport (for PyPI install / Claude Desktop)."""
+    gateway.run(transport="stdio")
 
 
 if __name__ == "__main__":
