@@ -93,14 +93,15 @@ class ClientTrackingMiddleware(Middleware):
     """Log clientInfo and increment connection counter on every initialize."""
 
     async def on_initialize(self, context: MiddlewareContext, call_next):
-        params = context.message.params or {}
-        info = params.get("clientInfo") or {}
-        client_name = info.get("name", "unknown")
-        client_version = info.get("version", "unknown")
-        capabilities = params.get("capabilities") or {}
+        params = context.message.params
+        info = getattr(params, "clientInfo", None)
+        client_name = getattr(info, "name", "unknown") or "unknown"
+        client_version = getattr(info, "version", "unknown") or "unknown"
+        caps = getattr(params, "capabilities", None)
+        cap_keys = [k for k, v in (caps.model_dump().items() if caps else []) if v is not None]
         await call_next(context)
         _log.info("client_connected client=%s version=%s capabilities=%s transport=%s region=%s",
-                  client_name, client_version, list(capabilities.keys()), TRANSPORT, REGION)
+                  client_name, client_version, cap_keys, TRANSPORT, REGION)
         client_connections_total.labels(client_name, client_version, TRANSPORT, REGION).inc()
 
 
