@@ -57,7 +57,7 @@ Documentation = "https://github.com/paulieb89/uk-legal-mcp#readme"
 "Live Endpoint" = "https://uk-legal-mcp.fly.dev/mcp"
 
 [project.scripts]
-uk-legal-mcp = "src.gateway:main"
+uk-legal-mcp = "src.gateway:main_stdio"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
@@ -74,4 +74,11 @@ exclude = [
 dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
+    "tiktoken>=0.12.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+markers = [
+    "live: hits live external APIs — excluded from offline CI (deselect with -m 'not live')",
 ]

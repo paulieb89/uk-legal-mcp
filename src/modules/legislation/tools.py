@@ -12,10 +12,10 @@ from datetime import date
 
 import httpx
 from fastmcp import FastMCP, Context
-from lxml import etree
+from lxml import etree, html
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...deps import format_http_error
+from ...deps import LegislationUpstreamError, format_http_error
 from .models import LegislationResult, LegislationSearchResult, LegislationSection, LegislationTOC
 
 LEGISLATION_BASE = "https://www.legislation.gov.uk"
@@ -93,6 +93,66 @@ class LegislationGetTocInput(BaseModel):
     )
 
 
+def _normalise_section_id(section: str) -> str:
+    """Accept common TOC/resource forms and return the section token expected upstream."""
+    value = section.strip()
+    if ":" in value:
+        value = value.split(":", 1)[0].strip()
+    for prefix in ("section-", "article-", "regulation-"):
+        if value.lower().startswith(prefix):
+            return value[len(prefix):]
+    return value
+
+
+def _parse_html_section(html_text: str, section: str, max_chars: int, warning: str) -> LegislationSection:
+    """Best-effort parser for legislation.gov.uk HTML section pages.
+
+    This fallback intentionally returns conservative metadata. It is better to
+    return the section text with explicit unknowns than to fail hard when the
+    CLML endpoint is blocked for large Acts.
+    """
+    root = html.fromstring(html_text.encode())
+
+    candidates = root.xpath(
+        "//*[@id='content'] | //*[@id='viewLegSnippet'] | //*[@class='LegSnippet'] | "
+        "//main | //article | //body"
+    )
+    container = candidates[0] if candidates else root
+
+    # Remove navigation/chrome that tends to pollute section text.
+    for noisy in container.xpath(".//script | .//style | .//nav | .//footer | .//header | .//form"):
+        parent = noisy.getparent()
+        if parent is not None:
+            parent.remove(noisy)
+
+    raw_content = " ".join(container.text_content().split())
+    original_length = len(raw_content)
+    truncated = original_length > max_chars
+    content = raw_content[:max_chars] + " …[truncated]" if truncated else raw_content
+
+    title = f"Section {section}"
+    heading = container.xpath(".//h1/text() | .//h2/text() | .//h3/text()")
+    if heading:
+        title = " ".join(heading[0].split())
+
+    return LegislationSection(
+        title=title,
+        section_number=section,
+        content=content,
+        content_truncated=truncated,
+        original_length=original_length,
+        in_force=None,
+        extent=["England", "Wales", "Scotland", "Northern Ireland"],
+        version_date=None,
+        prospective=False,
+        source_format="html_fallback",
+        warnings=[
+            warning,
+            "CLML metadata such as exact extent, version date, and in-force status could not be reliably extracted from the HTML fallback.",
+        ],
+    )
+
+
 def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> LegislationSection:
     """Extract a section from CLML XML, truncating content to max_chars."""
     from lxml import etree
@@ -139,6 +199,8 @@ def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> Legislat
         extent=extent or ["England", "Wales", "Scotland", "Northern Ireland"],
         version_date=version_date,
         prospective=prospective,
+        source_format="xml",
+        warnings=[],
     )
 
 
@@ -239,10 +301,17 @@ def register_tools(mcp: FastMCP) -> None:
             params: type, year, number, section identifier, optional max_chars.
         """
         client = ctx.lifespan_context["legislation_http"]
-        url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/section/{params.section}/data.xml"
-        resp = await client.get(url)
-        resp.raise_for_status()
-        return _parse_clml_section(resp.text, params.section, params.max_chars)
+        section = _normalise_section_id(params.section)
+        url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/section/{section}/data.xml"
+        try:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return _parse_clml_section(resp.text, section, params.max_chars)
+        except LegislationUpstreamError as exc:
+            html_url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/section/{section}"
+            html_resp = await client.get_html(html_url)
+            html_resp.raise_for_status()
+            return _parse_html_section(html_resp.text, section, params.max_chars, str(exc))
 
     @mcp.tool(
         name="get_toc",

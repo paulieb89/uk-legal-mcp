@@ -137,6 +137,31 @@ class LegislationClient:
 
         return resp
 
+    async def get_html(self, url: str, **kwargs):
+        """GET an HTML legislation page.
+
+        This is used as a last-resort fallback when legislation.gov.uk's
+        CLML /data.xml endpoint is blocked or returns an async-rendering
+        placeholder. It deliberately keeps the same WAF detection as XML
+        fetches so callers do not accidentally parse a challenge page as law.
+        """
+        headers = dict(kwargs.pop("headers", {}) or {})
+        headers.setdefault("Accept", "text/html,application/xhtml+xml")
+        resp = await self._session.get(url, headers=headers, **kwargs)
+        ct = (resp.headers.get("content-type") or "").lower()
+        if "html" in ct and any(m in resp.text for m in self.WAF_MARKERS):
+            raise LegislationUpstreamError(
+                f"legislation.gov.uk returned an AWS WAF JavaScript challenge "
+                f"for {url}. XML and HTML fallback are both unavailable. "
+                f"Retry later or use legislation_search(fulltext=True)."
+            )
+        if not resp.content.strip():
+            raise LegislationUpstreamError(
+                f"legislation.gov.uk returned an empty HTML response for {url}. "
+                f"Retry later or use legislation_search(fulltext=True)."
+            )
+        return resp
+
 
 # ---------------------------------------------------------------------------
 # Lifespan factory — attach to each sub-module FastMCP instance

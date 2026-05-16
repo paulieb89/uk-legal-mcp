@@ -261,7 +261,7 @@ async def judgment_get_index(
 )
 async def judgment_get_paragraph(
     slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12'", min_length=3, max_length=200)],
-    eId: Annotated[str, Field(description="Paragraph eId from judgment_get_index, e.g. 'para_12'", min_length=1, max_length=100)],
+    eId: Annotated[str, Field(description="Paragraph eId from judgment_get_index, e.g. 'para_12'. Numeric strings like '12' are accepted and normalized to 'para_12'.", min_length=1, max_length=100)],
     ctx: Context,
 ) -> dict:
     """Get a single paragraph from a UK court judgment by its LegalDocML eId.
@@ -273,8 +273,11 @@ async def judgment_get_paragraph(
     client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
     resp = await client.get(f"{TNA_BASE}/{slug.lstrip('/')}/data.xml")
     resp.raise_for_status()
-    content = case_law_parsers.extract_paragraph(resp.text, eId)
-    return {"slug": slug, "eId": eId, "content": content}
+    normalized_eid = eId.strip()
+    if normalized_eid.isdigit():
+        normalized_eid = f"para_{normalized_eid}"
+    content = case_law_parsers.extract_paragraph(resp.text, normalized_eid)
+    return {"slug": slug, "eId": normalized_eid, "content": content}
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +327,59 @@ async def glama_connector_manifest(request: Request) -> Response:
 # Entrypoint
 # ---------------------------------------------------------------------------
 
+class _HttpGuard:
+    """Return a held-open SSE stream for GET /mcp; 405 for DELETE /mcp.
+
+    claude.ai proxies all MCP traffic through its own relay. The browser opens a
+    GET to that relay to establish an SSE stream for server-initiated messages;
+    the relay forwards the GET here. With stateless_http=True FastMCP only registers
+    POST+DELETE, so GET 405s — the relay relays the 405 and the connection fails,
+    even though POST works fine. (OpenAI never probes GET, so it was unaffected.)
+
+    Fix: intercept GET /mcp and return 200 text/event-stream held open until the
+    client disconnects. FastMCP never sees the GET; stateless semantics are preserved.
+    DELETE is rejected (405) — stateless servers have no sessions to terminate.
+    """
+    def __init__(self, app, mcp_path: bytes = b"/mcp"):
+        self.app = app
+        self._mcp_path = mcp_path.rstrip(b"/")
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            path = scope.get("path", "").rstrip("/").encode()
+            method = scope.get("method", "").upper().encode()
+            if path == self._mcp_path:
+                if method == b"GET":
+                    await send({
+                        "type": "http.response.start",
+                        "status": 200,
+                        "headers": [
+                            (b"content-type", b"text/event-stream"),
+                            (b"cache-control", b"no-cache"),
+                            (b"connection", b"keep-alive"),
+                        ],
+                    })
+                    await send({
+                        "type": "http.response.body",
+                        "body": b"",
+                        "more_body": True,
+                    })
+                    while True:
+                        event = await receive()
+                        if event["type"] == "http.disconnect":
+                            break
+                    return
+                if method == b"DELETE":
+                    from starlette.responses import Response as StarletteResponse
+                    await StarletteResponse(
+                        "Method Not Allowed",
+                        status_code=405,
+                        headers={"Allow": "POST"},
+                    )(scope, receive, send)
+                    return
+        await self.app(scope, receive, send)
+
+
 class _AcceptNormalizer:
     """Stamp Accept to the MCP-spec value on /mcp only, so json_response=True never 406s.
 
@@ -364,7 +420,7 @@ def main() -> None:
         stateless_http=True,
     )
     uvicorn.run(
-        _AcceptNormalizer(app),
+        _HttpGuard(_AcceptNormalizer(app)),  # guard → normalizer → FastMCP
         host="0.0.0.0",
         port=port,
         forwarded_allow_ips="*",
@@ -372,6 +428,11 @@ def main() -> None:
         lifespan="on",
         log_level="info",
     )
+
+
+def main_stdio() -> None:
+    """Run the gateway on stdio transport (for PyPI install / Claude Desktop)."""
+    gateway.run(transport="stdio")
 
 
 if __name__ == "__main__":

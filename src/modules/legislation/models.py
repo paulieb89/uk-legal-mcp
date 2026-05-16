@@ -114,3 +114,11 @@ class LegislationSection(BaseModel):
     )
     version_date: date | None = Field(None, description="Date of the version retrieved")
     prospective: bool = Field(False, description="True if this section has not yet come into force")
+    source_format: Literal["xml", "html_fallback"] = Field(
+        "xml",
+        description="Source parsed for this response. html_fallback means CLML XML was unavailable and text was parsed from the public HTML page.",
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="Non-fatal retrieval or parsing warnings the caller should disclose where relevant.",
+    )
