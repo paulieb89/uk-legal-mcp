@@ -80,6 +80,31 @@ tool_duration_seconds = Histogram(
     labelnames=["tool", "transport", "region"],
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
 )
+client_connections_total = PromCounter(
+    "uk_legal_client_connections_total",
+    "Count of MCP client initialize handshakes.",
+    labelnames=["client_name", "client_version", "transport", "region"],
+)
+
+_log = logging.getLogger("fastmcp.uk_legal_mcp.clients")
+
+
+class ClientTrackingMiddleware(Middleware):
+    """Log clientInfo and increment connection counter on every initialize."""
+
+    async def on_request(self, context: MiddlewareContext, call_next):
+        result = await call_next(context)
+        if context.method == "initialize":
+            params = context.message.params
+            info = getattr(params, "clientInfo", None)
+            client_name = getattr(info, "name", "unknown") or "unknown"
+            client_version = getattr(info, "version", "unknown") or "unknown"
+            caps = getattr(params, "capabilities", None)
+            cap_keys = [k for k, v in (caps.model_dump().items() if caps else []) if v is not None]
+            _log.info("client_connected client=%s version=%s capabilities=%s transport=%s region=%s",
+                      client_name, client_version, cap_keys, TRANSPORT, REGION)
+            client_connections_total.labels(client_name, client_version, TRANSPORT, REGION).inc()
+        return result
 
 
 class PrometheusMiddleware(Middleware):
@@ -145,6 +170,9 @@ gateway.add_middleware(StructuredLoggingMiddleware(
     include_payload_length=True,
     estimate_payload_tokens=True,
 ))
+
+# Client tracking — logs clientInfo + increments client_connections_total on initialize
+gateway.add_middleware(ClientTrackingMiddleware())
 
 # Prometheus metrics — fleet-standard tool_calls_total + tool_duration_seconds
 gateway.add_middleware(PrometheusMiddleware())
