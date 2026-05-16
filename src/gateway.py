@@ -310,7 +310,7 @@ async def metrics_endpoint(request: Request) -> Response:
 @gateway.custom_route("/.well-known/mcp/server-card.json", methods=["GET"])
 async def smithery_server_card(request: Request) -> Response:
     return JSONResponse({
-        "serverInfo": {"name": "uk-legal-mcp", "version": "0.4.3"},
+        "serverInfo": {"name": "uk-legal-mcp", "version": "0.4.4"},
     }, headers=CORS_HEADERS)
 
 
