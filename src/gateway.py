@@ -92,17 +92,19 @@ _log = logging.getLogger("uk_legal_mcp.clients")
 class ClientTrackingMiddleware(Middleware):
     """Log clientInfo and increment connection counter on every initialize."""
 
-    async def on_initialize(self, context: MiddlewareContext, call_next):
-        params = context.message.params
-        info = getattr(params, "clientInfo", None)
-        client_name = getattr(info, "name", "unknown") or "unknown"
-        client_version = getattr(info, "version", "unknown") or "unknown"
-        caps = getattr(params, "capabilities", None)
-        cap_keys = [k for k, v in (caps.model_dump().items() if caps else []) if v is not None]
-        await call_next(context)
-        _log.info("client_connected client=%s version=%s capabilities=%s transport=%s region=%s",
-                  client_name, client_version, cap_keys, TRANSPORT, REGION)
-        client_connections_total.labels(client_name, client_version, TRANSPORT, REGION).inc()
+    async def on_request(self, context: MiddlewareContext, call_next):
+        result = await call_next(context)
+        if context.method == "initialize":
+            params = context.message.params
+            info = getattr(params, "clientInfo", None)
+            client_name = getattr(info, "name", "unknown") or "unknown"
+            client_version = getattr(info, "version", "unknown") or "unknown"
+            caps = getattr(params, "capabilities", None)
+            cap_keys = [k for k, v in (caps.model_dump().items() if caps else []) if v is not None]
+            _log.info("client_connected client=%s version=%s capabilities=%s transport=%s region=%s",
+                      client_name, client_version, cap_keys, TRANSPORT, REGION)
+            client_connections_total.labels(client_name, client_version, TRANSPORT, REGION).inc()
+        return result
 
 
 class PrometheusMiddleware(Middleware):
