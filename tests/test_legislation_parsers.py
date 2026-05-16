@@ -151,10 +151,10 @@ class TestParseHtmlSection:
         result = self._invoke()
         assert result.version_date is None
 
-    def test_extent_defaults_to_all_four_nations(self):
-        """HTML parser hard-codes 4-nation extent when metadata is unavailable."""
+    def test_extent_is_empty_when_unknown(self):
+        """HTML parser returns empty extent so callers can decide, not a false default."""
         result = self._invoke()
-        assert len(result.extent) == 4
+        assert result.extent == []
 
     def test_nav_and_script_stripped_from_content(self):
         """Navigation links and scripts must not pollute the content field."""
@@ -167,9 +167,9 @@ class TestParseHtmlSection:
         assert result.content_truncated is True
         assert "…[truncated]" in result.content
 
-    def test_prospective_is_false(self):
+    def test_prospective_is_none_when_unknown(self):
         result = self._invoke()
-        assert result.prospective is False
+        assert result.prospective is None
 
     def test_structured_content_token_budget(self):
         """HTML fallback response (with 2 warnings) stays under 600 tokens."""

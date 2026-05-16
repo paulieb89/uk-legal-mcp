@@ -142,9 +142,9 @@ def _parse_html_section(html_text: str, section: str, max_chars: int, warning: s
         content_truncated=truncated,
         original_length=original_length,
         in_force=None,
-        extent=["England", "Wales", "Scotland", "Northern Ireland"],
+        extent=[],
         version_date=None,
-        prospective=False,
+        prospective=None,
         source_format="html_fallback",
         warnings=[
             warning,

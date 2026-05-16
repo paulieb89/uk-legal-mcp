@@ -110,10 +110,10 @@ class LegislationSection(BaseModel):
     in_force: bool | None = Field(None, description="Whether this section is currently in force; None if unknown")
     extent: list[str] = Field(
         default_factory=list,
-        description="Territorial extent: list of 'England', 'Wales', 'Scotland', 'Northern Ireland'",
+        description="Territorial extent: list of 'England', 'Wales', 'Scotland', 'Northern Ireland'. Empty list means unknown — do not assume full UK extent.",
     )
     version_date: date | None = Field(None, description="Date of the version retrieved")
-    prospective: bool = Field(False, description="True if this section has not yet come into force")
+    prospective: bool | None = Field(None, description="True if this section has not yet come into force; None if unknown")
     source_format: Literal["xml", "html_fallback"] = Field(
         "xml",
         description="Source parsed for this response. html_fallback means CLML XML was unavailable and text was parsed from the public HTML page.",
