@@ -76,12 +76,33 @@ Then try:
 - *"Parse the citations in: The court applied Donoghue v Stevenson [1932] AC 562 and s.2 Occupiers' Liability Act 1957"*
 - *"What is parliament saying about short selling?"*
 
-### Local HTTP server (advanced)
+### Claude Desktop (local install via uvx)
 
-Most users should connect to the hosted server above. If you specifically want to run the server locally, start it with `uvx` and connect to the local HTTP endpoint:
+Install and run the server locally in stdio mode — useful if you want to use the server from Claude Desktop on a residential IP (which bypasses legislation.gov.uk WAF blocks that affect the hosted server):
 
 ```bash
-PORT=8765 uvx uk-legal-mcp
+uvx uk-legal-mcp
+```
+
+Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "uk-legal": {
+      "command": "uvx",
+      "args": ["uk-legal-mcp"]
+    }
+  }
+}
+```
+
+### Local HTTP server (advanced)
+
+To run the full HTTP gateway locally (e.g. for development):
+
+```bash
+PORT=8765 python -m src.gateway
 ```
 
 ```json
@@ -133,7 +154,7 @@ Resource templates (alternative to the tools above for clients that prefer URI-a
 | `legislation://{type}/{year}/{number}/toc` | Flat `id: title` lines for the table of contents. |
 | `legislation://{type}/{year}/{number}/{date}` | Point-in-time CLML for a YYYY-MM-DD date. |
 
-Upstream: [legislation.gov.uk](https://www.legislation.gov.uk/) (CLML XML + Atom feed). Cached 24 hours. Uses curl_cffi with Chrome impersonation to defeat CloudFront 437; Companies Act 2006 currently hits an AWS WAF JS challenge intermittently.
+Upstream: [legislation.gov.uk](https://www.legislation.gov.uk/) (CLML XML + Atom feed). Cached 24 hours. Uses curl_cffi with Chrome impersonation to bypass WAF challenges. When the XML API is blocked, `legislation_get_section` falls back to the public HTML page and sets `source_format: "html_fallback"` — metadata fields (`extent`, `in_force`, `version_date`) will be null/empty in that case. WAF blocking primarily affects the hosted server's IP ranges; the local stdio install (`uvx uk-legal-mcp`) runs on your own IP and is rarely affected.
 
 **Note:** Always check the `extent` field. A section may apply to England and Wales but not Scotland or Northern Ireland.
 
@@ -250,8 +271,9 @@ Each module is a standalone `FastMCP` instance mounted into the gateway with a n
 |-----------|---------|
 | `ErrorHandlingMiddleware` | Catches unhandled exceptions |
 | `StructuredLoggingMiddleware` | JSON logging with duration and payload size |
+| `PrometheusMiddleware` | Tool call counters + latency histograms (`/metrics`) |
 | `DetailedTimingMiddleware` | Per-tool timing logs |
-| `ResponseLimitingMiddleware` | 80,000 char cap (LegalDocML XML can exceed 200k) |
+| `ResponseCachingMiddleware` | Gateway-level 1hr cache for tools and resources |
 
 **Per-module caching:** `ResponseCachingMiddleware` with TTLs — case_law (1hr), legislation (24hr), bills (1hr), votes (24hr), committees (1hr), hmrc (90 days). Parliament and citations are not cached.
 
@@ -287,11 +309,11 @@ docker run -p 8080:8080 uk-legal-mcp
 ## Testing
 
 ```bash
-pip install -e '.[test]'  # or: pip install pytest
-pytest tests/test_citations.py -v
+pip install -e '.[test]'  # or: pip install pytest tiktoken
+pytest tests/ -v -k "not live"
 ```
 
-All 35 citation tests run offline with no API credentials.
+62 tests run offline with no API credentials: 35 citation tests (regex patterns, resolution, disambiguation) and 27 legislation parser tests (CLML XML + HTML fallback parsers, section ID normalisation).
 
 ---
 
