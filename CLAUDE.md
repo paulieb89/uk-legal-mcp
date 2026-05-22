@@ -13,8 +13,8 @@ Repo: `https://github.com/paulieb89/uk-legal-mcp`
 # Run locally
 python -m src.gateway
 
-# Run tests (35 citation tests, no API needed)
-python -m pytest tests/test_citations.py -v
+# Run tests (35 citation + 14 gateway integration, no API needed)
+python -m pytest tests/test_citations.py tests/test_gateway.py -v
 
 # Syntax check all modules
 python -m py_compile src/gateway.py
@@ -87,9 +87,10 @@ fly secrets set HMRC_CLIENT_ID=xxx HMRC_CLIENT_SECRET=xxx --app uk-legal-mcp
 
 ## Testing
 
-- Citation tests are the only unit tests. They cover regex patterns, resolution, disambiguation, and mixed-text extraction.
+- **Citation tests** (`tests/test_citations.py`): 35 tests covering regex patterns, resolution, disambiguation, and mixed-text extraction.
+- **Gateway integration tests** (`tests/test_gateway.py`): 14 tests using FastMCP's in-process `Client` to verify server identity, tool listing, schema validation, citation tool execution, resource templates, and custom HTTP routes (`/health`, `/metrics`, `/.well-known/*`). No network needed.
 - Other modules hit live APIs — test manually via Claude Desktop or MCP Inspector.
-- Always run `python -m pytest tests/test_citations.py -v` before deploying.
+- Always run `python -m pytest tests/test_citations.py tests/test_gateway.py -v` before deploying.
 
 ## Deployment
 

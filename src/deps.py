@@ -34,12 +34,12 @@ from fastmcp import FastMCP
 # ---------------------------------------------------------------------------
 
 SHARED_HEADERS = {
-    "User-Agent": "uk-legal-mcp/0.3 (contact@bouch.dev)",
+    "User-Agent": "uk-legal-mcp/0.4 (contact@bouch.dev)",
     "Accept": "application/json",
 }
 
 XML_HEADERS = {
-    "User-Agent": "uk-legal-mcp/0.3 (contact@bouch.dev)",
+    "User-Agent": "uk-legal-mcp/0.4 (contact@bouch.dev)",
     "Accept": "application/atom+xml, application/xml, text/xml",
 }
 
