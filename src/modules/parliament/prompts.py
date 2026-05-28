@@ -6,23 +6,43 @@ from fastmcp import FastMCP
 def register_prompts(mcp: FastMCP) -> None:
 
     @mcp.prompt
-    def policy_vibe_check(policy_description: str) -> str:
-        """Assess the likely parliamentary reception of a policy proposal.
+    def policy_reception_review(policy_description: str, topic: str) -> str:
+        """Review how a policy topic is being received in Parliament, with citable evidence.
 
-        Searches Hansard for relevant recent debates and analyses political dynamics.
+        Orchestrates the deterministic parliament_* tools and hansard:// resources.
+        Does NOT label named members as 'supporters' or 'opponents' from short
+        snippets — instead instructs the model to quote and cite directly.
         """
         return (
-            f"You are advising a policy team. The proposed policy is:\n\n"
+            f"You are advising a legal / policy team. The proposed policy is:\n\n"
             f"{policy_description}\n\n"
-            f"Use parliament_search_hansard to find relevant recent debates. "
-            f"Search for the core topic keywords and related themes. "
-            f"Identify:\n"
-            f"  (1) MPs and Lords likely to support the policy and why\n"
-            f"  (2) Likely opponents and their stated concerns\n"
-            f"  (3) Any cross-party consensus areas\n"
-            f"  (4) Comparable policies that have passed or failed and the reasons\n"
-            f"  (5) An overall assessment: strong opposition, mixed reception, or broad support?\n\n"
-            f"Base all conclusions on actual Hansard contributions, citing member names and dates."
+            f"The search topic for Hansard is: {topic!r}.\n\n"
+            f"Step 1 — scope. Call parliament_policy_position_summary(topic={topic!r}) to "
+            f"see the lay of the land: how many contributions exist, party / house / "
+            f"section breakdowns, top debates, top contributors. Read the counts as "
+            f"signals, not as positions.\n\n"
+            f"Step 2 — evidence. Call parliament_search_hansard(query={topic!r}, "
+            f"text_mode='full', limit=20). Capture for each contribution: "
+            f"attributed_to, date, column_ref, debate_ext_id, contribution_ext_id.\n\n"
+            f"Step 3 — drill in. For the top 1-3 debates from step 1's top_debates, "
+            f"read the resource hansard://debate/{{debate_ext_id}}/header to see the "
+            f"ordered contribution index, then read individual contributions via "
+            f"hansard://debate/{{debate_ext_id}}/contribution/{{contribution_ext_id}} "
+            f"where you need full text beyond the search-result cap.\n\n"
+            f"Step 4 — synthesise. Produce a written review covering:\n"
+            f"  (a) Scope of parliamentary attention (totals, recent date distribution)\n"
+            f"  (b) Cross-party engagement (party breakdown from step 1)\n"
+            f"  (c) Ministerial vs backbench voice (look at attributed_to prefixes)\n"
+            f"  (d) Direct quotations from the most relevant contributions, each "
+            f"      footnoted with attributed_to + date + column_ref\n"
+            f"  (e) Open questions raised in debate\n\n"
+            f"IMPORTANT — do NOT classify named members as 'supporting' or "
+            f"'opposing' the policy on the basis of search snippets alone. A short "
+            f"snippet from a debate contribution is not enough to determine a "
+            f"member's position; clarifying questions, ministerial summaries, and "
+            f"devil's-advocate framings all read as positions and are not. If you "
+            f"describe a member's position, quote their words verbatim from the full "
+            f"contribution text and cite the column reference."
         )
 
     @mcp.prompt

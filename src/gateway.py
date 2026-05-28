@@ -60,6 +60,7 @@ from .modules.legislation.resources import (
     register_legislation_resources,
 )
 from .modules.parliament import parliament_mcp
+from .modules.parliament.resources import register_parliament_resources
 from .modules.votes import votes_mcp
 
 # ---------------------------------------------------------------------------
@@ -139,8 +140,9 @@ gateway = FastMCP(
         "  Read judgment content via judgment://{slug}/{header,index,para/{eId}} resources.\n\n"
         "• legislation_search / legislation_get_toc / legislation_get_section\n"
         "  Find Acts of Parliament and Statutory Instruments. Always check 'extent' field.\n\n"
-        "• parliament_search_hansard / parliament_vibe_check / parliament_find_member / parliament_member_interests / parliament_search_petitions\n"
-        "  Search Hansard debates, assess parliamentary reception, member interests, and petitions.\n\n"
+        "• parliament_search_hansard / parliament_policy_position_summary / parliament_find_member / parliament_member_debates / parliament_member_interests / parliament_search_petitions\n"
+        "  Search Hansard debates (citation-grade metadata + filters), aggregate policy facets, member interests, and petitions.\n"
+        "  Read full debate / contribution / biography content via hansard://debate/{ext_id}/{header,contribution/{ext_id}} and hansard://member/{id}/biography resources.\n\n"
         "• bills_search_bills / bills_get_bill\n"
         "  Search and retrieve UK parliamentary bills, stages, and sponsors.\n\n"
         "• votes_search_divisions / votes_get_division\n"
@@ -225,6 +227,7 @@ gateway.mount(hmrc_mcp,        namespace="hmrc")
 
 register_case_law_resources(gateway)
 register_legislation_resources(gateway)
+register_parliament_resources(gateway)
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +341,7 @@ async def metrics_endpoint(request: Request) -> Response:
 @gateway.custom_route("/.well-known/mcp/server-card.json", methods=["GET"])
 async def smithery_server_card(request: Request) -> Response:
     return JSONResponse({
-        "serverInfo": {"name": "uk-legal-mcp", "version": "0.4.4"},
+        "serverInfo": {"name": "uk-legal-mcp", "version": "0.5.0"},
     }, headers=CORS_HEADERS)
 
 

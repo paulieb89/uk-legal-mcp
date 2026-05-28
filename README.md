@@ -162,14 +162,22 @@ Upstream: [legislation.gov.uk](https://www.legislation.gov.uk/) (CLML XML + Atom
 
 | Tool | What it does |
 |------|-------------|
-| `parliament_search_hansard` | Search Hansard debate contributions by exact phrase. |
-| `parliament_vibe_check` | Assess parliamentary reception of a policy topic. Searches Hansard, then uses LLM sampling to classify sentiment, supporters, opponents, and concerns. |
+| `parliament_search_hansard` | Search Hansard contributions by exact phrase. Returns citation-grade metadata per contribution: `attributed_to`, `column_ref`, `debate_id`, `debate_ext_id`, `contribution_ext_id`, public Hansard URL, plus party / house breakdown and `total_corpus` on the result. Supports `from_date`, `to_date`, `house`, `text_mode=preview\|full`. |
+| `parliament_policy_position_summary` | Deterministic facet counts on a topic — no LLM, no editorial labels. Returns by-party / by-house / by-section / by-year / by-month breakdowns, top contributors, and top debates (each with `debate_ext_id` for resource lookup). Use to scope the conversation before drilling into specific contributions. |
 | `parliament_find_member` | Look up an MP or Lord by name. Returns member ID for use with `member_debates`. |
 | `parliament_member_debates` | Retrieve a specific member's Hansard contributions, optionally filtered by topic. |
 | `parliament_member_interests` | Get a member's registered financial interests (donations, shareholdings, etc.). |
 | `parliament_search_petitions` | Search UK Parliament petitions by keyword. |
 
-Upstream: [hansard-api.parliament.uk](https://hansard-api.parliament.uk) + [members-api.parliament.uk](https://members-api.parliament.uk) + [petition.parliament.uk](https://petition.parliament.uk). Not cached (live data).
+| Resource | What it returns |
+|----------|-----------------|
+| `hansard://debate/{debate_ext_id}/header` | Debate overview + ordered contribution index (`order`, `contribution_ext_id`, `attributed_to`, `column_ref`, preview). ~3–8k tokens. |
+| `hansard://debate/{debate_ext_id}/contribution/{contribution_ext_id}` | A single contribution's full text + metadata + column reference, extracted from the cached parent debate. ~200–2000 tokens. |
+| `hansard://member/{member_id}/biography` | Members API biography: government posts, opposition posts, committee memberships, party affiliations, each with start/end dates so callers can resolve a member's role at the time of any contribution. ~2–5k tokens. |
+
+Upstream: [hansard-api.parliament.uk](https://hansard-api.parliament.uk) + [members-api.parliament.uk](https://members-api.parliament.uk) + [petition.parliament.uk](https://petition.parliament.uk). Debate / contribution / biography resources cached 1 hour at the gateway.
+
+**Breaking change in v0.5.0:** The previous `parliament_vibe_check` tool (LLM-sampled sentiment classifier that labelled named MPs as supporters / opponents from short snippets) has been removed. Its editorial framing now lives in the `policy_reception_review` prompt, executed by the *client's* LLM with explicit instructions never to label members as for/against on snippet evidence. Its evidence layer is absorbed into the enriched `parliament_search_hansard` and the new `hansard://` resources.
 
 ### Bills
 
@@ -239,7 +247,7 @@ Four workflow prompts are available for multi-step legal research. Exposed as to
 |--------|--------|-------------|
 | `summarise_act` | legislation | Structured summary of a UK Act or SI |
 | `compare_legislation` | legislation | Comparative analysis of two pieces of legislation on a topic |
-| `policy_vibe_check` | parliament | Parliamentary reception assessment for a policy |
+| `policy_reception_review` | parliament | Citation-grade review of how a policy topic is being received in Parliament. Orchestrates the deterministic tools + `hansard://` resources, never labels named members as supporters / opponents from snippets. |
 | `member_position_analysis` | parliament | A member's position and voting record on a topic |
 
 ---
