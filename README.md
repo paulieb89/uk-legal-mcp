@@ -118,6 +118,61 @@ PORT=8765 python -m src.gateway
 
 ---
 
+## A lawyer's guide
+
+This server is a data pipe between your AI assistant and the UK's primary legal sources. It returns what the sources say, with citations. It does not interpret the law, classify members' positions, or recommend a research strategy — that is your work, and your agent's, on your behalf.
+
+### What you can ask for
+
+| If you need... | Use these surfaces |
+|---|---|
+| **A judgment** by neutral citation, court, judge, party, or full-text search | `case_law_search`, then read `judgment://{slug}/header` for parties / judges / citations, `judgment://{slug}/index` for the paragraph list, `judgment://{slug}/para/{eId}` for a single paragraph in LegalDocML |
+| **An Act, SI, or section** at a point in time, with territorial extent | `legislation_search`, `legislation_get_toc`, `legislation_get_section` |
+| **What MPs and Lords have said** on a topic | `parliament_search_hansard` (top 4 ranked contributions; see caveat below), then `hansard://debate/{ext_id}/header` for the full debate around any hit |
+| **The scope of parliamentary attention** on a topic — how many debates, in which chambers, when, which top debates | `parliament_policy_position_summary` |
+| **A specific MP / Lord's contributions** on a topic, with their role at the time | `parliament_find_member`, then `parliament_member_debates`, then `hansard://member/{id}/biography` for posts with start / end dates |
+| **A member's registered financial interests** | `parliament_member_interests` |
+| **A Bill's stages, sponsors, publications** | `bills_search_bills`, `bills_get_bill` |
+| **How members voted on a division** | `votes_search_divisions`, `votes_get_division` |
+| **Select committee membership and evidence submissions** | `committees_search_committees`, `committees_get_committee`, `committees_search_evidence` |
+| **OSCOLA citations** parsed from a brief or judgment, with canonical URLs | `citations_parse`, `citations_resolve`, `citations_network` |
+| **VAT rate, MTD status, HMRC guidance** | `hmrc_get_vat_rate`, `hmrc_check_mtd_status`, `hmrc_search_guidance` |
+
+Four prompts (`/legislation_summarise_act`, `/legislation_compare_legislation`, `/parliament_policy_reception_review`, `/parliament_member_record_on_topic`) bundle multi-step workflows for common research tasks. Invoke them by name in any MCP-aware client. Each prompt produces a citable evidence pack; none classify positions or recommend an argumentative line.
+
+### How to use it, in practice
+
+Ask your agent in plain English what you need. The agent picks the right tools. A few patterns:
+
+- **"Pull *Donoghue v Stevenson* [1932] AC 562 and tell me which paragraphs cite *Heaven v Pender*."** → `citations_resolve` + `case_law_grep_judgment`.
+- **"What does the Renters' Rights Act 2025 say about no-fault evictions?"** → `legislation_search` to find the Act, `legislation_get_toc` to locate the section, `legislation_get_section` to read it with extent.
+- **"How was the Renters' Rights Bill debated in committee?"** → `parliament_policy_position_summary` with `topic="Renters' Rights Bill"` to see all debates, then `hansard://debate/{ext_id}/header` on the top debate to read the contribution sequence in order.
+- **"Has the Supreme Court considered s.21 Housing Act 1988?"** → `case_law_search` with the section reference, then `case_law_grep_judgment` within each hit for the actual treatment.
+- **"Build me an OSCOLA citation table for the cases this judgment cites."** → `citations_network` against the judgment's slug.
+
+### Worked example — the Renters' Rights Act 2025
+
+You're advising on a landlord's eviction-notice exposure under the new regime. A reasonable research path your agent might take, with the tools at each step:
+
+1. **The statute.** `legislation_search(query="Renters' Rights")` returns the Act. `legislation_get_toc` lists its parts and sections. `legislation_get_section` returns the relevant section's text with its extent (England-only, in most cases — important to confirm).
+2. **The legislative history.** `bills_search_bills(query="Renters' Rights")` returns the Bill record. `bills_get_bill` returns its stages, sponsors, and committee publications.
+3. **What was argued in Parliament.** `parliament_policy_position_summary(topic="Renters' Rights Bill")` returns corpus totals (how many contributions, debates, divisions) and the top debates with their `debate_ext_id`. For any debate of interest, read `hansard://debate/{ext_id}/header` to see the ordered contribution index — speaker, role, column reference, preview — and pull individual contributions via `hansard://debate/{ext_id}/contribution/{contribution_ext_id}` for the full text with citation metadata.
+4. **The votes.** `votes_search_divisions(query="Renters' Rights")` lists the division records. `votes_get_division` returns the per-member vote breakdown — useful to see who broke whip.
+5. **The case law (where any).** `case_law_search(query="Renters' Rights Act 2025")` for any judgments already citing the Act. `case_law_grep_judgment` for the exact paragraphs that treat each section.
+6. **Citations for your brief.** Pass your draft text into `citations_parse` to get a clean OSCOLA-formatted citation list with canonical URLs.
+
+Every Hansard contribution returns the `attributed_to` string ("The Minister of State, ... (Lord X) (Lab)"), the `column_ref`, the date, the debate title, and a public hansard.parliament.uk URL — everything you need to footnote in a brief.
+
+### Important constraints to know
+
+- **Territorial extent always matters.** `legislation_get_section` exposes the `extent` field. Acts that apply in England and Wales do not automatically apply in Scotland or Northern Ireland. Always read this before citing a section as binding in a jurisdiction.
+- **Hansard's `/search.json` caps at 4 contributions per query, regardless of the `limit` parameter.** This is an upstream API limitation. The four results returned are the top-ranked across the corpus, and `total_corpus` on the response tells you how many matches exist overall. For breadth, escalate to `parliament_policy_position_summary` for debate-level scope, then drill into specific debates via the `hansard://debate/{ext_id}/header` resource which lists *all* contributions in that debate in order.
+- **What this server does not do.** It does not classify a member as supporting or opposing a policy, summarise a judgment's outcome in your client's favour, or recommend an argumentative line. Those are interpretive acts. The server returns the primary source verbatim with citation metadata; your agent and your judgement do the legal work.
+- **Caching.** Judgments, statutes, debates, and member biographies are cached at the gateway for one hour. Two lawyers connecting to the hosted server share the same cache — if one of you fetches a heavy debate, the next reader gets it instantly. The cache does not affect tool-call results from search endpoints, only resource reads.
+- **Legislation.gov.uk WAF.** Some heavy Acts (notably the Companies Act 2006) intermittently fail on the hosted server due to upstream WAF rules that block our cloud IP range. The local install (`uvx uk-legal-mcp`) runs on your own IP and bypasses this. If a section fetch fails on the hosted server, try the local install or use `legislation_search(fulltext=True)` for a workaround.
+
+---
+
 ## Tools
 
 ### Case Law
@@ -248,7 +303,7 @@ Four workflow prompts are available for multi-step legal research. Exposed as to
 | `summarise_act` | legislation | Structured summary of a UK Act or SI |
 | `compare_legislation` | legislation | Comparative analysis of two pieces of legislation on a topic |
 | `policy_reception_review` | parliament | Citation-grade review of how a policy topic is being received in Parliament. Orchestrates the deterministic tools + `hansard://` resources, never labels named members as supporters / opponents from snippets. |
-| `member_position_analysis` | parliament | A member's position and voting record on a topic |
+| `member_record_on_topic` | parliament | Citable evidence pack of a named member's contributions on a topic — their own words, with attributed_to / date / column_ref / role-at-time. Does not classify their position. |
 
 ---
 

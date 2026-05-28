@@ -46,22 +46,30 @@ def register_prompts(mcp: FastMCP) -> None:
         )
 
     @mcp.prompt
-    def member_position_analysis(member_name: str, topic: str) -> str:
-        """Analyse a specific parliamentarian's stated position on a topic.
+    def member_record_on_topic(member_name: str, topic: str) -> str:
+        """Assemble the citable record of a parliamentarian's contributions on a topic.
 
-        Uses parliament_find_member and parliament_member_debates to build a picture
-        of a member's views from their own words.
+        Returns their own words, in their own context, with citation metadata.
+        Does not classify their position — that is the caller's interpretation to make.
         """
         return (
-            f"Analyse {member_name}'s parliamentary position on '{topic}'.\n\n"
-            f"Step 1: Use parliament_find_member to get their member ID.\n"
-            f"Step 2: Use parliament_member_debates with their ID and topic='{topic}' "
-            f"to retrieve their contributions.\n"
-            f"Step 3: Also search parliament_search_hansard for '{topic}' filtering by their name.\n\n"
-            f"Summarise:\n"
-            f"  - Their stated position (support/oppose/nuanced)\n"
-            f"  - Key arguments they have made\n"
-            f"  - Any evolution in their position over time\n"
-            f"  - Relevant committee or front-bench roles on this topic\n\n"
-            f"Quote directly from Hansard where possible, citing the date."
+            f"Assemble {member_name}'s parliamentary record on '{topic}'. "
+            f"Goal: produce a citable evidence pack of their own contributions, not a "
+            f"position label.\n\n"
+            f"Step 1 — identify. Call parliament_find_member with name={member_name!r} "
+            f"to get their integer member ID and house.\n"
+            f"Step 2 — pull contributions. Call parliament_member_debates with their ID "
+            f"and topic={topic!r}. Capture for each: attributed_to, date, debate_title, "
+            f"column_ref, contribution_ext_id, and full text.\n"
+            f"Step 3 — pull role history. Read hansard://member/{{member_id}}/biography "
+            f"to see government / opposition / committee posts with start/end dates. "
+            f"This lets you state their role at the time of any specific contribution.\n\n"
+            f"Return:\n"
+            f"  • Quotations verbatim from their contributions, each footnoted with "
+            f"    attributed_to, date, and column_ref.\n"
+            f"  • Their role at the time of each contribution (from the biography dates).\n"
+            f"  • A chronological list, not a synthesis — leave interpretation to the caller.\n\n"
+            f"Do NOT label their overall position as 'support / oppose / nuanced'. "
+            f"That classification depends on the caller's framing of the topic and is "
+            f"not for this tool to make. Quote and cite; do not characterise."
         )

@@ -134,7 +134,11 @@ gateway = FastMCP(
     name="uk-legal-mcp",
     lifespan=http_lifespan,
     instructions=(
-        "UK legal research server. Eight namespaced modules:\n\n"
+        "UK legal research server. Returns primary sources (judgments, statutes, Hansard "
+        "contributions, divisions, committee evidence, HMRC guidance) with citation metadata. "
+        "Does not interpret the law, classify positions, or prescribe a research strategy — "
+        "the caller's agent decides how to use the data on the caller's behalf.\n\n"
+        "Eight namespaced modules:\n\n"
         "• case_law_search / case_law_grep_judgment\n"
         "  Search UK court judgments from TNA Find Case Law and grep within them.\n"
         "  Read judgment content via judgment://{slug}/{header,index,para/{eId}} resources.\n\n"
