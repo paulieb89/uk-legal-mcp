@@ -30,7 +30,28 @@ class HansardContribution(BaseModel):
     debate_id: int = Field(..., description="Integer DebateSectionId — internal Hansard identifier")
     debate_ext_id: str = Field(..., description="DebateSectionExtId GUID. Use as {debate_ext_id} in hansard://debate/{debate_ext_id}/header.")
     contribution_ext_id: str = Field(..., description="ContributionExtId GUID — stable citation key. Use as {contribution_ext_id} in hansard://debate/{debate_ext_id}/contribution/{contribution_ext_id}.")
-    column_ref: str | None = Field(None, description="Hansard column-section identifier from HansardSection (e.g. 'BE-BG1', 'AA-AD'). Note: identifies the column-range block, not the OSCOLA column number directly.")
+    column_ref: str | None = Field(None, description=(
+        "Hansard internal page-marker code from HansardSection (e.g. 'BE-BG1', "
+        "'AA-AD'). NOT the citable column number that appears in an OSCOLA "
+        "footnote — see `column_start` / `column_end` for those, which are "
+        "only available when reading the contribution via "
+        "hansard://debate/{debate_ext_id}/contribution/{contribution_ext_id}. "
+        "From parliament_search_hansard, only this page-marker is exposed."
+    ))
+    column_start: int | None = Field(None, description=(
+        "The citable Hansard column number where this contribution begins, "
+        "e.g. 200, 1162. Extracted from `data-column-number` markers in the "
+        "contribution HTML. Populated only when reading via the contribution "
+        "resource — `parliament_search_hansard` returns this as None because "
+        "Hansard's /search.json strips the column markers. To get the real "
+        "column number for a search hit, read "
+        "hansard://debate/{debate_ext_id}/contribution/{contribution_ext_id}."
+    ))
+    column_end: int | None = Field(None, description=(
+        "The last Hansard column number this contribution spans, e.g. when a "
+        "long speech runs across columns 200–203. Equal to `column_start` for "
+        "short contributions. Same population semantics as `column_start`."
+    ))
     chamber_section: str = Field(..., description="Hansard section bucket (Section): 'Commons Chamber', 'Lords Chamber', 'Westminster Hall', 'Written Answers', 'Written Statements'.")
     house: Literal["Commons", "Lords"] = Field(..., description="House of Parliament (House)")
     rank: int | None = Field(None, description="Upstream relevance score (Rank). Higher = more relevant to the query.")
