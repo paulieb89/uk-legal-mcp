@@ -8,7 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field
 class Voter(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    member_id: int = Field(..., description="Parliament Members API member ID")
+    member_id: int = Field(..., description=(
+        "Parliament Members API integer ID — same ID space as the parliament_* "
+        "module. Use as `member_id` in parliament_member_debates / "
+        "parliament_member_interests to see this voter's contributions and "
+        "registered interests, or as {member_id} in "
+        "hansard://member/{member_id}/biography for their role history."
+    ))
     name: str = Field(..., description="Member display name")
     party: str | None = Field(None, description="Political party")
 

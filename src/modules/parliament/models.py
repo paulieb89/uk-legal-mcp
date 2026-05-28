@@ -17,7 +17,11 @@ class HansardContribution(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     member_name: str = Field(..., description="Name of the contributing member (MemberName)")
-    member_id: int | None = Field(None, description="Members API integer ID. Use to call parliament_member_debates or parliament_member_interests.")
+    member_id: int | None = Field(None, description=(
+        "Members API integer ID. Use as `member_id` in parliament_member_debates "
+        "/ parliament_member_interests, or as {member_id} in "
+        "hansard://member/{member_id}/biography for role history."
+    ))
     attributed_to: str = Field(..., description="Full citable attribution string, e.g. 'The Minister of State, DESNZ (Lord Whitehead) (Lab)'. Includes role-at-time of contribution for ministerial interventions.")
     party: str | None = Field(None, description="Political party affiliation parsed from the trailing '(Party)' suffix in AttributedTo")
     constituency: str | None = Field(None, description="Constituency (Commons only; None for Lords)")
@@ -99,7 +103,11 @@ class TopContributor(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    member_id: int = Field(..., description="Members API ID. Use with parliament_member_debates.")
+    member_id: int = Field(..., description=(
+        "Members API integer ID. Use as `member_id` in parliament_member_debates "
+        "/ parliament_member_interests, or as {member_id} in "
+        "hansard://member/{member_id}/biography for role history."
+    ))
     member_name: str = Field(..., description="Member display name")
     party: str | None = Field(None, description="Party affiliation parsed from AttributedTo")
     count: int = Field(..., ge=0, description="Number of contributions on this topic in the sampled window")

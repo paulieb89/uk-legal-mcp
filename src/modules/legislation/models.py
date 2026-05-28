@@ -25,9 +25,21 @@ class LegislationResult(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     title: str = Field(..., description="Full title of the legislation")
-    type: str = Field(..., description="Legislation type code, e.g. 'ukpga', 'uksi'")
-    year: int = Field(..., description="Year of enactment or making")
-    number: int = Field(..., description="Chapter or SI number")
+    type: str = Field(..., description=(
+        "Legislation type code, e.g. 'ukpga' (UK Public General Act), 'uksi' "
+        "(Statutory Instrument), 'asp' (Scottish Parliament Act). Use with "
+        "`year` and `number` as the triple {type}/{year}/{number} in the "
+        "legislation_get_toc / legislation_get_section tools, or in "
+        "legislation://{type}/{year}/{number}/section/{section}{?date} resource URIs."
+    ))
+    year: int = Field(..., description=(
+        "Year of enactment or making. Part of the {type}/{year}/{number} triple "
+        "that identifies an Act or SI."
+    ))
+    number: int = Field(..., description=(
+        "Chapter (for Acts) or SI number. Part of the {type}/{year}/{number} "
+        "triple that identifies an Act or SI."
+    ))
     score: float | None = Field(None, description="Relevance score from Lex API (higher = more relevant)")
     url: str = Field(..., description="Canonical legislation.gov.uk URL")
     next_steps: dict[str, str] = Field(
