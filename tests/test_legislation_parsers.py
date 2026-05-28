@@ -109,6 +109,106 @@ class TestParseClmlSection:
         assert tokens < 500, f"XML response is {tokens} tokens — check for bloat"
 
 
+class TestExtentContract:
+    """Extent parsing must follow the documented contract:
+
+    > Empty list means unknown — do not assume full UK extent.
+
+    Prior bug (PR #18 follow-up): when the parser could not find the
+    extent element, it silently defaulted to ['England','Wales','Scotland',
+    'Northern Ireland']. A lawyer trusting that for an England-only Act
+    could cite a section as binding in Scotland.
+
+    These tests use a CLML payload shaped like real legislation.gov.uk
+    responses (RestrictExtent attribute on structural elements, no
+    <ukm:Extent> element), reproducing the conditions that surfaced the
+    bug in the live MCP session of 2026-05-28.
+    """
+
+    REAL_CLML_E_W_ONLY = """<?xml version="1.0"?>
+<Legislation xmlns="http://www.legislation.gov.uk/namespaces/legislation"
+             xmlns:ukm="http://www.legislation.gov.uk/namespaces/metadata"
+             RestrictExtent="E+W+S">
+  <ukm:Metadata>
+    <ukm:PrimaryMetadata>
+      <ukm:EnactmentDate Date="1988-11-15"/>
+    </ukm:PrimaryMetadata>
+  </ukm:Metadata>
+  <Body RestrictExtent="E+W+S">
+    <Part RestrictExtent="E+W+S">
+      <Chapter RestrictExtent="E+W+S">
+        <P1group id="section-21" RestrictExtent="E+W">
+          <Title>Recovery of possession</Title>
+          <P1>
+            <P1para>The section text goes here. Possession on expiry.</P1para>
+          </P1>
+        </P1group>
+      </Chapter>
+    </Part>
+  </Body>
+</Legislation>"""
+
+    REAL_CLML_NO_EXTENT_ANYWHERE = """<?xml version="1.0"?>
+<Legislation xmlns="http://www.legislation.gov.uk/namespaces/legislation"
+             xmlns:ukm="http://www.legislation.gov.uk/namespaces/metadata">
+  <ukm:Metadata>
+    <ukm:PrimaryMetadata>
+      <ukm:EnactmentDate Date="2000-01-01"/>
+    </ukm:PrimaryMetadata>
+  </ukm:Metadata>
+  <Body>
+    <P1group id="section-1">
+      <Title>Some provision</Title>
+      <P1><P1para>Text.</P1para></P1>
+    </P1group>
+  </Body>
+</Legislation>"""
+
+    def test_section_specific_extent_overrides_act_default(self):
+        """When the section's own element carries RestrictExtent='E+W' but
+        the Act-level default is 'E+W+S', the section-specific value wins."""
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(self.REAL_CLML_E_W_ONLY, "21", 10_000)
+        assert result.extent == ["England", "Wales"], (
+            f"Expected ['England','Wales'] from section-specific RestrictExtent, "
+            f"got {result.extent}. Most-specific RestrictExtent must win — "
+            f"otherwise an England-only section reads as UK-wide."
+        )
+
+    def test_empty_extent_when_no_restrict_extent_anywhere(self):
+        """When neither RestrictExtent nor the legacy ukm:Extent element
+        is present, extent MUST be the empty list per the documented contract.
+
+        This is the regression test for the silent fabrication bug — the
+        prior parser returned all four UK nations when it found nothing."""
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(self.REAL_CLML_NO_EXTENT_ANYWHERE, "1", 10_000)
+        assert result.extent == [], (
+            f"Expected [] (unknown) per the documented contract, got {result.extent}. "
+            f"The parser must NOT fabricate full UK extent when it can't find one."
+        )
+
+    def test_extent_codes_map_to_canonical_names(self):
+        """E/W/S/N.I. codes map to the canonical full names used elsewhere
+        in the model (LegislationSection.extent type)."""
+        from src.modules.legislation.tools import _extent_codes_to_names
+        assert _extent_codes_to_names("E+W+S+N.I.") == [
+            "England", "Wales", "Scotland", "Northern Ireland",
+        ]
+        assert _extent_codes_to_names("E+W") == ["England", "Wales"]
+        assert _extent_codes_to_names("S") == ["Scotland"]
+        # Unknown codes are skipped silently — never fabricate jurisdictions.
+        assert _extent_codes_to_names("E+XYZ+W") == ["England", "Wales"]
+        assert _extent_codes_to_names("") == []
+
+    def test_in_force_is_none_when_unknown(self):
+        """Honest contract: when the parser cannot reliably determine in-force
+        status, return None rather than guessing. Mirrors the HTML parser."""
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(self.REAL_CLML_NO_EXTENT_ANYWHERE, "1", 10_000)
+        assert result.in_force is None
+
+
 # ── 2. HTML fallback parser ────────────────────────────────────────────────
 
 class TestParseHtmlSection:

@@ -153,8 +153,65 @@ def _parse_html_section(html_text: str, section: str, max_chars: int, warning: s
     )
 
 
+_EXTENT_CODE_MAP = {
+    "E": "England",
+    "W": "Wales",
+    "S": "Scotland",
+    "N.I.": "Northern Ireland",
+    "NI": "Northern Ireland",
+}
+
+
+def _extent_codes_to_names(code_string: str) -> list[str]:
+    """Map a CLML extent code string (e.g. 'E+W+S+N.I.') to canonical names.
+
+    Returns names in the order they appear. Unknown codes are skipped silently
+    so a malformed upstream value can't fabricate jurisdictions.
+    """
+    if not code_string:
+        return []
+    names: list[str] = []
+    for code in code_string.split("+"):
+        code = code.strip()
+        if code in _EXTENT_CODE_MAP:
+            names.append(_EXTENT_CODE_MAP[code])
+    return names
+
+
+def _find_restrict_extent(section_el, root) -> tuple[str, bool]:
+    """Walk from section_el up the ancestor chain to find the most-specific
+    RestrictExtent attribute. Falls back to the root element's value.
+
+    Returns (extent_code_string, is_section_specific) where is_section_specific
+    is True if the extent came from the section's own element (rather than
+    inherited from a parent / Act-wide default).
+    """
+    candidates = [section_el] if section_el is not None else []
+    if section_el is not None:
+        for ancestor in section_el.iterancestors():
+            candidates.append(ancestor)
+    if root is not None and root not in candidates:
+        candidates.append(root)
+
+    for idx, el in enumerate(candidates):
+        ext = el.get("RestrictExtent")
+        if ext:
+            return ext, idx == 0
+    return "", False
+
+
 def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> LegislationSection:
-    """Extract a section from CLML XML, truncating content to max_chars."""
+    """Extract a section from CLML XML, truncating content to max_chars.
+
+    Extent comes from the RestrictExtent attribute on the section's element
+    (or its nearest ancestor that carries one), mapped through the canonical
+    code→name table. When no RestrictExtent is found, `extent` is the empty
+    list per the documented contract — never fabricated.
+
+    Older fixtures may carry a doctored `<ukm:Extent Value="..."/>` element;
+    we fall back to that to keep test fixtures portable, but real CLML uses
+    RestrictExtent.
+    """
     from lxml import etree
     root = etree.fromstring(xml_text.encode())
     ns = {
@@ -165,18 +222,42 @@ def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> Legislat
     def extract_text(el) -> str:
         return " ".join(el.itertext()).strip()
 
-    # Try to find the specific section element
-    section_el = root.find(f".//leg:P1[@id='section-{section}']", ns)
+    # Section element: try P1group (the structural container that carries
+    # RestrictExtent) before falling back to P1 (the legacy element name).
+    # NB: lxml elements have no useful truth-testing, so chain with `is None`.
+    section_el = root.find(f".//leg:P1group[@id='section-{section}']", ns)
+    if section_el is None:
+        section_el = root.find(f".//leg:P1[@id='section-{section}']", ns)
     raw_content = extract_text(section_el) if section_el is not None else extract_text(root)
     original_length = len(raw_content)
     truncated = original_length > max_chars
     content = raw_content[:max_chars] + " …[truncated]" if truncated else raw_content
 
-    extent_el = root.find(".//ukm:Extent", ns)
-    extent_text = extent_el.get("Value", "") if extent_el is not None else ""
-    extent = [e.strip() for e in extent_text.split("+") if e.strip()]
+    # Extent: walk the ancestor chain for the most-specific RestrictExtent,
+    # then fall back to legacy ukm:Extent element (used by older fixtures).
+    extent_codes, _ = _find_restrict_extent(section_el, root)
+    if not extent_codes:
+        legacy_extent_el = root.find(".//ukm:Extent", ns)
+        if legacy_extent_el is not None:
+            extent_codes = legacy_extent_el.get("Value", "")
+    extent = _extent_codes_to_names(extent_codes)
 
-    prospective = "prospective" in xml_text.lower()
+    # In-force / prospective: derived from the section's own <ukm:InForce>
+    # element if present at section level. The same element appears many
+    # times in affecting-provisions metadata, which is NOT this section's
+    # own status — so substring search on the whole document is unreliable.
+    # When the signal is ambiguous, return None (unknown) per the same
+    # contract the HTML parser already honours.
+    in_force: bool | None = None
+    prospective: bool | None = None
+    if section_el is not None:
+        in_force_el = section_el.find(".//ukm:InForce", ns)
+        if in_force_el is not None:
+            applied = (in_force_el.get("Applied") or "").lower() == "true"
+            prospective_raw = (in_force_el.get("Prospective") or "").lower()
+            if prospective_raw in ("true", "false"):
+                prospective = prospective_raw == "true"
+            in_force = applied if applied else (None if prospective is None else not prospective)
 
     version_date = None
     date_el = root.find(".//ukm:EnactmentDate", ns)
@@ -195,8 +276,8 @@ def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> Legislat
         content=content,
         content_truncated=truncated,
         original_length=original_length,
-        in_force=not prospective if extent else None,
-        extent=extent or ["England", "Wales", "Scotland", "Northern Ireland"],
+        in_force=in_force,
+        extent=extent,
         version_date=version_date,
         prospective=prospective,
         source_format="xml",
