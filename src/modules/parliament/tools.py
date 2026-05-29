@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from collections import Counter
 
 from ...deps import format_http_error
+from .resources import _item_is_contribution
 from .models import (
     ColumnLookupResult,
     DebateDivisions,
@@ -974,15 +975,17 @@ def register_tools(mcp: FastMCP) -> None:
                 # real contribution_count. Column-lookup is the headline lawyer
                 # use case (verifying opposing counsel's citation) and benefits
                 # from the real count; one extra HTTP call per match is fine.
+                # Uses the same _item_is_contribution filter as the
+                # hansard://debate/{ext}/header resource so the two surfaces
+                # agree on the count (Obs 173 — single source-of-truth for
+                # "what counts as a contribution").
                 contribution_count: int | None = None
                 try:
                     debate_resp = await client.get(f"{HANSARD_API}/debates/Debate/{ext_id}.json")
                     debate_resp.raise_for_status()
                     debate_payload = debate_resp.json() if debate_resp.content else {}
                     debate_items = debate_payload.get("Items") or []
-                    contribution_count = sum(
-                        1 for i in debate_items if i.get("ItemType") == "Contribution"
-                    )
+                    contribution_count = sum(1 for i in debate_items if _item_is_contribution(i))
                 except httpx.HTTPError:
                     # Leave count as None rather than fabricate a zero.
                     pass
