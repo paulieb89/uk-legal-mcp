@@ -73,7 +73,12 @@ class HansardSearchInput(BaseModel):
     house: Literal["Commons", "Lords", "both"] = Field("both", description=(
         "Restrict to one House. Default 'both' returns Commons + Lords contributions."
     ))
-    member: str | None = Field(None, description="Filter by member name")
+    member_id: int | None = Field(None, description=(
+        "Filter to contributions by a single member. Pass the integer Members "
+        "API ID (resolve a name via parliament_find_member). The prior `member` "
+        "field accepted a name string but Hansard's /search.json silently "
+        "ignored it — the spec requires `memberId`."
+    ), ge=1)
     text_mode: Literal["preview", "full"] = Field("preview", description=(
         "'preview' returns the upstream ~250-char snippet (fast, low context cost). "
         "'full' returns ContributionTextFull (still capped at 3000 chars). "
@@ -410,8 +415,8 @@ def register_tools(mcp: FastMCP) -> None:
             qp["endDate"] = params.to_date.isoformat()
         if params.house != "both":
             qp["house"] = params.house
-        if params.member:
-            qp["member"] = params.member
+        if params.member_id:
+            qp["memberId"] = params.member_id
 
         resp = await client.get(f"{HANSARD_API}/search.json", params=qp)
         resp.raise_for_status()
@@ -423,7 +428,7 @@ def register_tools(mcp: FastMCP) -> None:
             from_date=params.from_date,
             to_date=params.to_date,
             house=params.house,
-            member=params.member,
+            member_id=params.member_id,
             text_mode=params.text_mode,
             offset=params.offset,
             limit=params.limit,
@@ -609,7 +614,7 @@ def register_tools(mcp: FastMCP) -> None:
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {
-            "member": params.member_id,
+            "memberId": params.member_id,
             "take": params.limit,
             "skip": params.offset,
         }

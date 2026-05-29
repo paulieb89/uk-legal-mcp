@@ -73,7 +73,7 @@ class HansardSearchResult(BaseModel):
     from_date: Date | None = Field(None, description="Start date filter applied, if any")
     to_date: Date | None = Field(None, description="End date filter applied, if any")
     house: Literal["Commons", "Lords", "both"] = Field("both", description="House filter applied")
-    member: str | None = Field(None, description="Member name filter applied, if any")
+    member_id: int | None = Field(None, description="Members API integer ID filter applied, if any (echoed from input).")
     text_mode: Literal["preview", "full"] = Field("preview", description="Whether contribution `text` carries the upstream preview or full body (still capped).")
     offset: int = Field(0, description="Skip applied to this page (Hansard API: skip)")
     limit: int = Field(20, description="Page size requested")
