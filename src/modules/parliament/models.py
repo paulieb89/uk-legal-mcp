@@ -79,6 +79,26 @@ class HansardSearchResult(BaseModel):
     limit: int = Field(20, description="Page size requested")
     total: int = Field(..., description="Number of contributions returned in this call")
     total_corpus: int | None = Field(None, description="Total contributions in Hansard matching this query (TotalContributions). Use to decide whether to paginate further or escalate to parliament_policy_position_summary.")
+    # Corpus envelope from /search.json — informative integers, no extra HTTP.
+    total_debates: int | None = Field(None, description="TotalDebates — distinct debates touching this topic.")
+    total_divisions: int | None = Field(None, description="TotalDivisions. Non-zero → consider `top_divisions` previews below or chain to votes_search_divisions.")
+    total_written_statements: int | None = Field(None, description="TotalWrittenStatements.")
+    total_written_answers: int | None = Field(None, description="TotalWrittenAnswers.")
+    total_corrections: int | None = Field(None, description="TotalCorrections — published corrections to the Hansard record.")
+    total_petitions: int | None = Field(None, description="TotalPetitions.")
+    total_committees: int | None = Field(None, description="TotalCommittees.")
+    total_members: int | None = Field(None, description="TotalMembers — member-name matches in the corpus.")
+    # Two high-value preview arrays only — others omitted per recurring-cost reasoning.
+    # Forward-ref strings because TopDebate / DivisionMatchLite are defined later in this file;
+    # resolved by model_rebuild() at the bottom of the module.
+    top_debates: "list[TopDebate]" = Field(default_factory=list, description=(
+        "Top-ranked debates touching this topic (from upstream Debates[] preview, capped at 4 by Hansard's /search.json). "
+        "Each entry's `debate_ext_id` chains to hansard://debate/{debate_ext_id}/header."
+    ))
+    top_divisions: "list[DivisionMatchLite]" = Field(default_factory=list, description=(
+        "Top-ranked divisions touching this topic (from upstream Divisions[] preview, capped at 4). "
+        "Each entry's `id` chains to votes_get_division; `debate_section_ext_id` chains back to the parent debate."
+    ))
     party_breakdown: dict[str, int] = Field(default_factory=dict, description="Counts by party across the returned page")
     house_breakdown: dict[str, int] = Field(default_factory=dict, description="Counts by house across the returned page")
     date_range: tuple[Date, Date] | None = Field(None, description="(min, max) SittingDate of returned contributions, or None if empty")
@@ -145,6 +165,119 @@ class TopDebate(BaseModel):
     date: Date = Field(..., description="Sitting date of the debate")
     house: Literal["Commons", "Lords"] = Field(..., description="House")
     contribution_count: int = Field(..., ge=0, description="Number of contributions in this debate matching the topic")
+
+
+class DivisionMatchLite(BaseModel):
+    """A single division (formal parliamentary vote) — lightweight match shape.
+
+    Returned as a preview slice on `parliament_search_hansard`'s `top_divisions`
+    and as the full element of `parliament_get_debate_divisions`'s output.
+
+    Field provenance maps to the upstream `DivisionOverview` Swagger definition;
+    the live `/debates/divisions/{ext}` endpoint returns most integer/boolean
+    values as strings, which the parser converts.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    id: int = Field(..., description=(
+        "Division ID. Use as the `division_id` input to votes_get_division for the "
+        "full member-by-member voting record."
+    ))
+    external_id: str = Field(..., description="Division GUID (ExternalId). Stable identifier for cross-reference.")
+    number: str = Field(..., description="Division number within the sitting (e.g. '1', '2').")
+    date: Date = Field(..., description="Sitting date of the division (Date).")
+    time: str | None = Field(None, description="Time of the division as HH:MM:SS, or None when the upstream omits it.")
+    house: Literal["Commons", "Lords"] = Field(..., description="House where the division was held.")
+    ayes_count: int = Field(..., ge=0, description="Number of Aye votes.")
+    noes_count: int = Field(..., ge=0, description="Number of Noe votes.")
+    motion_text: str | None = Field(None, description=(
+        "The motion being voted on (TextBeforeVote), e.g. 'Division on Motion A1'. "
+        "This is the citable description of what the division decided."
+    ))
+    result_text: str | None = Field(None, description="The result statement (TextAfterVote), e.g. 'Motion A1 disagreed.'")
+    debate_section: str | None = Field(None, description="Parent debate title (DebateSection), e.g. 'Renters' Rights Bill'.")
+    debate_section_ext_id: str | None = Field(None, description=(
+        "Parent debate GUID (DebateSectionExtId). Use as {debate_ext_id} in "
+        "hansard://debate/{debate_ext_id}/header to read the surrounding debate context."
+    ))
+
+
+class GetDebateDivisionsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    debate_ext_id: str = Field(..., description=(
+        "Debate GUID (DebateSectionExtId). Chain from parliament_search_hansard "
+        "contribution.debate_ext_id, top_debates[].debate_ext_id, or "
+        "parliament_policy_position_summary top_debates[].debate_ext_id."
+    ), min_length=8)
+
+
+class DebateDivisions(BaseModel):
+    """Divisions held within a specific debate.
+
+    Empty `divisions` is the normal case — most debates contain no formal vote
+    (Business of the House, statements, urgent questions, debates without a
+    division). A populated list typically appears around bill stages, motions,
+    and contested amendments.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    debate_ext_id: str = Field(..., description="Echo of the input debate GUID.")
+    divisions: list[DivisionMatchLite] = Field(
+        default_factory=list,
+        description=(
+            "Divisions held in this debate, in chronological order. Empty when no "
+            "divisions occurred. Each element's `id` chains to votes_get_division."
+        ),
+    )
+
+
+class LookupByColumnInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    column_number: str = Field(..., description=(
+        "Hansard column number from an OSCOLA footnote, e.g. '200' for "
+        "'HL Deb 14 Oct 2025, vol 849, col 200'. String (not integer) to "
+        "accommodate column suffixes like '1162W' for written answers."
+    ), min_length=1, max_length=20)
+    volume_number: int = Field(..., description=(
+        "Hansard volume number (the 'vol 849' part of an OSCOLA citation). "
+        "Required — the endpoint only resolves citations when given the volume; "
+        "sitting date is NOT a substitute (verified live 2026-05-29)."
+    ), gt=0)
+    house: Literal["Commons", "Lords", "both"] = Field("both", description=(
+        "Restrict to one House. Default 'both' searches across both Houses."
+    ))
+
+
+class ColumnLookupResult(BaseModel):
+    """Result of looking up a Hansard citation by (volume, column).
+
+    Each match is a debate section that contains the cited column. The lawyer
+    then drills into `debate_ext_id` via hansard://debate/{ext_id}/header for
+    the ordered contribution index, picking the contribution at the cited
+    column to footnote.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    column_number: str = Field(..., description="Echo of the requested column number.")
+    volume_number: int = Field(..., description="Echo of the requested volume number.")
+    house: Literal["Commons", "Lords", "both"] = Field(..., description="House filter applied.")
+    total_results: int = Field(..., ge=0, description="Number of debate matches found.")
+    matches: list[TopDebate] = Field(
+        default_factory=list,
+        description=(
+            "Debate sections containing the cited column, in upstream relevance "
+            "order. Each element's `debate_ext_id` chains to "
+            "hansard://debate/{debate_ext_id}/header. Empty when the citation "
+            "does not resolve — typically because the column is from a Daily "
+            "Part (not yet consolidated into a Bound Volume) or the volume "
+            "number is wrong."
+        ),
+    )
 
 
 class PolicyPositionSummary(BaseModel):
@@ -306,3 +439,8 @@ class PetitionSearchResult(BaseModel):
         default_factory=list,
         description="Matching petitions (title, state, signature count, key dates, URL).",
     )
+
+
+# Resolve forward references on HansardSearchResult.top_debates and
+# .top_divisions (TopDebate / DivisionMatchLite are defined later in this file).
+HansardSearchResult.model_rebuild()

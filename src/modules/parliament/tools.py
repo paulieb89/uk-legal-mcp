@@ -19,10 +19,15 @@ from collections import Counter
 
 from ...deps import format_http_error
 from .models import (
+    ColumnLookupResult,
+    DebateDivisions,
+    DivisionMatchLite,
     FacetCount,
+    GetDebateDivisionsInput,
     HansardContribution,
     HansardSearchResult,
     Interest,
+    LookupByColumnInput,
     MemberDebatesResult,
     MemberInterestsPage,
     MemberResult,
@@ -284,6 +289,97 @@ def _compute_search_facets(contributions: list[HansardContribution]) -> tuple[di
     return dict(party_counter), dict(house_counter), date_range
 
 
+def _safe_int(value, default: int = 0) -> int:
+    """Coerce a string or int to int, returning default on failure.
+
+    Used because /debates/divisions/{ext}.json returns numeric fields as
+    strings (verified live 2026-05-29) — Id, AyesCount, NoesCount are all
+    "192" not 192.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_top_debates_preview(payload: dict) -> list[TopDebate]:
+    """Parse `Debates[]` preview from /search.json into TopDebate entries.
+
+    Each Debates[] item is a SearchDebateItem (Swagger), with DebateSection,
+    SittingDate, House, Title, Rank, DebateSectionExtId. There is no
+    contribution count at this level; we use Rank as a proxy and document it.
+    """
+    out: list[TopDebate] = []
+    for item in payload.get("Debates") or []:
+        try:
+            ext_id = item.get("DebateSectionExtId") or ""
+            if not ext_id:
+                continue
+            sitting_iso = (item.get("SittingDate") or "1970-01-01")[:10]
+            sitting_date = date.fromisoformat(sitting_iso)
+            house_raw = item.get("House") or "Commons"
+            house = house_raw if house_raw in ("Commons", "Lords") else "Commons"
+            out.append(TopDebate(
+                debate_id=0,
+                debate_ext_id=ext_id,
+                debate_title=(item.get("Title") or item.get("DebateSection") or "Unknown").strip(),
+                date=sitting_date,
+                house=house,
+                contribution_count=_safe_int(item.get("Rank"), 0),
+            ))
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+def _parse_division_match(item: dict) -> DivisionMatchLite | None:
+    """Parse one DivisionOverview-shaped item into DivisionMatchLite.
+
+    All numeric and boolean fields come back as strings from the live
+    endpoints (verified 2026-05-29). Returns None on unrecoverable rows.
+    """
+    try:
+        ext_id = item.get("ExternalId") or ""
+        if not ext_id:
+            return None
+        date_iso = (item.get("Date") or "1970-01-01")[:10]
+        sitting_date = date.fromisoformat(date_iso)
+        house_raw = item.get("House") or "Commons"
+        house = house_raw if house_raw in ("Commons", "Lords") else "Commons"
+        time_raw = item.get("Time")
+        # Time can come as None or a string like '16:41:00' or full datetime
+        time_clean: str | None = None
+        if isinstance(time_raw, str) and time_raw and time_raw not in ("None", "null"):
+            time_clean = time_raw[-8:] if "T" in time_raw else time_raw
+
+        return DivisionMatchLite(
+            id=_safe_int(item.get("Id"), 0),
+            external_id=ext_id,
+            number=str(item.get("Number") or ""),
+            date=sitting_date,
+            time=time_clean,
+            house=house,
+            ayes_count=_safe_int(item.get("AyesCount"), 0),
+            noes_count=_safe_int(item.get("NoesCount"), 0),
+            motion_text=(item.get("TextBeforeVote") or None) or None,
+            result_text=(item.get("TextAfterVote") or None) or None,
+            debate_section=(item.get("DebateSection") or None),
+            debate_section_ext_id=(item.get("DebateSectionExtId") or None),
+        )
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_top_divisions_preview(payload: dict) -> list[DivisionMatchLite]:
+    """Parse `Divisions[]` preview from /search.json into DivisionMatchLite entries."""
+    out: list[DivisionMatchLite] = []
+    for item in payload.get("Divisions") or []:
+        parsed = _parse_division_match(item)
+        if parsed is not None:
+            out.append(parsed)
+    return out
+
+
 def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
@@ -333,6 +429,16 @@ def register_tools(mcp: FastMCP) -> None:
             limit=params.limit,
             total=len(contributions),
             total_corpus=payload.get("TotalContributions"),
+            total_debates=payload.get("TotalDebates"),
+            total_divisions=payload.get("TotalDivisions"),
+            total_written_statements=payload.get("TotalWrittenStatements"),
+            total_written_answers=payload.get("TotalWrittenAnswers"),
+            total_corrections=payload.get("TotalCorrections"),
+            total_petitions=payload.get("TotalPetitions"),
+            total_committees=payload.get("TotalCommittees"),
+            total_members=payload.get("TotalMembers"),
+            top_debates=_parse_top_debates_preview(payload),
+            top_divisions=_parse_top_divisions_preview(payload),
             party_breakdown=party_breakdown,
             house_breakdown=house_breakdown,
             date_range=date_range,
@@ -631,4 +737,124 @@ def register_tools(mcp: FastMCP) -> None:
             total=len(petitions),
             has_more=len(petitions) == params.limit,
             petitions=petitions,
+        )
+
+    @mcp.tool(
+        name="get_debate_divisions",
+        annotations={"title": "Get Divisions Held In A Debate", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    )
+    async def parliament_get_debate_divisions(params: GetDebateDivisionsInput, ctx: Context) -> DebateDivisions:
+        """Return the divisions (formal votes) held within a specific debate.
+
+        Most debates contain no divisions — Business of the House sittings,
+        statements, urgent questions, debates without a vote. A populated list
+        typically appears around bill stages, motions, and contested amendments.
+
+        For one named member's voting record across many divisions, use
+        votes_search_divisions or chain via the returned `id` to votes_get_division.
+
+        Args:
+            params: GetDebateDivisionsInput with the debate_ext_id GUID
+                (chain from parliament_search_hansard contribution.debate_ext_id
+                or top_debates[].debate_ext_id).
+        """
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        try:
+            resp = await client.get(
+                f"{HANSARD_API}/debates/divisions/{params.debate_ext_id}.json"
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            # Surface the error; an empty array is the normal "no divisions" case,
+            # whereas an HTTP error means we couldn't reach upstream.
+            raise RuntimeError(format_http_error(e)) from e
+
+        items = resp.json()
+        if not isinstance(items, list):
+            items = []
+        divisions: list[DivisionMatchLite] = []
+        for item in items:
+            parsed = _parse_division_match(item) if isinstance(item, dict) else None
+            if parsed is not None:
+                divisions.append(parsed)
+
+        return DebateDivisions(
+            debate_ext_id=params.debate_ext_id,
+            divisions=divisions,
+        )
+
+    @mcp.tool(
+        name="lookup_by_column",
+        annotations={"title": "Resolve A Hansard Column Citation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    )
+    async def parliament_lookup_by_column(params: LookupByColumnInput, ctx: Context) -> ColumnLookupResult:
+        """Resolve an OSCOLA-style Hansard citation to a debate.
+
+        Use case: you have a citation like 'HL Deb 14 Oct 2025, vol 849, col 200'
+        and need to verify what was said at that column. This tool calls
+        /search/debatebycolumn and returns the matching debate section(s); you
+        then read hansard://debate/{debate_ext_id}/header to find the
+        contribution at the cited column.
+
+        Empty `matches` typically means:
+          - The column is from a Daily Part (not yet consolidated into a Bound
+            Volume). The endpoint only resolves Bound Volume citations
+            (verified live 2026-05-29 — both `Source: 2` (recent) and `Source: 3`
+            (older) debates were probed, only the older one resolves by column).
+          - The volume_number is wrong (sometimes opposing counsel cites the
+            running-volume number rather than the bound-volume number).
+          - The column is in a Written Statement or Written Answer (the
+            citation usually has a 'W' suffix like '1162W' — pass it as-is).
+
+        Args:
+            params: LookupByColumnInput with column_number (string), volume_number
+                (int), and optional house. Date is NOT a valid lookup key — the
+                endpoint requires the volume number.
+        """
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        qp: dict = {
+            "columnNumber": params.column_number,
+            "volumeNumber": params.volume_number,
+        }
+        if params.house != "both":
+            qp["house"] = params.house
+
+        try:
+            resp = await client.get(
+                f"{HANSARD_API}/search/debatebycolumn.json",
+                params=qp,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise RuntimeError(format_http_error(e)) from e
+
+        payload = resp.json() if resp.content else {}
+        results = payload.get("Results") or []
+        matches: list[TopDebate] = []
+        for item in results:
+            try:
+                ext_id = item.get("DebateSectionExtId") or ""
+                if not ext_id:
+                    continue
+                sitting_iso = (item.get("SittingDate") or "1970-01-01")[:10]
+                sitting_date = date.fromisoformat(sitting_iso)
+                house_raw = item.get("House") or "Commons"
+                house_val = house_raw if house_raw in ("Commons", "Lords") else "Commons"
+                matches.append(TopDebate(
+                    debate_id=0,
+                    debate_ext_id=ext_id,
+                    debate_title=(item.get("Title") or item.get("DebateSection") or "Unknown").strip(),
+                    date=sitting_date,
+                    house=house_val,
+                    contribution_count=_safe_int(item.get("Rank"), 0),
+                ))
+            except (ValueError, TypeError):
+                continue
+
+        return ColumnLookupResult(
+            column_number=params.column_number,
+            volume_number=params.volume_number,
+            house=params.house,
+            total_results=_safe_int(payload.get("TotalResultCount"), len(matches)),
+            matches=matches,
         )

@@ -168,8 +168,17 @@ def register_parliament_resources(gateway: FastMCP) -> None:
             "house": overview.get("House"),
             "location": overview.get("Location"),
             "volume_no": overview.get("VolumeNo"),
+            # source_code is an undocumented integer enum (observed 2 for recent
+            # debates, 3 for older debates). Surfaced raw with no mapping claim —
+            # callers should not assume "Bound Volume" vs "Daily Part" without
+            # verifying against parliament.uk publication conventions. Pairs with
+            # content_last_updated (newly added) for a derivable provenance signal.
+            "source_code": overview.get("Source"),
+            "content_last_updated": overview.get("ContentLastUpdated"),
             "previous_debate_ext_id": overview.get("PreviousDebateExtId"),
+            "previous_debate_title": (overview.get("PreviousDebateTitle") or "").strip() or None,
             "next_debate_ext_id": overview.get("NextDebateExtId"),
+            "next_debate_title": (overview.get("NextDebateTitle") or "").strip() or None,
             "contribution_count": len(index),
             "contributions_index": index,
         }

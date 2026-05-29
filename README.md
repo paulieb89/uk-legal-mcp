@@ -120,9 +120,9 @@ PORT=8765 python -m src.gateway
 
 ## A lawyer's guide
 
-This server is a data pipe between your AI assistant and the UK's primary legal sources. It returns what the sources say, with citations. It does not interpret the law, classify members' positions, or recommend a research strategy — that is your work, and your agent's, on your behalf.
+This server is a data pipe between your AI assistant and the UK's primary legal sources. It returns what the sources say, with citations. It does not interpret the law or recommend a research strategy. That is your work, and your agent's, on your behalf.
 
-### What you can ask for
+### Basic workflow
 
 | If you need... | Use these surfaces |
 |---|---|
@@ -136,13 +136,13 @@ This server is a data pipe between your AI assistant and the UK's primary legal 
 | **How members voted on a division** | `votes_search_divisions`, `votes_get_division` |
 | **Select committee membership and evidence submissions** | `committees_search_committees`, `committees_get_committee`, `committees_search_evidence` |
 | **OSCOLA citations** parsed from a brief or judgment, with canonical URLs | `citations_parse`, `citations_resolve`, `citations_network` |
-| **VAT rate, MTD status, HMRC guidance** | `hmrc_get_vat_rate`, `hmrc_check_mtd_status`, `hmrc_search_guidance` |
+| **VAT rate, MTD status, HMRC guidance - API key required** | `hmrc_get_vat_rate`, `hmrc_check_mtd_status`, `hmrc_search_guidance` |
 
-Four prompts (`/legislation_summarise_act`, `/legislation_compare_legislation`, `/parliament_policy_reception_review`, `/parliament_member_record_on_topic`) bundle multi-step workflows for common research tasks. Invoke them by name in any MCP-aware client. Each prompt produces a citable evidence pack; none classify positions or recommend an argumentative line.
+Four prompts (`/legislation_summarise_act`, `/legislation_compare_legislation`, `/parliament_policy_reception_review`, `/parliament_member_record_on_topic`) bundle multi-step workflows for common research tasks. Invoke them by name in any MCP-aware client. 
 
 ### How to use it, in practice
 
-Ask your agent in plain English what you need. The agent picks the right tools. A few patterns:
+Ask your agent what you need. The agent picks the right tools. A few patterns:
 
 - **"Pull *Donoghue v Stevenson* [1932] AC 562 and tell me which paragraphs cite *Heaven v Pender*."** → `citations_resolve` + `case_law_grep_judgment`.
 - **"What does the Renters' Rights Act 2025 say about no-fault evictions?"** → `legislation_search` to find the Act, `legislation_get_toc` to locate the section, `legislation_get_section` to read it with extent.
@@ -217,8 +217,10 @@ Upstream: [legislation.gov.uk](https://www.legislation.gov.uk/) (CLML XML + Atom
 
 | Tool | What it does |
 |------|-------------|
-| `parliament_search_hansard` | Search Hansard contributions by exact phrase. Returns citation-grade metadata per contribution: `attributed_to`, `column_ref`, `debate_id`, `debate_ext_id`, `contribution_ext_id`, public Hansard URL, plus party / house breakdown and `total_corpus` on the result. Supports `from_date`, `to_date`, `house`, `text_mode=preview\|full`. |
+| `parliament_search_hansard` | Search Hansard contributions by exact phrase. Returns citation-grade metadata per contribution: `attributed_to`, `column_ref`, `debate_id`, `debate_ext_id`, `contribution_ext_id`, public Hansard URL, plus party / house breakdown and `total_corpus` on the result. Also surfaces the corpus envelope (`total_debates`, `total_divisions`, `total_written_answers`, etc.) and previews of `top_debates` + `top_divisions` in one call. Supports `from_date`, `to_date`, `house`, `text_mode=preview\|full`. |
 | `parliament_policy_position_summary` | Deterministic facet counts on a topic — no LLM, no editorial labels. Returns by-party / by-house / by-section / by-year / by-month breakdowns, top contributors, and top debates (each with `debate_ext_id` for resource lookup). Use to scope the conversation before drilling into specific contributions. |
+| `parliament_get_debate_divisions` | Divisions (formal votes) held within a specific debate. Pass `debate_ext_id`; returns each division's id (chains to `votes_get_division`), motion text, result, and aye/noe counts. Empty list for the typical no-vote case. |
+| `parliament_lookup_by_column` | Resolve an OSCOLA Hansard citation to a debate. Pass `column_number` + `volume_number` (and optional `house`). The endpoint only resolves Bound Volume citations — Daily Part columns require reading the `hansard://debate/{ext}/header` resource's contribution index. |
 | `parliament_find_member` | Look up an MP or Lord by name. Returns member ID for use with `member_debates`. |
 | `parliament_member_debates` | Retrieve a specific member's Hansard contributions, optionally filtered by topic. |
 | `parliament_member_interests` | Get a member's registered financial interests (donations, shareholdings, etc.). |
