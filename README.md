@@ -60,15 +60,39 @@ Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_conf
 }
 ```
 
-### Local HTTP (development)
+### Local development
 
-```bash
-PORT=8765 python -m src.gateway
-```
+Two ways to point an MCP client at your working tree (so your edits are picked up without restarting anything):
+
+**stdio against your local checkout** — spawns a fresh process per MCP connection from the project's `[project.scripts]` entry, so the source is always read as edited. Replace `<abs-path>` with the absolute path to your clone:
 
 ```json
-{ "mcpServers": { "uk-legal": { "type": "http", "url": "http://127.0.0.1:8765/mcp" } } }
+{
+  "mcpServers": {
+    "local-uk-legal": {
+      "command": "uv",
+      "args": ["run", "--project", "<abs-path>", "uk-legal-mcp"],
+      "env": { "VIRTUAL_ENV": "" }
+    }
+  }
+}
 ```
+
+> Tip: if your shell already has `VIRTUAL_ENV` set to a different venv, the `env` block strips it so `uv` cleanly picks the project's `.venv` (cosmetic — silences a noisy warning).
+
+**HTTP** — runs the gateway once, multiple clients can connect:
+
+```bash
+python -m src.gateway
+```
+
+Listens on `http://0.0.0.0:8080` (override with `PORT=…`):
+
+```json
+{ "mcpServers": { "uk-legal": { "type": "http", "url": "http://127.0.0.1:8080/mcp" } } }
+```
+
+stdio is the safer default for contributors — no "did I restart the gateway after my edit?" failure mode. HTTP is fine when you want a single long-running process you can hit from `curl` too.
 
 ---
 
@@ -126,8 +150,6 @@ Every response carries the metadata needed for an OSCOLA footnote: `attributed_t
 
 ## Tools reference
 
-Concise one-liners. Inputs and output shapes live in the MCP tool schema; this table answers "which tool, for what?".
-
 ### Case Law
 
 | Tool | What it does |
@@ -141,7 +163,6 @@ Concise one-liners. Inputs and output shapes live in the MCP tool schema; this t
 | `judgment://{slug*}/index` | Paragraph eId + first-line per row. Walk to discover. |
 | `judgment://{slug*}/para/{eId}` | A single paragraph with its sub-paragraphs. |
 
-Upstream: [TNA Find Case Law](https://caselaw.nationalarchives.gov.uk/) (Atom/XML). Rate limit: 1,000 req/5 min. Cached 1 hour.
 
 ### Legislation
 
@@ -156,7 +177,6 @@ Upstream: [TNA Find Case Law](https://caselaw.nationalarchives.gov.uk/) (Atom/XM
 | `legislation://{type}/{year}/{number}/section/{section}{?date}` | CLML XML for a section; optional point-in-time date. |
 | `legislation://{type}/{year}/{number}/toc{?date}` | Flat `id: title` table of contents. |
 
-Upstream: [legislation.gov.uk](https://www.legislation.gov.uk/) (CLML XML + Atom feed). Cached 24 hours. Uses curl_cffi with Chrome impersonation to bypass WAF challenges; falls back to HTML when the XML endpoint is blocked.
 
 ### Parliament
 
@@ -177,7 +197,6 @@ Upstream: [legislation.gov.uk](https://www.legislation.gov.uk/) (CLML XML + Atom
 | `hansard://debate/{ext_id}/contribution/{ext_id}` | A single contribution's full text + metadata. |
 | `hansard://member/{id}/biography` | Government / opposition / committee posts with start/end dates so you can resolve a member's role at the time of any contribution. |
 
-Upstream: [hansard-api.parliament.uk](https://hansard-api.parliament.uk) + [members-api.parliament.uk](https://members-api.parliament.uk) + [petition.parliament.uk](https://petition.parliament.uk). Cached 1 hour at the gateway.
 
 ### Bills
 
@@ -186,7 +205,6 @@ Upstream: [hansard-api.parliament.uk](https://hansard-api.parliament.uk) + [memb
 | `bills_search_bills` | Search current and historical Bills by keyword, session, or type. |
 | `bills_get_bill` | Full bill detail — stages, sponsors, publications. |
 
-Upstream: [bills-api.parliament.uk](https://bills-api.parliament.uk). Cached 1 hour.
 
 ### Votes
 
@@ -195,7 +213,7 @@ Upstream: [bills-api.parliament.uk](https://bills-api.parliament.uk). Cached 1 h
 | `votes_search_divisions` | Search Commons and Lords divisions by keyword or date. |
 | `votes_get_division` | Full division detail — vote counts, per-member voting record. |
 
-Upstream: [commonsvotes-api.parliament.uk](https://commonsvotes-api.parliament.uk) + [lordsvotes-api.parliament.uk](https://lordsvotes-api.parliament.uk). Cached 24 hours.
+
 
 ### Committees
 
@@ -205,7 +223,6 @@ Upstream: [commonsvotes-api.parliament.uk](https://commonsvotes-api.parliament.u
 | `committees_get_committee` | Committee detail — membership, sub-committees. |
 | `committees_search_evidence` | Oral and written evidence submissions. |
 
-Upstream: [committees-api.parliament.uk](https://committees-api.parliament.uk). Cached 1 hour.
 
 ### Citations
 
@@ -215,7 +232,6 @@ Upstream: [committees-api.parliament.uk](https://committees-api.parliament.uk). 
 | `citations_resolve` | Parse and resolve a single citation string. |
 | `citations_network` | Fetch a judgment and map every citation within — cases, legislation, SIs, EU law. |
 
-Self-contained. No external API (except `citations_network`, which fetches the judgment XML).
 
 **Supported citation formats:**
 
@@ -253,108 +269,8 @@ Workflow templates exposed as tools via `PromptsAsTools` (for ChatGPT) and nativ
 ## Important constraints
 
 - **Territorial extent always matters.** `legislation_get_section` exposes the `extent` field. Acts that apply in England and Wales do not automatically apply in Scotland or Northern Ireland. Read this before citing a section as binding in a jurisdiction.
-- **Hansard's `/search.json` caps at 4 contributions per query** regardless of the `limit` parameter. The four are the top-ranked across the corpus, and `total_corpus` on the response tells you how many matches exist overall. For breadth, use `parliament_policy_position_summary` for debate-level scope, then drill into specific debates via the `hansard://debate/{ext_id}/header` resource which lists *all* contributions in that debate in order.
 - **Verifying opposing counsel's citations** — when a brief cites *HL Deb [date], vol N, col M*, run `parliament_lookup_by_column(column_number="M", volume_number=N, house="Lords")` to resolve the citation to its debate, then read the header resource to find the contribution at the cited column. The endpoint only resolves Bound Volume citations; Daily Part columns shift on consolidation and aren't searchable this way.
 - **What this server does not do.** It does not classify a member as supporting or opposing a policy, summarise a judgment's outcome in your client's favour, or recommend an argumentative line. Those are interpretive acts. The server returns the primary source verbatim with citation metadata; your agent and your judgement do the legal work.
-- **Caching.** Judgments, statutes, debates, and member biographies are cached at the gateway for one hour. Two lawyers connecting to the hosted server share the same cache — if one of you fetches a heavy debate, the next reader gets it instantly.
 - **Legislation.gov.uk WAF.** Some heavy Acts (notably the Companies Act 2006) intermittently fail on the hosted server due to upstream WAF rules that block our cloud IP range. The local install (`uvx uk-legal-mcp`) runs on your own IP and bypasses this.
 
----
 
-## Architecture
-
-```
-src/
-  gateway.py            FastMCP gateway — mounts all modules, applies middleware
-  deps.py               Shared httpx clients (lifespan-managed) + error formatting
-  modules/
-    case_law/           TNA Find Case Law (Atom/XML)
-    legislation/        legislation.gov.uk (CLML XML + Atom feed)
-    parliament/         Hansard + Members + Petitions (JSON)
-    bills/              Parliamentary Bills API (JSON)
-    votes/              Commons + Lords division records (JSON)
-    committees/         Select committees + evidence (JSON)
-    citations/          OSCOLA regex engine (compiled once, lru_cache)
-    hmrc/               HMRC OAuth + GOV.UK search (JSON)
-references/             Committed upstream API specs (e.g. Hansard Swagger)
-tests/                  Offline tests + the param-conformance audit
-```
-
-Each module is a standalone `FastMCP` instance mounted into the gateway with a namespace prefix (`case_law_`, `legislation_`, etc.). All modules share a single httpx client pool via the gateway's lifespan context.
-
-**Middleware stack (gateway level):**
-
-| Middleware | Purpose |
-|---|---|
-| `ErrorHandlingMiddleware` | Catches unhandled exceptions |
-| `StructuredLoggingMiddleware` | JSON logging with duration and payload size |
-| `PrometheusMiddleware` | Tool call counters + latency histograms (`/metrics`) |
-| `DetailedTimingMiddleware` | Per-tool timing logs |
-| `ResponseCachingMiddleware` | Gateway-level 1hr cache for tools and resources |
-
----
-
-## Deployment
-
-### Fly.io
-
-```bash
-fly auth login
-fly launch --name uk-legal-mcp --region lhr
-fly deploy
-```
-
-Optional secrets:
-
-```bash
-fly secrets set HMRC_CLIENT_ID=your_id HMRC_CLIENT_SECRET=your_secret
-# For production HMRC (default is sandbox):
-fly secrets set HMRC_API_BASE=https://api.service.hmrc.gov.uk
-```
-
-### Docker
-
-```bash
-docker build -t uk-legal-mcp .
-docker run -p 8080:8080 uk-legal-mcp
-```
-
----
-
-## Testing
-
-```bash
-pip install -e '.[test]'  # or: pip install pytest tiktoken
-pytest tests/ -v -k "not live"
-```
-
-Offline tests cover OSCOLA citation patterns + resolution + disambiguation, CLML XML and HTML fallback parsers, and the Hansard parameter-conformance audit (which validates every upstream API call against the official Swagger spec at `references/hansard-swagger-v1.json` to catch silent-200 wire-name bugs).
-
----
-
-## Upstream APIs and Licences
-
-| Source | API | Licence | Auth |
-|--------|-----|---------|------|
-| TNA Find Case Law | `caselaw.nationalarchives.gov.uk` | [Open Justice Licence](https://caselaw.nationalarchives.gov.uk/open-justice-licence) | None |
-| legislation.gov.uk | `legislation.gov.uk` | [OGL v3](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/) | None |
-| UK Parliament Hansard | `hansard-api.parliament.uk` | [Open Parliament Licence](https://www.parliament.uk/site-information/copyright-parliament/open-parliament-licence/) | None |
-| UK Parliament Members | `members-api.parliament.uk` | Open Parliament Licence | None |
-| UK Parliament Petitions | `petition.parliament.uk` | Open Parliament Licence | None |
-| UK Parliament Bills | `bills-api.parliament.uk` | Open Parliament Licence | None |
-| UK Parliament Votes | `commonsvotes-api.parliament.uk` | Open Parliament Licence | None |
-| UK Parliament Committees | `committees-api.parliament.uk` | Open Parliament Licence | None |
-| HMRC | `test-api.service.hmrc.gov.uk` | OGL / commercial terms | OAuth 2.0 |
-| GOV.UK Search | `www.gov.uk/api/search.json` | OGL v3 | None |
-
----
-
-## Stack
-
-- Python 3.10+
-- [FastMCP](https://gofastmcp.com) v3 (streamable HTTP transport)
-- [httpx](https://www.python-httpx.org/) (async HTTP with connection pooling)
-- [lxml](https://lxml.de/) (LegalDocML and CLML XML parsing)
-- [Pydantic](https://docs.pydantic.dev/) v2 (input validation, output serialisation)
-- [Fly.io](https://fly.io/) (London region, auto-stop/start)
-</content>
