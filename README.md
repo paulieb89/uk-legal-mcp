@@ -10,34 +10,17 @@
 [![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_Server-24bfa5?style=flat-square&logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=uk-legal&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fuk-legal-mcp.fly.dev%2Fmcp%22%7D&quality=insiders)
 [![Install in Cursor](https://img.shields.io/badge/Cursor-Install_Server-000000?style=flat-square&logoColor=white)](https://cursor.com/en/install-mcp?name=uk-legal&config=eyJ0eXBlIjoiaHR0cCIsInVybCI6Imh0dHBzOi8vdWstbGVnYWwtbWNwLmZseS5kZXYvbWNwIn0=)
 
-A Model Context Protocol server for UK legal research. Connects AI assistants to case law, legislation, parliamentary debates, bills, votes, committees, OSCOLA citation parsing, and HMRC tax data through a single endpoint.
+A Model Context Protocol server for UK legal research. One MCP connection wires your AI assistant into UK case law, legislation, parliamentary debates, bills, votes, committees, OSCOLA citation parsing, and HMRC guidance — every response carrying the metadata you'd need to footnote it.
 
-**24 tools across 8 modules.** One connection. Read-only. No API keys required for 23 of 24 tools.
+Read-only. No API keys required for the legal sources (HMRC's authenticated endpoint is optional).
 
-```
-MCP Client (Claude, Cursor, etc.)
-        |
-        v
-  uk-legal-mcp gateway  (Streamable HTTP)
-  +----------------------------------------------------+
-  |                                                    |
-  |  case_law      TNA Find Case Law API               |
-  |  legislation   legislation.gov.uk Atom feed         |
-  |  parliament    Hansard API + Members API            |
-  |  bills         Parliamentary Bills API              |
-  |  votes         Commons + Lords division records     |
-  |  committees    Select committees + evidence         |
-  |  citations     OSCOLA regex parser (no network)     |
-  |  hmrc          HMRC sandbox/prod + GOV.UK search    |
-  |                                                    |
-  +----------------------------------------------------+
-```
+---
 
-## Quickstart
+## Connect
 
-### Connect to the hosted server
+### Hosted
 
-Use this URL when adding a remote/custom MCP connector in Claude, Claude Desktop, VS Code, Cursor, or another MCP client:
+Use this URL in any MCP-aware client (Claude, Claude Desktop, VS Code, Cursor, etc.):
 
 ```text
 https://uk-legal-mcp.fly.dev/mcp
@@ -56,29 +39,9 @@ For clients that use `mcpServers` JSON:
 }
 ```
 
-For VS Code workspace config, use `.vscode/mcp.json`:
+### Local install (stdio)
 
-```json
-{
-  "servers": {
-    "uk-legal": {
-      "type": "http",
-      "url": "https://uk-legal-mcp.fly.dev/mcp"
-    }
-  }
-}
-```
-
-Then try:
-
-- *"Search for case law about cycling accidents"*
-- *"Get section 172 of the Companies Act 2006"*
-- *"Parse the citations in: The court applied Donoghue v Stevenson [1932] AC 562 and s.2 Occupiers' Liability Act 1957"*
-- *"What is parliament saying about short selling?"*
-
-### Claude Desktop (local install via uvx)
-
-Install and run the server locally in stdio mode — useful if you want to use the server from Claude Desktop on a residential IP (which bypasses legislation.gov.uk WAF blocks that affect the hosted server):
+Useful from Claude Desktop on a residential IP — bypasses the legislation.gov.uk WAF that intermittently blocks the hosted server's cloud IP range:
 
 ```bash
 uvx uk-legal-mcp
@@ -97,187 +60,167 @@ Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_conf
 }
 ```
 
-### Local HTTP server (advanced)
-
-To run the full HTTP gateway locally (e.g. for development):
+### Local HTTP (development)
 
 ```bash
 PORT=8765 python -m src.gateway
 ```
 
 ```json
-{
-  "mcpServers": {
-    "uk-legal": {
-      "type": "http",
-      "url": "http://127.0.0.1:8765/mcp"
-    }
-  }
-}
+{ "mcpServers": { "uk-legal": { "type": "http", "url": "http://127.0.0.1:8765/mcp" } } }
 ```
 
 ---
 
-## A lawyer's guide
+## What's here
 
-This server is a data pipe between your AI assistant and the UK's primary legal sources. It returns what the sources say, with citations. It does not interpret the law or recommend a research strategy. That is your work, and your agent's, on your behalf.
+Eight namespaced modules covering the UK's primary legal sources:
 
-### Basic workflow
-
-| If you need... | Use these surfaces |
+| Module | What it covers |
 |---|---|
-| **A judgment** by neutral citation, court, judge, party, or full-text search | `case_law_search`, then read `judgment://{slug}/header` for parties / judges / citations, `judgment://{slug}/index` for the paragraph list, `judgment://{slug}/para/{eId}` for a single paragraph in LegalDocML |
-| **An Act, SI, or section** at a point in time, with territorial extent | `legislation_search`, `legislation_get_toc`, `legislation_get_section` |
-| **What MPs and Lords have said** on a topic | `parliament_search_hansard` (top 4 ranked contributions; see caveat below), then `hansard://debate/{ext_id}/header` for the full debate around any hit |
-| **The scope of parliamentary attention** on a topic — how many debates, in which chambers, when, which top debates | `parliament_policy_position_summary` |
-| **A specific MP / Lord's contributions** on a topic, with their role at the time | `parliament_find_member`, then `parliament_member_debates`, then `hansard://member/{id}/biography` for posts with start / end dates |
-| **A member's registered financial interests** | `parliament_member_interests` |
-| **A Bill's stages, sponsors, publications** | `bills_search_bills`, `bills_get_bill` |
-| **How members voted on a division** | `votes_search_divisions`, `votes_get_division` |
-| **Select committee membership and evidence submissions** | `committees_search_committees`, `committees_get_committee`, `committees_search_evidence` |
-| **OSCOLA citations** parsed from a brief or judgment, with canonical URLs | `citations_parse`, `citations_resolve`, `citations_network` |
-| **VAT rate, MTD status, HMRC guidance - API key required** | `hmrc_get_vat_rate`, `hmrc_check_mtd_status`, `hmrc_search_guidance` |
+| **case_law** | UK court judgments from TNA Find Case Law — search, paragraph-level reads, in-document grep |
+| **legislation** | Acts and Statutory Instruments from legislation.gov.uk — search, section retrieval with territorial extent and in-force signals, point-in-time historical reads |
+| **parliament** | Hansard debates and contributions, deterministic facet aggregates, debate→divisions chain, OSCOLA column-citation lookup, member biographies, petitions |
+| **bills** | Parliamentary Bills — stages, sponsors, publications |
+| **votes** | Commons and Lords division records with per-member voting |
+| **committees** | Select committees, membership, oral and written evidence |
+| **citations** | Pure OSCOLA citation parser — no network, self-contained |
+| **hmrc** | UK VAT rate lookups, Making Tax Digital status, GOV.UK guidance search |
 
-Four prompts (`/legislation_summarise_act`, `/legislation_compare_legislation`, `/parliament_policy_reception_review`, `/parliament_member_record_on_topic`) bundle multi-step workflows for common research tasks. Invoke them by name in any MCP-aware client. 
-
-### How to use it, in practice
-
-Ask your agent what you need. The agent picks the right tools. A few patterns:
-
-- **"Pull *Donoghue v Stevenson* [1932] AC 562 and tell me which paragraphs cite *Heaven v Pender*."** → `citations_resolve` + `case_law_grep_judgment`.
-- **"What does the Renters' Rights Act 2025 say about no-fault evictions?"** → `legislation_search` to find the Act, `legislation_get_toc` to locate the section, `legislation_get_section` to read it with extent.
-- **"How was the Renters' Rights Bill debated in committee?"** → `parliament_policy_position_summary` with `topic="Renters' Rights Bill"` to see all debates, then `hansard://debate/{ext_id}/header` on the top debate to read the contribution sequence in order.
-- **"Has the Supreme Court considered s.21 Housing Act 1988?"** → `case_law_search` with the section reference, then `case_law_grep_judgment` within each hit for the actual treatment.
-- **"Build me an OSCOLA citation table for the cases this judgment cites."** → `citations_network` against the judgment's slug.
-
-### Worked example — the Renters' Rights Act 2025
-
-You're advising on a landlord's eviction-notice exposure under the new regime. A reasonable research path your agent might take, with the tools at each step:
-
-1. **The statute.** `legislation_search(query="Renters' Rights")` returns the Act. `legislation_get_toc` lists its parts and sections. `legislation_get_section` returns the relevant section's text with its extent (England-only, in most cases — important to confirm).
-2. **The legislative history.** `bills_search_bills(query="Renters' Rights")` returns the Bill record. `bills_get_bill` returns its stages, sponsors, and committee publications.
-3. **What was argued in Parliament.** `parliament_policy_position_summary(topic="Renters' Rights Bill")` returns corpus totals (how many contributions, debates, divisions) and the top debates with their `debate_ext_id`. For any debate of interest, read `hansard://debate/{ext_id}/header` to see the ordered contribution index — speaker, role, column reference, preview — and pull individual contributions via `hansard://debate/{ext_id}/contribution/{contribution_ext_id}` for the full text with citation metadata.
-4. **The votes.** `votes_search_divisions(query="Renters' Rights")` lists the division records. `votes_get_division` returns the per-member vote breakdown — useful to see who broke whip.
-5. **The case law (where any).** `case_law_search(query="Renters' Rights Act 2025")` for any judgments already citing the Act. `case_law_grep_judgment` for the exact paragraphs that treat each section.
-6. **Citations for your brief.** Pass your draft text into `citations_parse` to get a clean OSCOLA-formatted citation list with canonical URLs.
-
-Every Hansard contribution returns the `attributed_to` string ("The Minister of State, ... (Lord X) (Lab)"), the `column_ref`, the date, the debate title, and a public hansard.parliament.uk URL — everything you need to footnote in a brief.
-
-### Important constraints to know
-
-- **Territorial extent always matters.** `legislation_get_section` exposes the `extent` field. Acts that apply in England and Wales do not automatically apply in Scotland or Northern Ireland. Always read this before citing a section as binding in a jurisdiction.
-- **Hansard's `/search.json` caps at 4 contributions per query, regardless of the `limit` parameter.** This is an upstream API limitation. The four results returned are the top-ranked across the corpus, and `total_corpus` on the response tells you how many matches exist overall. For breadth, escalate to `parliament_policy_position_summary` for debate-level scope, then drill into specific debates via the `hansard://debate/{ext_id}/header` resource which lists *all* contributions in that debate in order.
-- **What this server does not do.** It does not classify a member as supporting or opposing a policy, summarise a judgment's outcome in your client's favour, or recommend an argumentative line. Those are interpretive acts. The server returns the primary source verbatim with citation metadata; your agent and your judgement do the legal work.
-- **Caching.** Judgments, statutes, debates, and member biographies are cached at the gateway for one hour. Two lawyers connecting to the hosted server share the same cache — if one of you fetches a heavy debate, the next reader gets it instantly. The cache does not affect tool-call results from search endpoints, only resource reads.
-- **Legislation.gov.uk WAF.** Some heavy Acts (notably the Companies Act 2006) intermittently fail on the hosted server due to upstream WAF rules that block our cloud IP range. The local install (`uvx uk-legal-mcp`) runs on your own IP and bypasses this. If a section fetch fails on the hosted server, try the local install or use `legislation_search(fulltext=True)` for a workaround.
+Plus a small set of `judgment://`, `legislation://`, and `hansard://` URI-addressed resources for content the LLM can read on demand without bloating tool responses, and four orchestration prompts for common research workflows.
 
 ---
 
-## Tools
+## A lawyer's workflow
+
+This server is a data pipe. It returns what the sources say, with citations. It does not interpret the law, classify members' positions, or recommend a research strategy — your agent does that work on your behalf.
+
+A realistic end-to-end run: **advising a Manchester landlord on their eviction-notice exposure under the new Renters' Rights regime**, including verifying a column citation an opponent quoted at you.
+
+The lawyer's prompt to their agent:
+
+> *"My client is a landlord with a private assured shorthold tenancy started in 2020, dwelling in Manchester. Can he still serve a Section 21 notice? I also need to check what was said about no-fault evictions in the Lords debate around 14 October 2025, and the divisions held. Opposing counsel cites HL Deb 14 Oct 2025, vol 849, col 200 — verify what's actually at that column."*
+
+A reasonable path the agent walks — and what the server returns at each step:
+
+1. **The statute** — `legislation_get_section(type="ukpga", year=1988, number=50, section="21")`. The response carries `extent` (England + Wales — confirms the Manchester tenancy is in scope, Scotland is not), `in_force` (False — the section is marked repealed in CLML via `<Repeal RetainText="true">` from Renters' Rights Act 2025), and `version_date` (the date the repeal commenced, not 1988's original enactment).
+2. **The new Act** — `legislation_search(query="Renters' Rights")` then `legislation_get_toc` to locate commencement / transitional provisions, then `legislation_get_section` for the substantive sections.
+3. **The parliamentary debate** — `parliament_search_hansard(query="Renters' Rights Bill")`. One call returns the corpus envelope: how many contributions, debates, divisions, written answers across the whole record, plus previews of the top debates and divisions touching the topic. Pick the relevant Lords debate from `top_debates`.
+4. **The full debate** — read `hansard://debate/{ext_id}/header` for the ordered contribution index (every contribution carrying its citable column number via carry-forward), then `hansard://debate/{ext_id}/contribution/{ext_id}` for the full text of any specific intervention.
+5. **The divisions held** — `parliament_get_debate_divisions(debate_ext_id=...)`. Returns each formal vote with motion text, result, ayes/noes counts, and division IDs that chain into `votes_get_division` for the per-member voting record.
+6. **Verifying opposing counsel's citation** — `parliament_lookup_by_column(column_number="200", volume_number=849, house="Lords")`. Resolves the OSCOLA footnote directly to its debate, returning the `debate_ext_id` that chains into `hansard://debate/{ext}/header` so you read the exact contribution opposing counsel quoted.
+7. **The case law** — `case_law_search(query="Renters' Rights Act 2025")` for judgments already citing the Act, `case_law_grep_judgment(slug=..., pattern=...)` for the paragraphs that actually treat each section.
+8. **Citations for the brief** — pass your draft into `citations_parse` for a clean OSCOLA-formatted list with canonical URLs.
+
+Every response carries the metadata needed for an OSCOLA footnote: `attributed_to`, `column_ref`, citable column numbers, debate title, sitting date, public Hansard URL. The server returns the primary source verbatim — your agent and your judgement do the legal work.
+
+### Example output
+
+> *Live output from the workflow above will be inserted here once the smoke test is run.*
+
+```
+<!-- PASTE LIVE SMOKE OUTPUT FROM A REAL AGENT SESSION HERE -->
+```
+
+---
+
+## Tools reference
+
+Concise one-liners. Inputs and output shapes live in the MCP tool schema; this table answers "which tool, for what?".
 
 ### Case Law
 
 | Tool | What it does |
-|------|-------------|
-| `case_law_search` | Full-text search of UK judgments. Filter by court, judge, party, date range. |
-| `case_law_grep_judgment` | Find paragraphs in a judgment matching a pattern. Returns `{eId, snippet, match}` per hit. |
-
-Resource templates (read via `resources/read` or the `read_resource` tool generated by `ResourcesAsTools`):
-
-| URI template | Returns |
 |---|---|
-| `judgment://{slug*}/header` | Metadata header (parties, judges, citation). ~1k tokens. |
-| `judgment://{slug*}/index` | Paragraph eId + first-line per row. ~4k tokens. Walk this to discover paragraphs. |
-| `judgment://{slug*}/para/{eId}` | A single paragraph including its sub-paragraphs. 400–1700 tokens. |
+| `case_law_search` | Full-text search of UK judgments. Filter by court, judge, party, date range. |
+| `case_law_grep_judgment` | Pattern-match within a judgment; returns `{eId, snippet, match}` per hit. |
+
+| Resource | Returns |
+|---|---|
+| `judgment://{slug*}/header` | Metadata: parties, judges, neutral citation. |
+| `judgment://{slug*}/index` | Paragraph eId + first-line per row. Walk to discover. |
+| `judgment://{slug*}/para/{eId}` | A single paragraph with its sub-paragraphs. |
 
 Upstream: [TNA Find Case Law](https://caselaw.nationalarchives.gov.uk/) (Atom/XML). Rate limit: 1,000 req/5 min. Cached 1 hour.
 
 ### Legislation
 
 | Tool | What it does |
-|------|-------------|
-| `legislation_search` | Search Acts of Parliament and Statutory Instruments on legislation.gov.uk. |
-| `legislation_get_toc` | Table of contents for an Act — parts, chapters, sections, schedules. |
-| `legislation_get_section` | Retrieve a specific section with territorial extent, in-force status, and version date. |
-
-Resource templates (alternative to the tools above for clients that prefer URI-addressed reads):
-
-| URI template | Returns |
 |---|---|
-| `legislation://{type}/{year}/{number}` | Full Act/SI as CLML XML. |
-| `legislation://{type}/{year}/{number}/section/{section}` | A specific section as CLML XML. |
-| `legislation://{type}/{year}/{number}/toc` | Flat `id: title` lines for the table of contents. |
-| `legislation://{type}/{year}/{number}/{date}` | Point-in-time CLML for a YYYY-MM-DD date. |
+| `legislation_search` | Find Acts and SIs by keyword. |
+| `legislation_get_toc` | Table of contents for an Act — parts, chapters, sections, schedules. |
+| `legislation_get_section` | A specific section with `extent`, `in_force`, `version_date`, and either CLML XML or HTML fallback. |
 
-Upstream: [legislation.gov.uk](https://www.legislation.gov.uk/) (CLML XML + Atom feed). Cached 24 hours. Uses curl_cffi with Chrome impersonation to bypass WAF challenges. When the XML API is blocked, `legislation_get_section` falls back to the public HTML page and sets `source_format: "html_fallback"` — metadata fields (`extent`, `in_force`, `version_date`) will be null/empty in that case. WAF blocking primarily affects the hosted server's IP ranges; the local stdio install (`uvx uk-legal-mcp`) runs on your own IP and is rarely affected.
+| Resource | Returns |
+|---|---|
+| `legislation://{type}/{year}/{number}/section/{section}{?date}` | CLML XML for a section; optional point-in-time date. |
+| `legislation://{type}/{year}/{number}/toc{?date}` | Flat `id: title` table of contents. |
 
-**Note:** Always check the `extent` field. A section may apply to England and Wales but not Scotland or Northern Ireland.
+Upstream: [legislation.gov.uk](https://www.legislation.gov.uk/) (CLML XML + Atom feed). Cached 24 hours. Uses curl_cffi with Chrome impersonation to bypass WAF challenges; falls back to HTML when the XML endpoint is blocked.
 
 ### Parliament
 
 | Tool | What it does |
-|------|-------------|
-| `parliament_search_hansard` | Search Hansard contributions by exact phrase. Returns citation-grade metadata per contribution: `attributed_to`, `column_ref`, `debate_id`, `debate_ext_id`, `contribution_ext_id`, public Hansard URL, plus party / house breakdown and `total_corpus` on the result. Also surfaces the corpus envelope (`total_debates`, `total_divisions`, `total_written_answers`, etc.) and previews of `top_debates` + `top_divisions` in one call. Supports `from_date`, `to_date`, `house`, `text_mode=preview\|full`. |
-| `parliament_policy_position_summary` | Deterministic facet counts on a topic — no LLM, no editorial labels. Returns by-party / by-house / by-section / by-year / by-month breakdowns, top contributors, and top debates (each with `debate_ext_id` for resource lookup). Use to scope the conversation before drilling into specific contributions. |
-| `parliament_get_debate_divisions` | Divisions (formal votes) held within a specific debate. Pass `debate_ext_id`; returns each division's id (chains to `votes_get_division`), motion text, result, and aye/noe counts. Empty list for the typical no-vote case. |
-| `parliament_lookup_by_column` | Resolve an OSCOLA Hansard citation to a debate. Pass `column_number` + `volume_number` (and optional `house`). The endpoint only resolves Bound Volume citations — Daily Part columns require reading the `hansard://debate/{ext}/header` resource's contribution index. |
-| `parliament_find_member` | Look up an MP or Lord by name. Returns member ID for use with `member_debates`. |
-| `parliament_member_debates` | Retrieve a specific member's Hansard contributions, optionally filtered by topic. |
-| `parliament_member_interests` | Get a member's registered financial interests (donations, shareholdings, etc.). |
-| `parliament_search_petitions` | Search UK Parliament petitions by keyword. |
+|---|---|
+| `parliament_search_hansard` | Search Hansard contributions; returns citation-grade metadata per contribution PLUS a corpus envelope (totals + top_debates/top_divisions previews). |
+| `parliament_policy_position_summary` | Deterministic facet counts on a topic — by house, section, year, top debates. No LLM, no editorial labels. |
+| `parliament_get_debate_divisions` | Divisions held within a debate. Chain via `id` to `votes_get_division`. Empty list when no votes. |
+| `parliament_lookup_by_column` | Resolve an OSCOLA Hansard citation (column + volume) to its debate. Bound-volume citations only. |
+| `parliament_find_member` | Name → integer member ID. |
+| `parliament_member_debates` | One member's Hansard contributions, optionally filtered by topic. |
+| `parliament_member_interests` | A member's registered financial interests. |
+| `parliament_search_petitions` | UK Parliament petitions by keyword. |
 
-| Resource | What it returns |
-|----------|-----------------|
-| `hansard://debate/{debate_ext_id}/header` | Debate overview + ordered contribution index (`order`, `contribution_ext_id`, `attributed_to`, `column_ref`, preview). ~3–8k tokens. |
-| `hansard://debate/{debate_ext_id}/contribution/{contribution_ext_id}` | A single contribution's full text + metadata + column reference, extracted from the cached parent debate. ~200–2000 tokens. |
-| `hansard://member/{member_id}/biography` | Members API biography: government posts, opposition posts, committee memberships, party affiliations, each with start/end dates so callers can resolve a member's role at the time of any contribution. ~2–5k tokens. |
+| Resource | Returns |
+|---|---|
+| `hansard://debate/{ext_id}/header` | Debate overview + ordered contribution index with citable column numbers via carry-forward. |
+| `hansard://debate/{ext_id}/contribution/{ext_id}` | A single contribution's full text + metadata. |
+| `hansard://member/{id}/biography` | Government / opposition / committee posts with start/end dates so you can resolve a member's role at the time of any contribution. |
 
-Upstream: [hansard-api.parliament.uk](https://hansard-api.parliament.uk) + [members-api.parliament.uk](https://members-api.parliament.uk) + [petition.parliament.uk](https://petition.parliament.uk). Debate / contribution / biography resources cached 1 hour at the gateway.
-
-**Breaking change in v0.5.0:** The previous `parliament_vibe_check` tool (LLM-sampled sentiment classifier that labelled named MPs as supporters / opponents from short snippets) has been removed. Its editorial framing now lives in the `policy_reception_review` prompt, executed by the *client's* LLM with explicit instructions never to label members as for/against on snippet evidence. Its evidence layer is absorbed into the enriched `parliament_search_hansard` and the new `hansard://` resources.
+Upstream: [hansard-api.parliament.uk](https://hansard-api.parliament.uk) + [members-api.parliament.uk](https://members-api.parliament.uk) + [petition.parliament.uk](https://petition.parliament.uk). Cached 1 hour at the gateway.
 
 ### Bills
 
 | Tool | What it does |
-|------|-------------|
-| `bills_search_bills` | Search current and historical parliamentary bills by keyword, session, or type. |
-| `bills_get_bill` | Get full bill detail — stages, sponsors, publications. |
+|---|---|
+| `bills_search_bills` | Search current and historical Bills by keyword, session, or type. |
+| `bills_get_bill` | Full bill detail — stages, sponsors, publications. |
 
 Upstream: [bills-api.parliament.uk](https://bills-api.parliament.uk). Cached 1 hour.
 
 ### Votes
 
 | Tool | What it does |
-|------|-------------|
-| `votes_search_divisions` | Search Commons and Lords division records by keyword or date. |
-| `votes_get_division` | Get full division detail — vote counts, how each member voted. |
+|---|---|
+| `votes_search_divisions` | Search Commons and Lords divisions by keyword or date. |
+| `votes_get_division` | Full division detail — vote counts, per-member voting record. |
 
 Upstream: [commonsvotes-api.parliament.uk](https://commonsvotes-api.parliament.uk) + [lordsvotes-api.parliament.uk](https://lordsvotes-api.parliament.uk). Cached 24 hours.
 
 ### Committees
 
 | Tool | What it does |
-|------|-------------|
-| `committees_search_committees` | Search parliamentary select committees by keyword. |
-| `committees_get_committee` | Get committee detail — membership, sub-committees. |
-| `committees_search_evidence` | Search oral and written evidence submissions to committees. |
+|---|---|
+| `committees_search_committees` | Select committees by keyword. |
+| `committees_get_committee` | Committee detail — membership, sub-committees. |
+| `committees_search_evidence` | Oral and written evidence submissions. |
 
 Upstream: [committees-api.parliament.uk](https://committees-api.parliament.uk). Cached 1 hour.
 
 ### Citations
 
 | Tool | What it does |
-|------|-------------|
-| `citations_parse` | Extract all OSCOLA citations from free text. Resolves to canonical URLs. Disambiguates bare court codes via LLM sampling. |
-| `citations_resolve` | Parse and resolve a single citation string to its canonical URL. |
-| `citations_network` | Fetch a judgment from TNA and map every citation within it — cases, legislation, SIs, EU law. |
+|---|---|
+| `citations_parse` | Extract OSCOLA citations from free text. Resolves to canonical URLs. |
+| `citations_resolve` | Parse and resolve a single citation string. |
+| `citations_network` | Fetch a judgment and map every citation within — cases, legislation, SIs, EU law. |
 
-Self-contained. No external API. Zero network dependency (except `citations_network` which fetches the judgment XML).
+Self-contained. No external API (except `citations_network`, which fetches the judgment XML).
 
 **Supported citation formats:**
 
 | Format | Example |
-|--------|---------|
+|---|---|
 | Neutral citation | `[2024] UKSC 12` |
 | Law report (with or without volume) | `[2024] 1 WLR 100`, `[1932] AC 562` |
 | Legislation section | `s.47 Companies Act 2006` |
@@ -287,25 +230,34 @@ Self-contained. No external API. Zero network dependency (except `citations_netw
 ### HMRC
 
 | Tool | What it does |
-|------|-------------|
-| `hmrc_get_vat_rate` | VAT rate lookup for any commodity or service. Static table current as of Autumn Statement 2023. |
-| `hmrc_check_mtd_status` | Check Making Tax Digital VAT mandate status for a VRN. Requires HMRC OAuth credentials. |
+|---|---|
+| `hmrc_get_vat_rate` | VAT rate lookup for any commodity or service. |
+| `hmrc_check_mtd_status` | Check Making Tax Digital VAT mandate status for a VRN. Requires HMRC OAuth. |
 | `hmrc_search_guidance` | Search GOV.UK for HMRC guidance documents. |
 
-`hmrc_get_vat_rate` and `hmrc_search_guidance` require no credentials. `hmrc_check_mtd_status` requires `HMRC_CLIENT_ID` and `HMRC_CLIENT_SECRET` — register at [developer.service.hmrc.gov.uk](https://developer.service.hmrc.gov.uk). Defaults to sandbox; set `HMRC_API_BASE=https://api.service.hmrc.gov.uk` for production.
+`hmrc_check_mtd_status` requires `HMRC_CLIENT_ID` and `HMRC_CLIENT_SECRET` — register at [developer.service.hmrc.gov.uk](https://developer.service.hmrc.gov.uk). Defaults to sandbox; set `HMRC_API_BASE=https://api.service.hmrc.gov.uk` for production.
+
+### Prompts
+
+Workflow templates exposed as tools via `PromptsAsTools` (for ChatGPT) and natively on protocol-aware clients (Claude, Inspector). All produce citable evidence packs; none classify positions or recommend an argumentative line.
+
+| Prompt | Module | What it produces |
+|---|---|---|
+| `summarise_act` | legislation | Structured summary of a UK Act or SI. |
+| `compare_legislation` | legislation | Comparative analysis of two pieces of legislation on a topic. |
+| `policy_reception_review` | parliament | Citation-grade review of how a policy topic is being received in Parliament. |
+| `member_record_on_topic` | parliament | Citable evidence pack of a named member's contributions on a topic — their own words, footnoted. |
 
 ---
 
-## Prompts
+## Important constraints
 
-Four workflow prompts are available for multi-step legal research. Exposed as tools via `PromptsAsTools` for ChatGPT; accessible natively on protocol-aware clients (Claude, Inspector).
-
-| Prompt | Module | Description |
-|--------|--------|-------------|
-| `summarise_act` | legislation | Structured summary of a UK Act or SI |
-| `compare_legislation` | legislation | Comparative analysis of two pieces of legislation on a topic |
-| `policy_reception_review` | parliament | Citation-grade review of how a policy topic is being received in Parliament. Orchestrates the deterministic tools + `hansard://` resources, never labels named members as supporters / opponents from snippets. |
-| `member_record_on_topic` | parliament | Citable evidence pack of a named member's contributions on a topic — their own words, with attributed_to / date / column_ref / role-at-time. Does not classify their position. |
+- **Territorial extent always matters.** `legislation_get_section` exposes the `extent` field. Acts that apply in England and Wales do not automatically apply in Scotland or Northern Ireland. Read this before citing a section as binding in a jurisdiction.
+- **Hansard's `/search.json` caps at 4 contributions per query** regardless of the `limit` parameter. The four are the top-ranked across the corpus, and `total_corpus` on the response tells you how many matches exist overall. For breadth, use `parliament_policy_position_summary` for debate-level scope, then drill into specific debates via the `hansard://debate/{ext_id}/header` resource which lists *all* contributions in that debate in order.
+- **Verifying opposing counsel's citations** — when a brief cites *HL Deb [date], vol N, col M*, run `parliament_lookup_by_column(column_number="M", volume_number=N, house="Lords")` to resolve the citation to its debate, then read the header resource to find the contribution at the cited column. The endpoint only resolves Bound Volume citations; Daily Part columns shift on consolidation and aren't searchable this way.
+- **What this server does not do.** It does not classify a member as supporting or opposing a policy, summarise a judgment's outcome in your client's favour, or recommend an argumentative line. Those are interpretive acts. The server returns the primary source verbatim with citation metadata; your agent and your judgement do the legal work.
+- **Caching.** Judgments, statutes, debates, and member biographies are cached at the gateway for one hour. Two lawyers connecting to the hosted server share the same cache — if one of you fetches a heavy debate, the next reader gets it instantly.
+- **Legislation.gov.uk WAF.** Some heavy Acts (notably the Companies Act 2006) intermittently fail on the hosted server due to upstream WAF rules that block our cloud IP range. The local install (`uvx uk-legal-mcp`) runs on your own IP and bypasses this.
 
 ---
 
@@ -316,16 +268,16 @@ src/
   gateway.py            FastMCP gateway — mounts all modules, applies middleware
   deps.py               Shared httpx clients (lifespan-managed) + error formatting
   modules/
-    case_law/           TNA Find Case Law (Atom/XML parsing)
+    case_law/           TNA Find Case Law (Atom/XML)
     legislation/        legislation.gov.uk (CLML XML + Atom feed)
-    parliament/         Hansard API + Members API + Petitions (JSON)
+    parliament/         Hansard + Members + Petitions (JSON)
     bills/              Parliamentary Bills API (JSON)
     votes/              Commons + Lords division records (JSON)
     committees/         Select committees + evidence (JSON)
     citations/          OSCOLA regex engine (compiled once, lru_cache)
     hmrc/               HMRC OAuth + GOV.UK search (JSON)
-tests/
-  test_citations.py     35 unit tests — regex patterns, resolution, disambiguation
+references/             Committed upstream API specs (e.g. Hansard Swagger)
+tests/                  Offline tests + the param-conformance audit
 ```
 
 Each module is a standalone `FastMCP` instance mounted into the gateway with a namespace prefix (`case_law_`, `legislation_`, etc.). All modules share a single httpx client pool via the gateway's lifespan context.
@@ -333,14 +285,12 @@ Each module is a standalone `FastMCP` instance mounted into the gateway with a n
 **Middleware stack (gateway level):**
 
 | Middleware | Purpose |
-|-----------|---------|
+|---|---|
 | `ErrorHandlingMiddleware` | Catches unhandled exceptions |
 | `StructuredLoggingMiddleware` | JSON logging with duration and payload size |
 | `PrometheusMiddleware` | Tool call counters + latency histograms (`/metrics`) |
 | `DetailedTimingMiddleware` | Per-tool timing logs |
 | `ResponseCachingMiddleware` | Gateway-level 1hr cache for tools and resources |
-
-**Per-module caching:** `ResponseCachingMiddleware` with TTLs — case_law (1hr), legislation (24hr), bills (1hr), votes (24hr), committees (1hr), hmrc (90 days). Parliament and citations are not cached.
 
 ---
 
@@ -378,7 +328,7 @@ pip install -e '.[test]'  # or: pip install pytest tiktoken
 pytest tests/ -v -k "not live"
 ```
 
-62 tests run offline with no API credentials: 35 citation tests (regex patterns, resolution, disambiguation) and 27 legislation parser tests (CLML XML + HTML fallback parsers, section ID normalisation).
+Offline tests cover OSCOLA citation patterns + resolution + disambiguation, CLML XML and HTML fallback parsers, and the Hansard parameter-conformance audit (which validates every upstream API call against the official Swagger spec at `references/hansard-swagger-v1.json` to catch silent-200 wire-name bugs).
 
 ---
 
@@ -407,3 +357,4 @@ pytest tests/ -v -k "not live"
 - [lxml](https://lxml.de/) (LegalDocML and CLML XML parsing)
 - [Pydantic](https://docs.pydantic.dev/) v2 (input validation, output serialisation)
 - [Fly.io](https://fly.io/) (London region, auto-stop/start)
+</content>
