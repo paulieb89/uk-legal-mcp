@@ -140,6 +140,7 @@ class PrometheusMiddleware(Middleware):
 gateway = FastMCP(
     name="uk-legal-mcp",
     version=_PROJECT_VERSION,
+    website_url="https://github.com/paulieb89/uk-legal-mcp",
     lifespan=http_lifespan,
     instructions=(
         "USE THIS SERVER for any UK legal research question — case law, statutes/SIs, "
@@ -478,18 +479,17 @@ class _AcceptNormalizer:
 def main() -> None:
     """Run the gateway server on Streamable HTTP transport."""
     import uvicorn
-    from fastmcp.server.http import create_streamable_http_app
 
     port = int(os.getenv("PORT", "8080"))
     # stateless_http=True: Lesson 2 — without it, clients hit "Missing
     # session ID" on any request not preceded by initialize on the same
     # machine. Required for safe deploys (machine restart drops sessions)
     # and future horizontal scaling.
-    app = create_streamable_http_app(
-        gateway,
-        streamable_http_path="/mcp",
+    app = gateway.http_app(
+        path="/mcp",
         json_response=True,
         stateless_http=True,
+        transport="streamable-http",
     )
     uvicorn.run(
         _HttpGuard(_AcceptNormalizer(app)),  # guard → normalizer → FastMCP
