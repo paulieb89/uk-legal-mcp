@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from collections import Counter
 
 from ...deps import format_http_error
-from .resources import _item_is_contribution
+from .resources import _item_is_contribution, hansard_source_label
 from .models import (
     ColumnLookupResult,
     DebateDivisions,
@@ -926,15 +926,20 @@ def register_tools(mcp: FastMCP) -> None:
         `relevance_rank` is always null on column-lookup matches (the
         column-search endpoint does not compute relevance scores).
 
+        Each match also carries `source`/`source_code` — the citation's Hansard
+        publication state (1=RollingHansard, 2=DailyHansard, 3=BoundVolume,
+        4=Historic). This tells the lawyer the citation's *finality*, not whether
+        it resolves: resolution is NOT gated on publication state. Daily Part
+        (verified live 2026-05-29: vol 849 / col 200 / Lords), Bound Volume, and
+        Historic (vol 415 / col 200 / Commons, 2003) columns all resolve.
+
         Empty `matches` typically means:
-          - The column is from a Daily Part (not yet consolidated into a Bound
-            Volume). The endpoint only resolves Bound Volume citations
-            (verified live 2026-05-29 — both `Source: 2` (recent) and `Source: 3`
-            (older) debates were probed, only the older one resolves by column).
           - The volume_number is wrong (sometimes opposing counsel cites the
             running-volume number rather than the bound-volume number).
           - The column is in a Written Statement or Written Answer (the
             citation usually has a 'W' suffix like '1162W' — pass it as-is).
+          - The column is very recent and not yet indexed into the upstream
+            column→debate map (rare; retry after consolidation).
 
         Args:
             params: LookupByColumnInput with column_number (string), volume_number
@@ -980,14 +985,19 @@ def register_tools(mcp: FastMCP) -> None:
                 # agree on the count (Obs 173 — single source-of-truth for
                 # "what counts as a contribution").
                 contribution_count: int | None = None
+                source_code: int | None = None
                 try:
                     debate_resp = await client.get(f"{HANSARD_API}/debates/Debate/{ext_id}.json")
                     debate_resp.raise_for_status()
                     debate_payload = debate_resp.json() if debate_resp.content else {}
                     debate_items = debate_payload.get("Items") or []
                     contribution_count = sum(1 for i in debate_items if _item_is_contribution(i))
+                    # The payload's Overview.Source gives the citation's publication
+                    # state for free — surface it so the lawyer sees finality without
+                    # a second fetch of hansard://debate/{ext}/header.
+                    source_code = (debate_payload.get("Overview") or {}).get("Source")
                 except httpx.HTTPError:
-                    # Leave count as None rather than fabricate a zero.
+                    # Leave count/source as None rather than fabricate values.
                     pass
 
                 matches.append(TopDebate(
@@ -998,6 +1008,8 @@ def register_tools(mcp: FastMCP) -> None:
                     house=house_val,
                     relevance_rank=None,  # column-search endpoint does not rank
                     contribution_count=contribution_count,
+                    source_code=source_code,
+                    source=hansard_source_label(source_code),
                 ))
             except (ValueError, TypeError):
                 continue

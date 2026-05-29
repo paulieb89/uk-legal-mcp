@@ -56,3 +56,17 @@ async def test_lookup_by_column_populates_real_contribution_count():
         f"relevance_rank should be None for column-lookup matches, got "
         f"{match.relevance_rank}. The emitter may be populating it incorrectly."
     )
+
+    # Vol 849 is Source:2 DailyHansard — a Daily Part, NOT a Bound Volume. It
+    # resolves anyway: this pins the corrected claim that column resolution is
+    # not gated on publication state, and that the match surfaces provenance.
+    # If this ever flips to 3/BoundVolume, Hansard consolidated the volume —
+    # update the expected value rather than deleting the assertion.
+    assert match.source_code == 2, (
+        f"Expected Source:2 (DailyHansard) for vol 849, got {match.source_code}. "
+        "If 3: the volume was consolidated to a Bound Volume; update the expectation."
+    )
+    assert match.source == "DailyHansard", (
+        f"Expected source label 'DailyHansard', got {match.source!r}. The "
+        "hansard_source_label mapping or the tool wiring may be wrong."
+    )

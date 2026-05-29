@@ -179,6 +179,23 @@ class TopDebate(BaseModel):
             "Null on preview arrays where the secondary fetch is too costly."
         ),
     )
+    source_code: int | None = Field(
+        None,
+        description=(
+            "Raw Hansard Overview.Source ordinal: 1=RollingHansard, 2=DailyHansard, "
+            "3=BoundVolume, 4=Historic. Populated only when the emitting tool fetches the "
+            "debate payload (today: parliament_lookup_by_column); null otherwise."
+        ),
+    )
+    source: str | None = Field(
+        None,
+        description=(
+            "Human-readable Hansard publication state (Swagger Source enum name). Tells a "
+            "lawyer the citation's finality — RollingHansard/DailyHansard are pre-consolidation, "
+            "BoundVolume/Historic are final bound volumes. Does NOT indicate whether the citation "
+            "resolves: column lookup resolves across all four states."
+        ),
+    )
 
 
 class DivisionMatchLite(BaseModel):
@@ -294,10 +311,13 @@ class ColumnLookupResult(BaseModel):
         description=(
             "Debate sections containing the cited column, in upstream relevance "
             "order. Each element's `debate_ext_id` chains to "
-            "hansard://debate/{debate_ext_id}/header. Empty when the citation "
-            "does not resolve — typically because the column is from a Daily "
-            "Part (not yet consolidated into a Bound Volume) or the volume "
-            "number is wrong."
+            "hansard://debate/{debate_ext_id}/header, and carries `source`/"
+            "`source_code` for the citation's publication state. Resolution is "
+            "NOT gated on publication state — Daily Part, Bound Volume, and "
+            "Historic columns all resolve. Empty matches typically mean the "
+            "volume number is wrong (running-volume vs bound-volume number), the "
+            "column is a Written Answer/Statement needing its suffix (e.g. "
+            "'1162W'), or a very recent column not yet indexed upstream."
         ),
     )
 

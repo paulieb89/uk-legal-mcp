@@ -141,6 +141,26 @@ def _item_is_contribution(item: dict) -> bool:
     return bool(item.get("Value"))
 
 
+# Hansard Overview.Source: the Swagger spec declares a 4-value string enum
+# (RollingHansard, DailyHansard, BoundVolume, Historic); the live JSON API
+# serialises it as the 1-indexed ordinal of that enum. Mapping verified against
+# 2000-2025 debates in both Houses (2026-05-29): 2=DailyHansard (2021-2025),
+# 3=BoundVolume (~2006-2019), 4=Historic (<=~2004). 1=RollingHansard is
+# spec-declared but unobserved — the same-day rolling state consolidates to
+# DailyHansard overnight. A closed mapping is justified because the value space
+# comes from the spec, not from probing; the fallback covers any unseen code.
+# Source indicates a citation's publication/finality state, NOT whether it
+# resolves by column — debatebycolumn resolves across all four states.
+HANSARD_SOURCE_LABELS = {1: "RollingHansard", 2: "DailyHansard", 3: "BoundVolume", 4: "Historic"}
+
+
+def hansard_source_label(code) -> str | None:
+    """Map a raw Hansard Overview.Source ordinal to its Swagger enum name."""
+    if code is None:
+        return None
+    return HANSARD_SOURCE_LABELS.get(code, f"Unknown source code {code}")
+
+
 def register_parliament_resources(gateway: FastMCP) -> None:
     """Register the hansard:// resource family on the gateway."""
 
@@ -194,12 +214,13 @@ def register_parliament_resources(gateway: FastMCP) -> None:
             "house": overview.get("House"),
             "location": overview.get("Location"),
             "volume_no": overview.get("VolumeNo"),
-            # source_code is an undocumented integer enum (observed 2 for recent
-            # debates, 3 for older debates). Surfaced raw with no mapping claim —
-            # callers should not assume "Bound Volume" vs "Daily Part" without
-            # verifying against parliament.uk publication conventions. Pairs with
-            # content_last_updated (newly added) for a derivable provenance signal.
+            # source_code is the raw Overview.Source ordinal; `source` is its
+            # Swagger enum name (1=RollingHansard, 2=DailyHansard, 3=BoundVolume,
+            # 4=Historic — see HANSARD_SOURCE_LABELS). Indicates the citation's
+            # publication/finality state, NOT whether it resolves by column.
+            # Pairs with content_last_updated for a full provenance signal.
             "source_code": overview.get("Source"),
+            "source": hansard_source_label(overview.get("Source")),
             "content_last_updated": overview.get("ContentLastUpdated"),
             "previous_debate_ext_id": overview.get("PreviousDebateExtId"),
             "previous_debate_title": (overview.get("PreviousDebateTitle") or "").strip() or None,

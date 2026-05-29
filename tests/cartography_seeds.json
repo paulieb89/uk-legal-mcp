@@ -31,7 +31,7 @@
   "column_volume_house": [
     {"column_number": "200", "volume_number": 849, "house": "Lords"}
   ],
-  "_column_volume_house_note": "Lord Pannick's Motion C1 citation from the Renters' Rights debate. Known-good Bound Volume resolution. Exercises parliament_lookup_by_column.",
+  "_column_volume_house_note": "Lord Pannick's Motion C1 citation from the Renters' Rights debate. Vol 849 is Source:2 DailyHansard (a Daily Part, NOT a Bound Volume) yet resolves cleanly — proves column resolution is not gated on publication state. Exercises parliament_lookup_by_column.",
 
   "topic_phrases": [
     "climate"
