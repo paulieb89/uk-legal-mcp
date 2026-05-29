@@ -20,9 +20,16 @@ Region:    lhr (London) — co-located with UK legal data sources
 """
 
 import asyncio
+import json
 import logging
 import os
 import time
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+try:
+    _PROJECT_VERSION = _pkg_version("uk-legal-mcp")
+except PackageNotFoundError:
+    _PROJECT_VERSION = "0.0.0+dev"
 
 from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware, MiddlewareContext
@@ -132,6 +139,7 @@ class PrometheusMiddleware(Middleware):
 
 gateway = FastMCP(
     name="uk-legal-mcp",
+    version=_PROJECT_VERSION,
     lifespan=http_lifespan,
     instructions=(
         "USE THIS SERVER for any UK legal research question — case law, statutes/SIs, "
@@ -155,6 +163,7 @@ gateway = FastMCP(
         "• citations — OSCOLA citation parsing and resolution (no API key).\n"
         "• hmrc — UK VAT rates, MTD status, HMRC guidance.\n\n"
         "Each module's own instructions cover how to drive its tools. "
+        "Read server://about for upstream APIs, provenance, and operational posture. "
         "All tools are read-only. Judgments and statutes are cached aggressively."
     ),
 )
@@ -229,6 +238,37 @@ gateway.mount(hmrc_mcp,        namespace="hmrc")
 register_case_law_resources(gateway)
 register_legislation_resources(gateway)
 register_parliament_resources(gateway)
+
+
+@gateway.resource(
+    "server://about",
+    name="About this server",
+    description="Provenance, upstream APIs, and operational posture.",
+    mime_type="application/json",
+    annotations={"readOnlyHint": True, "idempotentHint": True},
+    tags={"meta", "transparency"},
+)
+def server_about() -> str:
+    return json.dumps({
+        "name": "uk-legal-mcp",
+        "version": _PROJECT_VERSION,
+        "repo": "https://github.com/paulieb89/uk-legal-mcp",
+        "license": "MIT",
+        "deployment": "fly.io / lhr",
+        "upstreams": [
+            {"module": "case_law",    "api": "caselaw.nationalarchives.gov.uk/atom.xml",                          "auth": "none", "ratelimit": "1000 req / 5 min"},
+            {"module": "legislation", "api": "legislation.gov.uk + lex.lab.i.ai.gov.uk",                          "auth": "none"},
+            {"module": "parliament",  "api": "hansard-api.parliament.uk + members-api + interests-api + petition", "auth": "none"},
+            {"module": "bills",       "api": "bills-api.parliament.uk",                                           "auth": "none"},
+            {"module": "votes",       "api": "commonsvotes-api.parliament.uk + lordsvotes-api.parliament.uk",     "auth": "none"},
+            {"module": "committees",  "api": "committees-api.parliament.uk",                                      "auth": "none"},
+            {"module": "citations",   "api": "none (pure regex)",                                                  "auth": "n/a"},
+            {"module": "hmrc",        "api": "test-api.service.hmrc.gov.uk + gov.uk/api/search.json",             "auth": "OAuth 2.0 (sandbox by default)"},
+        ],
+        "no_llm_in_loop": "this server does not call an LLM; all tool responses are direct from the named APIs",
+        "no_data_retention": "no user query or response data is stored",
+        "all_tools_read_only": True,
+    }, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +382,7 @@ async def metrics_endpoint(request: Request) -> Response:
 @gateway.custom_route("/.well-known/mcp/server-card.json", methods=["GET"])
 async def smithery_server_card(request: Request) -> Response:
     return JSONResponse({
-        "serverInfo": {"name": "uk-legal-mcp", "version": "0.5.0"},
+        "serverInfo": {"name": "uk-legal-mcp", "version": _PROJECT_VERSION},
     }, headers=CORS_HEADERS)
 
 

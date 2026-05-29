@@ -12,7 +12,7 @@
 
 A Model Context Protocol server for UK legal research. One MCP connection wires your AI assistant into UK case law, legislation, parliamentary debates, bills, votes, committees, OSCOLA citation parsing, and HMRC guidance — every response carrying the metadata you'd need to footnote it.
 
-Read-only. No API keys required for the legal sources (HMRC's authenticated endpoint is optional).
+ No API keys required for the legal sources (HMRC's authenticated endpoint is optional).
 
 ---
 
@@ -253,5 +253,19 @@ Workflow templates exposed as tools via `PromptsAsTools` (for ChatGPT) and nativ
 - **Verifying opposing counsel's citations** — when a brief cites *HL Deb [date], vol N, col M*, run `parliament_lookup_by_column(column_number="M", volume_number=N, house="Lords")` to resolve the citation to its debate, then read the header resource to find the contribution at the cited column. The endpoint only resolves Bound Volume citations; Daily Part columns shift on consolidation and aren't searchable this way.
 - **What this server does not do.** It does not classify a member as supporting or opposing a policy, summarise a judgment's outcome in your client's favour, or recommend an argumentative line. Those are interpretive acts. The server returns the primary source verbatim with citation metadata; your agent and your judgement do the legal work.
 - **Legislation.gov.uk WAF.** Some heavy Acts (notably the Companies Act 2006) intermittently fail on the hosted server due to upstream WAF rules that block our cloud IP range. The local install (`uvx uk-legal-mcp`) runs on your own IP and bypasses this.
+
+---
+
+## Releasing
+
+Version is held in `pyproject.toml`. Runtime surfaces (`serverInfo.version`, the Smithery server-card, `server://about`) derive from the installed package via `importlib.metadata`. File-on-disk surfaces (`pyproject.toml` + `server.json` × 2) bump together via `bump-my-version`:
+
+```bash
+uv run bump-my-version bump patch   # 0.5.0 → 0.5.1
+uv run bump-my-version bump minor   # 0.5.0 → 0.6.0
+uv run bump-my-version bump major   # 0.5.0 → 1.0.0
+```
+
+The tool only edits files; it does not commit or tag. After bumping, commit the version files, push, then publish a GitHub release at the new tag — `.github/workflows/release.yml` builds, publishes to PyPI, and deploys to Fly.
 
 
