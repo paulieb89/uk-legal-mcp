@@ -19,12 +19,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from collections import Counter
 
 from ...deps import format_http_error
-from .resources import _item_is_contribution, hansard_source_label
+from .resources import _assign_columns, _item_is_contribution, _strip_html, hansard_source_label
 from .models import (
     ColumnLookupResult,
     DebateDivisions,
     DivisionMatchLite,
     FacetCount,
+    GetDebateContributionsInput,
     GetDebateDivisionsInput,
     HansardContribution,
     HansardSearchResult,
@@ -66,9 +67,16 @@ class HansardSearchInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     query: str = Field(..., description=(
-        "Full phrase to search in Hansard debates. Pass the complete topic, "
-        "e.g. 'short selling regulation' or 'artificial intelligence liability'. "
-        "Searched as an exact phrase — do not truncate to a single keyword."
+        "Phrase to find in Hansard contribution text bodies. Hansard searches the "
+        "words members actually said in their speeches — NOT debate titles, topic "
+        "metadata, or written headlines. Pass tokens that would appear in someone's "
+        "speech: distinctive arguments ('disproportionate sanction'), statutory "
+        "references ('section 21'), or specific phrases. Bill titles (e.g. 'Renters' "
+        "Rights Bill') often DON'T match because members refer to 'the Bill' or "
+        "'this legislation' in their speeches. Tokenised matching: 'housing benefit "
+        "fraud' will match contributions saying 'fraud in housing benefit claims'. "
+        "For 'all contributions in a specific debate' regardless of words used, "
+        "drill via top_debates[].debate_ext_id into parliament_get_debate_contributions."
     ), min_length=1, max_length=500)
     from_date: date | None = Field(None, description="Start date (YYYY-MM-DD)")
     to_date: date | None = Field(None, description="End date (YYYY-MM-DD)")
@@ -107,9 +115,14 @@ class PolicyPositionSummaryInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     topic: str = Field(..., description=(
-        "Phrase to search in Hansard, e.g. 'short selling regulation'. "
-        "Searched as an exact phrase. For broader recall, drop quotes by "
-        "shortening the topic."
+        "Phrase to find in Hansard contribution text bodies for the facet aggregation. "
+        "Same semantics as parliament_search_hansard.query: tokens that appear in "
+        "members' actual speeches, not bill titles or topic metadata. The aggregator "
+        "sweeps top_debates[] returned by /search/Debates.json — those debates are "
+        "matched on the phrase appearing in titles or contribution text, so passing a "
+        "Bill title (e.g. 'Renters' Rights Bill') usually works for THIS tool even "
+        "though it wouldn't for member-level text search, because debate-level matching "
+        "uses metadata in addition to body text."
     ), min_length=2, max_length=200)
     from_date: date | None = Field(None, description="Start date (YYYY-MM-DD)")
     to_date: date | None = Field(None, description="End date (YYYY-MM-DD)")
@@ -133,8 +146,15 @@ class MemberDebatesInput(BaseModel):
 
     member_id: int = Field(..., description="Parliament Members API integer ID. Obtain from parliament_find_member.", ge=1)
     topic: str | None = Field(None, description=(
-        "Optional phrase to filter this member's contributions by topic, "
-        "e.g. 'housing benefit' or 'net zero'. Searched as an exact phrase."
+        "Optional phrase to find in THIS member's contribution text bodies. "
+        "Hansard searches the words the member actually said, NOT the topic or "
+        "title of the debate. Pass tokens this member would have spoken — "
+        "distinctive arguments ('disproportionate sanction'), statutory references "
+        "('section 21'), or motion numbers ('Motion C1') — not the bill's name "
+        "(members rarely say e.g. 'Renters' Rights Bill' verbatim in their speeches). "
+        "If you want 'every contribution this member made in a specific debate' "
+        "regardless of words used, find the debate_ext_id then use "
+        "parliament_get_debate_contributions(debate_ext_id, member_id=...)."
     ))
     offset: int = Field(0, ge=0, le=2000, description=(
         "Number of contributions to skip before this page. Default 0. "
@@ -287,6 +307,85 @@ def _parse_hansard_contributions(data: dict, text_mode: Literal["preview", "full
         except Exception:
             continue
     return contributions
+
+
+def _parse_debate_item_as_contribution(
+    item: dict,
+    overview: dict,
+    column_assignment: dict[int, tuple[int | None, int | None]],
+    item_index: int,
+    max_text_chars: int = 3000,
+) -> HansardContribution | None:
+    """Parse a single /debates/Debate/{ext}.json Items entry into HansardContribution.
+
+    The Items shape differs from /search.json Contributions (no MemberName field,
+    Value instead of ContributionText, ExternalId instead of ContributionExtId, and
+    debate metadata lives on the Overview rather than the item itself), so we can't
+    reuse _parse_hansard_contributions directly.
+
+    `column_assignment` is the result of _assign_columns(items) for the full Items
+    list — we look up this item's carry-forward column_start/end via item_index.
+
+    Returns None on parse failure so the caller can filter and continue.
+    """
+    try:
+        attr = (item.get("AttributedTo") or "").strip()
+        if not attr:
+            return None
+        # Strip role/party suffix to recover the bare name. AttributedTo looks like
+        # "Lord Pannick (CB)" or "The Parliamentary Under-Secretary (Baroness X) (Lab)";
+        # the parenthesised tail is the party.
+        name = attr
+        party = None
+        if "(" in attr and attr.endswith(")"):
+            party = attr[attr.rfind("(") + 1:-1]
+            name = attr[:attr.rfind("(")].strip()
+            # If there's a role wrapper like "The Minister (Lord X)", peel one more.
+            if name.endswith(")") and "(" in name:
+                name = name[name.rfind("(") + 1:-1].strip()
+
+        text = _strip_html(item.get("Value") or "")
+        if not text:
+            return None
+
+        sitting_iso = (overview.get("Date") or "1970-01-01")[:10]
+        sitting_date = date.fromisoformat(sitting_iso)
+        house_raw = overview.get("House") or "Commons"
+        house = house_raw if house_raw in ("Commons", "Lords") else "Commons"
+        debate_ext_id = overview.get("ExtId") or ""
+        debate_id = _safe_int(overview.get("Id"), 0)
+        debate_title = (overview.get("Title") or "Unknown").strip() or "Unknown"
+        chamber_section = overview.get("Location") or f"{house} Chamber"
+        contribution_ext_id = item.get("ExternalId") or ""
+
+        col_start, col_end = column_assignment.get(item_index, (None, None))
+
+        url = _hansard_contribution_url(
+            house, sitting_date, debate_ext_id, contribution_ext_id, debate_title
+        ) if debate_ext_id and contribution_ext_id else ""
+
+        return HansardContribution(
+            member_name=name or "Unknown",
+            member_id=item.get("MemberId"),
+            attributed_to=attr,
+            party=party,
+            constituency=None,
+            date=sitting_date,
+            debate_title=debate_title,
+            debate_id=debate_id,
+            debate_ext_id=debate_ext_id,
+            contribution_ext_id=contribution_ext_id,
+            column_ref=item.get("HansardSection") or None,
+            column_start=col_start,
+            column_end=col_end,
+            chamber_section=chamber_section,
+            house=house,
+            rank=None,
+            text=text[:max_text_chars],
+            url=url,
+        )
+    except Exception:
+        return None
 
 
 def _compute_search_facets(contributions: list[HansardContribution]) -> tuple[dict[str, int], dict[str, int], tuple[date, date] | None]:
@@ -486,7 +585,7 @@ def register_tools(mcp: FastMCP) -> None:
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {
-            "searchTerm": f'"{params.query}"',
+            "searchTerm": params.query,
             "take": params.limit,
             "skip": params.offset,
         }
@@ -582,7 +681,7 @@ def register_tools(mcp: FastMCP) -> None:
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
 
         # Pull corpus-wide envelope counts from /search.json (one call).
-        envelope_qp: dict = {"searchTerm": f'"{params.topic}"'}
+        envelope_qp: dict = {"searchTerm": params.topic}
         if params.from_date:
             envelope_qp["startDate"] = params.from_date.isoformat()
         if params.to_date:
@@ -724,7 +823,7 @@ def register_tools(mcp: FastMCP) -> None:
             "skip": params.offset,
         }
         if params.topic:
-            qp["searchTerm"] = f'"{params.topic}"'
+            qp["searchTerm"] = params.topic
         resp = await client.get(f"{HANSARD_API}/search.json", params=qp)
         resp.raise_for_status()
         contributions = _parse_hansard_contributions(resp.json())
@@ -903,6 +1002,79 @@ def register_tools(mcp: FastMCP) -> None:
         return DebateDivisions(
             debate_ext_id=params.debate_ext_id,
             divisions=divisions,
+        )
+
+    @mcp.tool(
+        name="get_debate_contributions",
+        annotations={"title": "Get Contributions In A Debate", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    )
+    async def parliament_get_debate_contributions(
+        params: GetDebateContributionsInput, ctx: Context
+    ) -> MemberDebatesResult:
+        """Drill into a debate to retrieve contributions, optionally filtered by member.
+
+        This is the canonical path when you want "everything a member said in this
+        debate" regardless of which words they used — the text-search-based tools
+        (parliament_member_debates, parliament_search_hansard) match contribution
+        TEXT BODIES, so a member who spoke in a debate but didn't say your topic
+        phrase verbatim is filtered out. This tool fetches the debate's full Items
+        list and filters by MemberId, so it returns every contribution by that
+        member in the debate regardless of vocabulary.
+
+        Composition pattern — "what did <peer> say about <topic> in the Lords?":
+          1. parliament_find_member(name) → member_id
+          2. Find the debate by ANY path:
+               - parliament_search_hansard(query=<distinctive phrase or title fragment>)
+                 → top_debates[].debate_ext_id
+               - parliament_lookup_by_column(column, volume, house) → matches[].debate_ext_id
+          3. parliament_get_debate_contributions(debate_ext_id, member_id=<member_id>)
+             → the member's actual contributions in that debate. Quotes are retrieved
+             verbatim from the wire; no fallback to training-data reconstruction.
+
+        Without `member_id`, returns every contribution in the debate (typical:
+        100-200 items) — useful for "what was discussed in this debate?" sweeps.
+
+        Args:
+            params: GetDebateContributionsInput with debate_ext_id (required) and
+                optional member_id filter.
+        """
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        try:
+            resp = await client.get(
+                f"{HANSARD_API}/debates/Debate/{params.debate_ext_id}.json"
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise RuntimeError(format_http_error(e)) from e
+
+        payload = resp.json() if resp.content else {}
+        overview = payload.get("Overview") or {}
+        items = payload.get("Items") or []
+
+        # Carry-forward column data must be computed across the FULL Items list
+        # (filtering first would lose column boundaries the parser needs).
+        column_assignment = _assign_columns(items)
+
+        contributions: list[HansardContribution] = []
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            if not _item_is_contribution(item):
+                continue
+            if params.member_id is not None and item.get("MemberId") != params.member_id:
+                continue
+            parsed = _parse_debate_item_as_contribution(item, overview, column_assignment, idx)
+            if parsed is not None:
+                contributions.append(parsed)
+
+        return MemberDebatesResult(
+            member_id=params.member_id if params.member_id is not None else 0,
+            topic=None,
+            offset=0,
+            limit=len(contributions),
+            total=len(contributions),
+            has_more=False,
+            contributions=contributions,
         )
 
     @mcp.tool(

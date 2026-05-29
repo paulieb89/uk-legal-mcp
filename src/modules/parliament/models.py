@@ -252,6 +252,32 @@ class GetDebateDivisionsInput(BaseModel):
     ), min_length=8)
 
 
+class GetDebateContributionsInput(BaseModel):
+    """Input for the debate-drill-in primitive.
+
+    Pair with any tool that surfaces debate_ext_id (parliament_search_hansard's
+    top_debates, parliament_lookup_by_column matches, parliament_get_debate_divisions)
+    to retrieve the contributions inside that debate. Optional member_id filter
+    returns only that member's contributions — the canonical path when the
+    member spoke in a debate but didn't say your topic phrase verbatim and so
+    isn't returned by text-body-search tools.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    debate_ext_id: str = Field(..., description=(
+        "Debate GUID (DebateSectionExtId). Chain from parliament_search_hansard "
+        "top_debates[].debate_ext_id, parliament_lookup_by_column matches[].debate_ext_id, "
+        "or any tool that surfaces a debate identifier."
+    ), min_length=8)
+    member_id: int | None = Field(None, description=(
+        "Optional integer Members API ID. When given, only that member's "
+        "contributions in this debate are returned — regardless of which words "
+        "they used. Resolves via parliament_find_member. When omitted, every "
+        "contribution in the debate is returned (typical debate: 100-200 items)."
+    ), ge=1)
+
+
 class DebateDivisions(BaseModel):
     """Divisions held within a specific debate.
 
