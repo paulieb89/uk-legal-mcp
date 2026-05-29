@@ -170,7 +170,7 @@ Every response carries the metadata needed for an OSCOLA footnote: `attributed_t
 | `parliament_search_hansard` | Search Hansard contributions; returns citation-grade metadata per contribution PLUS a corpus envelope (totals + top_debates/top_divisions previews). |
 | `parliament_policy_position_summary` | Deterministic facet counts on a topic — by house, section, year, top debates. No LLM, no editorial labels. |
 | `parliament_get_debate_divisions` | Divisions held within a debate. Chain via `id` to `votes_get_division`. Empty list when no votes. |
-| `parliament_lookup_by_column` | Resolve an OSCOLA Hansard citation (column + volume) to its debate. Bound-volume citations only. |
+| `parliament_lookup_by_column` | Resolve a Hansard column citation (column + volume) to its debate. Works for any era — current Daily Part records, consolidated Bound Volumes, and pre-2005 Historic Hansard. Each match tells you which kind. |
 | `parliament_find_member` | Name → integer member ID. |
 | `parliament_member_debates` | One member's Hansard contributions, optionally filtered by topic. |
 | `parliament_member_interests` | A member's registered financial interests. |
@@ -254,7 +254,7 @@ Workflow templates exposed as tools via `PromptsAsTools` (for ChatGPT) and nativ
 ## Important constraints
 
 - **Territorial extent always matters.** `legislation_get_section` exposes the `extent` field. Acts that apply in England and Wales do not automatically apply in Scotland or Northern Ireland. Read this before citing a section as binding in a jurisdiction.
-- **Verifying opposing counsel's citations** — when a brief cites *HL Deb [date], vol N, col M*, run `parliament_lookup_by_column(column_number="M", volume_number=N, house="Lords")` to resolve the citation to its debate, then read the header resource to find the contribution at the cited column. The endpoint only resolves Bound Volume citations; Daily Part columns shift on consolidation and aren't searchable this way.
+- **Verifying opposing counsel's citations** — when a brief cites *HL Deb [date], vol N, col M*, run `parliament_lookup_by_column(column_number="M", volume_number=N, house="Lords")` to resolve the citation to its debate, then read the header resource to find the contribution at the cited column. Citations from any era resolve — current Daily Part records, finalised Bound Volumes, and pre-2005 Historic Hansard. Each match tells you which Hansard format the volume sits in. Empty matches usually mean the volume number is wrong (e.g. opposing counsel quoted the running session-volume number rather than the bound-volume one) or the citation is to a Written Answer and needs the `W` suffix.
 - **What this server does not do.** It does not classify a member as supporting or opposing a policy, summarise a judgment's outcome in your client's favour, or recommend an argumentative line. Those are interpretive acts. The server returns the primary source verbatim with citation metadata; your agent and your judgement do the legal work.
 - **Legislation.gov.uk WAF.** Some heavy Acts (notably the Companies Act 2006) intermittently fail on the hosted server due to upstream WAF rules that block our cloud IP range. The local install (`uvx uk-legal-mcp`) runs on your own IP and bypasses this.
 
