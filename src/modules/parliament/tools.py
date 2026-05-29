@@ -7,7 +7,6 @@ Upstream APIs (all public, no auth required):
   - members-api.parliament.uk — MPs and Lords lookup
 """
 
-import json
 import re
 from datetime import date
 from typing import Literal
@@ -16,18 +15,28 @@ import httpx
 from fastmcp import FastMCP, Context
 from pydantic import BaseModel, ConfigDict, Field
 
+from collections import Counter
+
 from ...deps import format_http_error
 from .models import (
+    ColumnLookupResult,
+    DebateDivisions,
+    DivisionMatchLite,
+    FacetCount,
+    GetDebateDivisionsInput,
     HansardContribution,
     HansardSearchResult,
     Interest,
+    LookupByColumnInput,
     MemberDebatesResult,
     MemberInterestsPage,
     MemberResult,
     MemberSearchResult,
     PetitionSearchResult,
     PetitionSummary,
-    PolicyVibeResult,
+    PolicyPositionSummary,
+    TopContributor,
+    TopDebate,
 )
 
 HANSARD_API = "https://hansard-api.parliament.uk"
@@ -61,7 +70,21 @@ class HansardSearchInput(BaseModel):
     ), min_length=1, max_length=500)
     from_date: date | None = Field(None, description="Start date (YYYY-MM-DD)")
     to_date: date | None = Field(None, description="End date (YYYY-MM-DD)")
-    member: str | None = Field(None, description="Filter by member name")
+    house: Literal["Commons", "Lords", "both"] = Field("both", description=(
+        "Restrict to one House. Default 'both' returns Commons + Lords contributions."
+    ))
+    member_id: int | None = Field(None, description=(
+        "Filter to contributions by a single member. Pass the integer Members "
+        "API ID (resolve a name via parliament_find_member). The prior `member` "
+        "field accepted a name string but Hansard's /search.json silently "
+        "ignored it — the spec requires `memberId`."
+    ), ge=1)
+    text_mode: Literal["preview", "full"] = Field("preview", description=(
+        "'preview' returns the upstream ~250-char snippet (fast, low context cost). "
+        "'full' returns ContributionTextFull (still capped at 3000 chars). "
+        "For full contribution text without the cap, read the resource "
+        "hansard://debate/{debate_ext_id}/contribution/{contribution_ext_id}."
+    ))
     offset: int = Field(0, ge=0, le=2000, description=(
         "Number of contributions to skip before this page. Default 0. "
         "Re-call with offset=offset+returned while has_more is true to paginate."
@@ -72,15 +95,23 @@ class HansardSearchInput(BaseModel):
     ))
 
 
-class PolicyVibeInput(BaseModel):
+class PolicyPositionSummaryInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    policy_text: str = Field(..., description="Description of the policy proposal to assess", min_length=10, max_length=2000)
     topic: str = Field(..., description=(
-        "Search terms for Hansard (keyword search, not phrase-matched). "
-        "Use 2-5 key terms, e.g. 'artificial intelligence financial services regulation'. "
-        "Broader terms return more contributions for sentiment analysis."
+        "Phrase to search in Hansard, e.g. 'short selling regulation'. "
+        "Searched as an exact phrase. For broader recall, drop quotes by "
+        "shortening the topic."
     ), min_length=2, max_length=200)
+    from_date: date | None = Field(None, description="Start date (YYYY-MM-DD)")
+    to_date: date | None = Field(None, description="End date (YYYY-MM-DD)")
+    house: Literal["Commons", "Lords", "both"] = Field("both", description="Restrict to one House. Default 'both'.")
+    max_debates_scanned: int = Field(200, ge=50, le=2000, description=(
+        "Hard cap on debates sampled from /search/Debates.json to compute "
+        "facets. Default 200 issues ≤4 upstream calls (take=50 each). Raise "
+        "to 2000 (≤40 calls) for an exhaustive sweep on a heavily-debated "
+        "topic. Hansard rate limit: 1000 req/5min."
+    ))
 
 
 class FindMemberInput(BaseModel):
@@ -178,33 +209,180 @@ def _strip_html(text: str) -> str:
     return re.sub(r"\s+", " ", clean).strip()
 
 
-def _parse_hansard_contributions(data: dict) -> list[HansardContribution]:
-    """Parse hansard-api.parliament.uk search.json response."""
-    contributions = []
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify(title: str) -> str:
+    return _SLUG_RE.sub("-", title.strip().lower()).strip("-") or "debate"
+
+
+def _hansard_contribution_url(house: str, sitting_date: date, debate_ext_id: str, contribution_ext_id: str, debate_title: str) -> str:
+    """Synthesise the public hansard.parliament.uk URL for a contribution.
+
+    Matches the website's canonical pattern:
+        https://hansard.parliament.uk/{house}/{date}/debates/{debate_ext_id}/{slug}#contribution-{contribution_ext_id}
+    """
+    house_seg = house.lower() if house in ("Commons", "Lords") else "commons"
+    return (
+        f"https://hansard.parliament.uk/{house_seg}/{sitting_date.isoformat()}"
+        f"/debates/{debate_ext_id}/{_slugify(debate_title)}"
+        f"#contribution-{contribution_ext_id}"
+    )
+
+
+def _parse_hansard_contributions(data: dict, text_mode: Literal["preview", "full"] = "preview", max_text_chars: int = 3000) -> list[HansardContribution]:
+    """Parse hansard-api.parliament.uk search.json response.
+
+    Reads citation-grade metadata from each upstream `Contributions[i]` entry.
+    Skips rows where required identifiers are missing so the schema stays sound.
+    """
+    contributions: list[HansardContribution] = []
     for item in data.get("Contributions", []):
         try:
-            # Extract attribution like "Lord Carlile of Berriew (CB)"
-            attr = item.get("AttributedTo", "")
-            name = item.get("MemberName", "Unknown")
+            attr = item.get("AttributedTo") or item.get("MemberName") or ""
+            name = item.get("MemberName") or "Unknown"
             party = None
             if "(" in attr and ")" in attr:
                 party = attr[attr.rfind("(") + 1:attr.rfind(")")]
 
-            text = _strip_html(item.get("ContributionText", ""))
+            raw_text_field = "ContributionTextFull" if text_mode == "full" else "ContributionText"
+            text = _strip_html(item.get(raw_text_field) or item.get("ContributionText") or "")
+
+            sitting_iso = (item.get("SittingDate") or "1970-01-01")[:10]
+            sitting_date = date.fromisoformat(sitting_iso)
+            house = item.get("House") or "Commons"
+            debate_ext_id = item.get("DebateSectionExtId") or ""
+            contribution_ext_id = item.get("ContributionExtId") or ""
+            debate_title = (item.get("DebateSection") or item.get("DebateSectionName") or "Unknown").strip() or "Unknown"
+
+            url = _hansard_contribution_url(house, sitting_date, debate_ext_id, contribution_ext_id, debate_title) if debate_ext_id and contribution_ext_id else ""
 
             contributions.append(HansardContribution(
                 member_name=name,
+                member_id=item.get("MemberId"),
+                attributed_to=attr or name,
                 party=party,
                 constituency=None,
-                date=date.fromisoformat(item.get("SittingDate", "1970-01-01")[:10]),
-                debate_title=item.get("DebateSectionName", item.get("Section", "Unknown")),
-                section=item.get("HansardSection", item.get("House", "Unknown")),
-                text=text[:3000],
-                url=item.get("Url", ""),
+                date=sitting_date,
+                debate_title=debate_title,
+                debate_id=int(item.get("DebateSectionId") or 0),
+                debate_ext_id=debate_ext_id,
+                contribution_ext_id=contribution_ext_id,
+                column_ref=item.get("HansardSection") or None,
+                chamber_section=item.get("Section") or house,
+                house=house if house in ("Commons", "Lords") else "Commons",
+                rank=item.get("Rank"),
+                text=text[:max_text_chars],
+                url=url,
             ))
         except Exception:
             continue
     return contributions
+
+
+def _compute_search_facets(contributions: list[HansardContribution]) -> tuple[dict[str, int], dict[str, int], tuple[date, date] | None]:
+    """Compute party / house breakdown and date range across a returned page."""
+    party_counter: Counter[str] = Counter()
+    house_counter: Counter[str] = Counter()
+    for c in contributions:
+        party_counter[c.party or "Unknown"] += 1
+        house_counter[c.house] += 1
+    date_range: tuple[date, date] | None = None
+    if contributions:
+        dates = [c.date for c in contributions]
+        date_range = (min(dates), max(dates))
+    return dict(party_counter), dict(house_counter), date_range
+
+
+def _safe_int(value, default: int = 0) -> int:
+    """Coerce a string or int to int, returning default on failure.
+
+    Used because /debates/divisions/{ext}.json returns numeric fields as
+    strings (verified live 2026-05-29) — Id, AyesCount, NoesCount are all
+    "192" not 192.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_top_debates_preview(payload: dict) -> list[TopDebate]:
+    """Parse `Debates[]` preview from /search.json into TopDebate entries.
+
+    Each Debates[] item is a SearchDebateItem (Swagger), with DebateSection,
+    SittingDate, House, Title, Rank, DebateSectionExtId. There is no
+    contribution count at this level; we use Rank as a proxy and document it.
+    """
+    out: list[TopDebate] = []
+    for item in payload.get("Debates") or []:
+        try:
+            ext_id = item.get("DebateSectionExtId") or ""
+            if not ext_id:
+                continue
+            sitting_iso = (item.get("SittingDate") or "1970-01-01")[:10]
+            sitting_date = date.fromisoformat(sitting_iso)
+            house_raw = item.get("House") or "Commons"
+            house = house_raw if house_raw in ("Commons", "Lords") else "Commons"
+            out.append(TopDebate(
+                debate_id=0,
+                debate_ext_id=ext_id,
+                debate_title=(item.get("Title") or item.get("DebateSection") or "Unknown").strip(),
+                date=sitting_date,
+                house=house,
+                contribution_count=_safe_int(item.get("Rank"), 0),
+            ))
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+def _parse_division_match(item: dict) -> DivisionMatchLite | None:
+    """Parse one DivisionOverview-shaped item into DivisionMatchLite.
+
+    All numeric and boolean fields come back as strings from the live
+    endpoints (verified 2026-05-29). Returns None on unrecoverable rows.
+    """
+    try:
+        ext_id = item.get("ExternalId") or ""
+        if not ext_id:
+            return None
+        date_iso = (item.get("Date") or "1970-01-01")[:10]
+        sitting_date = date.fromisoformat(date_iso)
+        house_raw = item.get("House") or "Commons"
+        house = house_raw if house_raw in ("Commons", "Lords") else "Commons"
+        time_raw = item.get("Time")
+        # Time can come as None or a string like '16:41:00' or full datetime
+        time_clean: str | None = None
+        if isinstance(time_raw, str) and time_raw and time_raw not in ("None", "null"):
+            time_clean = time_raw[-8:] if "T" in time_raw else time_raw
+
+        return DivisionMatchLite(
+            id=_safe_int(item.get("Id"), 0),
+            external_id=ext_id,
+            number=str(item.get("Number") or ""),
+            date=sitting_date,
+            time=time_clean,
+            house=house,
+            ayes_count=_safe_int(item.get("AyesCount"), 0),
+            noes_count=_safe_int(item.get("NoesCount"), 0),
+            motion_text=(item.get("TextBeforeVote") or None) or None,
+            result_text=(item.get("TextAfterVote") or None) or None,
+            debate_section=(item.get("DebateSection") or None),
+            debate_section_ext_id=(item.get("DebateSectionExtId") or None),
+        )
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_top_divisions_preview(payload: dict) -> list[DivisionMatchLite]:
+    """Parse `Divisions[]` preview from /search.json into DivisionMatchLite entries."""
+    out: list[DivisionMatchLite] = []
+    for item in payload.get("Divisions") or []:
+        parsed = _parse_division_match(item)
+        if parsed is not None:
+            out.append(parsed)
+    return out
 
 
 def register_tools(mcp: FastMCP) -> None:
@@ -216,12 +394,14 @@ def register_tools(mcp: FastMCP) -> None:
     async def parliament_search_hansard(params: HansardSearchInput, ctx: Context) -> HansardSearchResult:
         """Search Hansard for parliamentary debates, questions, and speeches.
 
-        Returns contributions from MPs and Lords including date, party, debate title,
-        and text (capped at 3000 chars per contribution). Useful for understanding
-        legislative intent or political context.
+        Returns contributions with citation-grade metadata: member_id, attributed_to
+        (the citable form), column_ref, debate_id, debate_ext_id, contribution_ext_id,
+        and a synthesised public hansard.parliament.uk URL. Use the returned
+        debate_ext_id and contribution_ext_id to drill into full content via the
+        hansard:// resource family.
 
         Args:
-            params: HansardSearchInput with query, optional date range, optional member filter.
+            params: HansardSearchInput with query, optional date range, house, member, text_mode.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {
@@ -233,86 +413,157 @@ def register_tools(mcp: FastMCP) -> None:
             qp["startDate"] = params.from_date.isoformat()
         if params.to_date:
             qp["endDate"] = params.to_date.isoformat()
-        if params.member:
-            qp["member"] = params.member
+        if params.house != "both":
+            qp["house"] = params.house
+        if params.member_id:
+            qp["memberId"] = params.member_id
 
         resp = await client.get(f"{HANSARD_API}/search.json", params=qp)
         resp.raise_for_status()
-        contributions = _parse_hansard_contributions(resp.json())
+        payload = resp.json()
+        contributions = _parse_hansard_contributions(payload, text_mode=params.text_mode)
+        party_breakdown, house_breakdown, date_range = _compute_search_facets(contributions)
         return HansardSearchResult(
             query=params.query,
             from_date=params.from_date,
             to_date=params.to_date,
-            member=params.member,
+            house=params.house,
+            member_id=params.member_id,
+            text_mode=params.text_mode,
             offset=params.offset,
             limit=params.limit,
             total=len(contributions),
+            total_corpus=payload.get("TotalContributions"),
+            total_debates=payload.get("TotalDebates"),
+            total_divisions=payload.get("TotalDivisions"),
+            total_written_statements=payload.get("TotalWrittenStatements"),
+            total_written_answers=payload.get("TotalWrittenAnswers"),
+            total_corrections=payload.get("TotalCorrections"),
+            total_petitions=payload.get("TotalPetitions"),
+            total_committees=payload.get("TotalCommittees"),
+            total_members=payload.get("TotalMembers"),
+            top_debates=_parse_top_debates_preview(payload),
+            top_divisions=_parse_top_divisions_preview(payload),
+            party_breakdown=party_breakdown,
+            house_breakdown=house_breakdown,
+            date_range=date_range,
             has_more=len(contributions) == params.limit,
             contributions=contributions,
         )
 
     @mcp.tool(
-        name="vibe_check",
-        annotations={"title": "Parliamentary Policy Vibe Check", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+        name="policy_position_summary",
+        annotations={"title": "Hansard Policy Position Summary (deterministic facets)", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def parliament_vibe_check(params: PolicyVibeInput, ctx: Context) -> PolicyVibeResult:
-        """Assess the likely parliamentary reception of a policy proposal.
+    async def parliament_policy_position_summary(params: PolicyPositionSummaryInput, ctx: Context) -> PolicyPositionSummary:
+        """Aggregate Hansard debate-level signals on a topic. Pure counts — no LLM, no editorial labels.
 
-        Searches Hansard for relevant debate contributions, then uses LLM sampling
-        to classify sentiment and extract supporters, opponents, and key concerns.
+        Sweeps /search/Debates.json with pagination (up to max_debates_scanned),
+        then aggregates by_house, by_section, by_year, by_month, and top_debates
+        from debate metadata. Also captures the corpus-wide envelope counts
+        (total_contributions, total_written_statements, total_divisions, etc.)
+        from /search.json for cross-section scope.
 
-        Degrades gracefully if sampling is unavailable — returns contributions only.
+        Note on member-level facets: Hansard's search API exposes debate
+        metadata, not per-contribution member identifiers, at the corpus
+        level. by_party and top_contributors are therefore omitted from this
+        deterministic summary. To see who spoke in a specific debate, read
+        hansard://debate/{debate_ext_id}/header for an ordered contribution
+        index, or call parliament_member_debates for one named member.
 
         Args:
-            params: PolicyVibeInput with policy_text (full description) and topic (search keyword).
+            params: PolicyPositionSummaryInput with topic, optional date range, house, max_debates_scanned.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
-        resp = await client.get(
-            f"{HANSARD_API}/search.json",
-            params={"searchTerm": params.topic, "take": 15},
-        )
-        resp.raise_for_status()
-        contributions = _parse_hansard_contributions(resp.json())
 
-        if not contributions:
-            return PolicyVibeResult(
-                query=params.topic, contributions=[],
-                sentiment_summary="No Hansard contributions found for this topic.",
-                key_supporters=[], key_opponents=[], key_concerns=[],
-            )
+        # Pull corpus-wide envelope counts from /search.json (one call).
+        envelope_qp: dict = {"searchTerm": f'"{params.topic}"'}
+        if params.from_date:
+            envelope_qp["startDate"] = params.from_date.isoformat()
+        if params.to_date:
+            envelope_qp["endDate"] = params.to_date.isoformat()
+        if params.house != "both":
+            envelope_qp["house"] = params.house
+        envelope_resp = await client.get(f"{HANSARD_API}/search.json", params=envelope_qp)
+        envelope_resp.raise_for_status()
+        envelope = envelope_resp.json()
 
-        contributions_text = "\n\n".join(
-            f"{c.member_name} ({c.party or 'Unknown'}, {c.date}):\n{c.text[:500]}"
-            for c in contributions[:10]
-        )
-        sample_prompt = (
-            f"Policy proposal: {params.policy_text}\n\n"
-            f"Relevant Hansard contributions:\n{contributions_text}\n\n"
-            f"Respond ONLY with a JSON object (no markdown fences):\n"
-            '{"sentiment_summary": "...", "key_supporters": [...], '
-            '"key_opponents": [...], "key_concerns": [...]}'
-        )
+        # Paginate /search/Debates.json for per-debate facets.
+        all_debates: list[dict] = []
+        page_size = 50
+        skip = 0
+        target = params.max_debates_scanned
 
-        sentiment_summary: str | None = None
-        key_supporters: list[str] = []
-        key_opponents: list[str] = []
-        key_concerns: list[str] = []
+        while skip < target:
+            take = min(page_size, target - skip)
+            qp = dict(envelope_qp)
+            qp["take"] = take
+            qp["skip"] = skip
+            try:
+                resp = await client.get(f"{HANSARD_API}/search/Debates.json", params=qp)
+                resp.raise_for_status()
+            except httpx.HTTPError:
+                if not all_debates:
+                    raise
+                break
+            data = resp.json()
+            results = data.get("Results") or []
+            if not results:
+                break
+            all_debates.extend(results)
+            if len(results) < take:
+                break
+            skip += take
 
-        try:
-            result = await ctx.sample(sample_prompt, result_type=str)
-            raw = (result.text or "").strip().lstrip("```json").lstrip("```").rstrip("```")
-            parsed = json.loads(raw)
-            sentiment_summary = parsed.get("sentiment_summary")
-            key_supporters = parsed.get("key_supporters", [])
-            key_opponents = parsed.get("key_opponents", [])
-            key_concerns = parsed.get("key_concerns", [])
-        except Exception:
-            sentiment_summary = "Sentiment analysis unavailable (sampling not supported by this client)."
+        house_counter: Counter[str] = Counter()
+        section_counter: Counter[str] = Counter()
+        year_counter: Counter[int] = Counter()
+        ym_counter: Counter[str] = Counter()
+        top_debate_models: list[TopDebate] = []
 
-        return PolicyVibeResult(
-            query=params.topic, contributions=contributions,
-            sentiment_summary=sentiment_summary, key_supporters=key_supporters,
-            key_opponents=key_opponents, key_concerns=key_concerns,
+        for d in all_debates:
+            try:
+                sitting_date = date.fromisoformat((d.get("SittingDate") or "1970-01-01")[:10])
+            except ValueError:
+                continue
+            house_raw = d.get("House") or "Commons"
+            house = house_raw if house_raw in ("Commons", "Lords") else "Commons"
+            section = d.get("DebateSection") or house
+            house_counter[house] += 1
+            section_counter[section] += 1
+            year_counter[sitting_date.year] += 1
+            ym_counter[sitting_date.strftime("%Y-%m")] += 1
+            ext_id = d.get("DebateSectionExtId") or ""
+            if ext_id and len(top_debate_models) < 20:
+                top_debate_models.append(TopDebate(
+                    debate_id=0,
+                    debate_ext_id=ext_id,
+                    debate_title=(d.get("Title") or section or "Unknown").strip(),
+                    date=sitting_date,
+                    house=house,
+                    contribution_count=int(d.get("Rank") or 0),
+                ))
+
+        recent_12 = sorted(ym_counter.items(), reverse=True)[:12]
+
+        return PolicyPositionSummary(
+            topic=params.topic,
+            from_date=params.from_date,
+            to_date=params.to_date,
+            house=params.house,
+            total_contributions=int(envelope.get("TotalContributions") or 0),
+            total_debates=int(envelope.get("TotalDebates") or 0),
+            total_written_statements=int(envelope.get("TotalWrittenStatements") or 0),
+            total_written_answers=int(envelope.get("TotalWrittenAnswers") or 0),
+            total_divisions=int(envelope.get("TotalDivisions") or 0),
+            debates_scanned=len(all_debates),
+            by_party=[],
+            by_house=[FacetCount(key=k, count=v) for k, v in house_counter.most_common()],
+            by_section=[FacetCount(key=k, count=v) for k, v in section_counter.most_common()],
+            by_year=[FacetCount(key=str(k), count=v) for k, v in sorted(year_counter.items(), reverse=True)],
+            by_month_recent_12=[FacetCount(key=k, count=v) for k, v in recent_12],
+            top_contributors=[],
+            top_debates=top_debate_models,
         )
 
     @mcp.tool(
@@ -363,7 +614,7 @@ def register_tools(mcp: FastMCP) -> None:
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {
-            "member": params.member_id,
+            "memberId": params.member_id,
             "take": params.limit,
             "skip": params.offset,
         }
@@ -491,4 +742,124 @@ def register_tools(mcp: FastMCP) -> None:
             total=len(petitions),
             has_more=len(petitions) == params.limit,
             petitions=petitions,
+        )
+
+    @mcp.tool(
+        name="get_debate_divisions",
+        annotations={"title": "Get Divisions Held In A Debate", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    )
+    async def parliament_get_debate_divisions(params: GetDebateDivisionsInput, ctx: Context) -> DebateDivisions:
+        """Return the divisions (formal votes) held within a specific debate.
+
+        Most debates contain no divisions — Business of the House sittings,
+        statements, urgent questions, debates without a vote. A populated list
+        typically appears around bill stages, motions, and contested amendments.
+
+        For one named member's voting record across many divisions, use
+        votes_search_divisions or chain via the returned `id` to votes_get_division.
+
+        Args:
+            params: GetDebateDivisionsInput with the debate_ext_id GUID
+                (chain from parliament_search_hansard contribution.debate_ext_id
+                or top_debates[].debate_ext_id).
+        """
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        try:
+            resp = await client.get(
+                f"{HANSARD_API}/debates/divisions/{params.debate_ext_id}.json"
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            # Surface the error; an empty array is the normal "no divisions" case,
+            # whereas an HTTP error means we couldn't reach upstream.
+            raise RuntimeError(format_http_error(e)) from e
+
+        items = resp.json()
+        if not isinstance(items, list):
+            items = []
+        divisions: list[DivisionMatchLite] = []
+        for item in items:
+            parsed = _parse_division_match(item) if isinstance(item, dict) else None
+            if parsed is not None:
+                divisions.append(parsed)
+
+        return DebateDivisions(
+            debate_ext_id=params.debate_ext_id,
+            divisions=divisions,
+        )
+
+    @mcp.tool(
+        name="lookup_by_column",
+        annotations={"title": "Resolve A Hansard Column Citation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    )
+    async def parliament_lookup_by_column(params: LookupByColumnInput, ctx: Context) -> ColumnLookupResult:
+        """Resolve an OSCOLA-style Hansard citation to a debate.
+
+        Use case: you have a citation like 'HL Deb 14 Oct 2025, vol 849, col 200'
+        and need to verify what was said at that column. This tool calls
+        /search/debatebycolumn and returns the matching debate section(s); you
+        then read hansard://debate/{debate_ext_id}/header to find the
+        contribution at the cited column.
+
+        Empty `matches` typically means:
+          - The column is from a Daily Part (not yet consolidated into a Bound
+            Volume). The endpoint only resolves Bound Volume citations
+            (verified live 2026-05-29 — both `Source: 2` (recent) and `Source: 3`
+            (older) debates were probed, only the older one resolves by column).
+          - The volume_number is wrong (sometimes opposing counsel cites the
+            running-volume number rather than the bound-volume number).
+          - The column is in a Written Statement or Written Answer (the
+            citation usually has a 'W' suffix like '1162W' — pass it as-is).
+
+        Args:
+            params: LookupByColumnInput with column_number (string), volume_number
+                (int), and optional house. Date is NOT a valid lookup key — the
+                endpoint requires the volume number.
+        """
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        qp: dict = {
+            "columnNumber": params.column_number,
+            "volumeNumber": params.volume_number,
+        }
+        if params.house != "both":
+            qp["house"] = params.house
+
+        try:
+            resp = await client.get(
+                f"{HANSARD_API}/search/debatebycolumn.json",
+                params=qp,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise RuntimeError(format_http_error(e)) from e
+
+        payload = resp.json() if resp.content else {}
+        results = payload.get("Results") or []
+        matches: list[TopDebate] = []
+        for item in results:
+            try:
+                ext_id = item.get("DebateSectionExtId") or ""
+                if not ext_id:
+                    continue
+                sitting_iso = (item.get("SittingDate") or "1970-01-01")[:10]
+                sitting_date = date.fromisoformat(sitting_iso)
+                house_raw = item.get("House") or "Commons"
+                house_val = house_raw if house_raw in ("Commons", "Lords") else "Commons"
+                matches.append(TopDebate(
+                    debate_id=0,
+                    debate_ext_id=ext_id,
+                    debate_title=(item.get("Title") or item.get("DebateSection") or "Unknown").strip(),
+                    date=sitting_date,
+                    house=house_val,
+                    contribution_count=_safe_int(item.get("Rank"), 0),
+                ))
+            except (ValueError, TypeError):
+                continue
+
+        return ColumnLookupResult(
+            column_number=params.column_number,
+            volume_number=params.volume_number,
+            house=params.house,
+            total_results=_safe_int(payload.get("TotalResultCount"), len(matches)),
+            matches=matches,
         )

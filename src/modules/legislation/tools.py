@@ -153,8 +153,114 @@ def _parse_html_section(html_text: str, section: str, max_chars: int, warning: s
     )
 
 
+_EXTENT_CODE_MAP = {
+    "E": "England",
+    "W": "Wales",
+    "S": "Scotland",
+    "N.I.": "Northern Ireland",
+    "NI": "Northern Ireland",
+}
+
+
+def _find_restrict_start_date(section_el, root) -> str | None:
+    """Walk from section_el up the ancestor chain for the most-specific
+    RestrictStartDate. This is the section's effective version date — when
+    the restriction (the current revised state of the section) took effect.
+
+    For a section repealed on 2026-05-01, this returns "2026-05-01" — the
+    date the repeal commenced. For a section never amended, returns the
+    Act-level RestrictStartDate.
+    """
+    candidates = [section_el] if section_el is not None else []
+    if section_el is not None:
+        for ancestor in section_el.iterancestors():
+            candidates.append(ancestor)
+    if root is not None and root not in candidates:
+        candidates.append(root)
+    for el in candidates:
+        rsd = el.get("RestrictStartDate")
+        if rsd:
+            return rsd
+    return None
+
+
+def _section_is_repealed(section_el, ns: dict) -> bool:
+    """Detect whether a section's heading is wrapped in <Repeal RetainText="true">.
+
+    In CLML revised legislation, repealed text is preserved for historical
+    reading and marked with <Repeal> wrappers. The Housing Act 1988 s.21
+    payload has 89 such elements (every <Text> and <Pnumber>) sharing one
+    ChangeId — the wholesale repeal of Chapter II by the Renters' Rights
+    Act 2025.
+
+    The encoding is the OPPOSITE of what one might first guess: <Repeal>
+    wraps the repealed runs of text and lives INSIDE the structural
+    elements that semantically own them. So inside the section's <Title>
+    there is a <Repeal> child wrapping the heading text. The reliable
+    section-level signal is therefore: does the section's <Title> contain
+    a <Repeal> child? If yes, the heading itself is marked repealed.
+    """
+    if section_el is None:
+        return False
+    title = section_el.find("leg:Title", ns)
+    if title is None:
+        # Fall back: any Title in the section's subtree
+        title = section_el.find(".//leg:Title", ns)
+    if title is None:
+        return False
+    return title.find(".//leg:Repeal", ns) is not None
+
+
+def _extent_codes_to_names(code_string: str) -> list[str]:
+    """Map a CLML extent code string (e.g. 'E+W+S+N.I.') to canonical names.
+
+    Returns names in the order they appear. Unknown codes are skipped silently
+    so a malformed upstream value can't fabricate jurisdictions.
+    """
+    if not code_string:
+        return []
+    names: list[str] = []
+    for code in code_string.split("+"):
+        code = code.strip()
+        if code in _EXTENT_CODE_MAP:
+            names.append(_EXTENT_CODE_MAP[code])
+    return names
+
+
+def _find_restrict_extent(section_el, root) -> tuple[str, bool]:
+    """Walk from section_el up the ancestor chain to find the most-specific
+    RestrictExtent attribute. Falls back to the root element's value.
+
+    Returns (extent_code_string, is_section_specific) where is_section_specific
+    is True if the extent came from the section's own element (rather than
+    inherited from a parent / Act-wide default).
+    """
+    candidates = [section_el] if section_el is not None else []
+    if section_el is not None:
+        for ancestor in section_el.iterancestors():
+            candidates.append(ancestor)
+    if root is not None and root not in candidates:
+        candidates.append(root)
+
+    for idx, el in enumerate(candidates):
+        ext = el.get("RestrictExtent")
+        if ext:
+            return ext, idx == 0
+    return "", False
+
+
 def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> LegislationSection:
-    """Extract a section from CLML XML, truncating content to max_chars."""
+    """Extract a section from CLML XML, truncating content to max_chars.
+
+    Extent comes from the RestrictExtent attribute on the section's element
+    (or its nearest ancestor that carries one), mapped through the canonical
+    code→name table. When no RestrictExtent is found, `extent` is the empty
+    list per the documented contract — never fabricated.
+
+    Older fixtures may carry a doctored `<ukm:Extent Value="..."/>` element;
+    we fall back to that to keep test fixtures portable, but real CLML uses
+    RestrictExtent.
+    """
     from lxml import etree
     root = etree.fromstring(xml_text.encode())
     ns = {
@@ -165,29 +271,102 @@ def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> Legislat
     def extract_text(el) -> str:
         return " ".join(el.itertext()).strip()
 
-    # Try to find the specific section element
-    section_el = root.find(f".//leg:P1[@id='section-{section}']", ns)
+    # Section element: prefer the P1group structural container because it
+    # carries RestrictExtent AND wraps the section's <Title>. The id attribute
+    # may live on either P1group or P1 depending on the Act's vintage:
+    #   1. P1group[@id='section-N']  — newer revised CLML
+    #   2. P1[@id='section-N']        — older / many real Acts (e.g. Housing
+    #      Act 1988). When the id is on P1, walk up to its P1group parent so
+    #      we still see the Title and RestrictExtent above.
+    # NB: lxml elements have no useful truth-testing, so chain with `is None`.
+    section_el = root.find(f".//leg:P1group[@id='section-{section}']", ns)
+    if section_el is None:
+        p1 = root.find(f".//leg:P1[@id='section-{section}']", ns)
+        if p1 is not None:
+            parent = p1.getparent()
+            if parent is not None and etree.QName(parent).localname == "P1group":
+                section_el = parent
+            else:
+                section_el = p1
     raw_content = extract_text(section_el) if section_el is not None else extract_text(root)
     original_length = len(raw_content)
     truncated = original_length > max_chars
     content = raw_content[:max_chars] + " …[truncated]" if truncated else raw_content
 
-    extent_el = root.find(".//ukm:Extent", ns)
-    extent_text = extent_el.get("Value", "") if extent_el is not None else ""
-    extent = [e.strip() for e in extent_text.split("+") if e.strip()]
+    # Extent: walk the ancestor chain for the most-specific RestrictExtent,
+    # then fall back to legacy ukm:Extent element (used by older fixtures).
+    extent_codes, _ = _find_restrict_extent(section_el, root)
+    if not extent_codes:
+        legacy_extent_el = root.find(".//ukm:Extent", ns)
+        if legacy_extent_el is not None:
+            extent_codes = legacy_extent_el.get("Value", "")
+    extent = _extent_codes_to_names(extent_codes)
 
-    prospective = "prospective" in xml_text.lower()
+    # In-force / prospective:
+    #   1. <Repeal> wrapping the section's <Title> is the strongest signal —
+    #      the heading is marked repealed, so the section is no longer in
+    #      force. This is how legislation.gov.uk encodes the Housing Act
+    #      1988 s.21 repeal by the Renters' Rights Act 2025.
+    #   2. Otherwise, look at the section's own <ukm:InForce> element if
+    #      present at section level. The same element appears many times
+    #      in affecting-provisions metadata, which is NOT this section's
+    #      own status — so substring search on the whole document is
+    #      unreliable.
+    #   3. When neither signal is available, return None (unknown), same
+    #      contract the HTML parser honours.
+    in_force: bool | None = None
+    prospective: bool | None = None
+    if _section_is_repealed(section_el, ns):
+        in_force = False
+        prospective = False
+    elif section_el is not None:
+        in_force_el = section_el.find(".//ukm:InForce", ns)
+        if in_force_el is not None:
+            applied = (in_force_el.get("Applied") or "").lower() == "true"
+            prospective_raw = (in_force_el.get("Prospective") or "").lower()
+            if prospective_raw in ("true", "false"):
+                prospective = prospective_raw == "true"
+            in_force = applied if applied else (None if prospective is None else not prospective)
 
+    # Version date: prefer RestrictStartDate (the date the current revised
+    # state of the section took effect — what a lawyer cites as "valid
+    # from"). Fall back to EnactmentDate (the Act's original enactment)
+    # only when RestrictStartDate is absent, since for an amended section
+    # the enactment date is misleadingly old.
     version_date = None
-    date_el = root.find(".//ukm:EnactmentDate", ns)
-    if date_el is not None:
+    rsd = _find_restrict_start_date(section_el, root)
+    if rsd:
         try:
-            version_date = date.fromisoformat(date_el.get("Date", ""))
+            version_date = date.fromisoformat(rsd)
         except ValueError:
             pass
+    if version_date is None:
+        date_el = root.find(".//ukm:EnactmentDate", ns)
+        if date_el is not None:
+            try:
+                version_date = date.fromisoformat(date_el.get("Date", ""))
+            except ValueError:
+                pass
 
-    title_el = root.find(".//leg:Title", ns)
-    title = title_el.text.strip() if title_el is not None and title_el.text else f"Section {section}"
+    # Section title: prefer the section element's direct <Title> child so
+    # we don't grab the Part / Chapter / Act title that appears earlier in
+    # the document. Fall back to root-wide search only when the section
+    # element wasn't located.
+    title = f"Section {section}"
+    if section_el is not None:
+        title_el = section_el.find("leg:Title", ns)
+        if title_el is None:
+            title_el = section_el.find(".//leg:Title", ns)
+        if title_el is not None:
+            # When the title is wrapped in <Repeal>, the text lives inside the
+            # Repeal child; itertext() flattens that for us.
+            title_text = " ".join(title_el.itertext()).strip()
+            if title_text:
+                title = title_text
+    else:
+        title_el = root.find(".//leg:Title", ns)
+        if title_el is not None and title_el.text:
+            title = title_el.text.strip()
 
     return LegislationSection(
         title=title,
@@ -195,8 +374,8 @@ def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> Legislat
         content=content,
         content_truncated=truncated,
         original_length=original_length,
-        in_force=not prospective if extent else None,
-        extent=extent or ["England", "Wales", "Scotland", "Northern Ireland"],
+        in_force=in_force,
+        extent=extent,
         version_date=version_date,
         prospective=prospective,
         source_format="xml",

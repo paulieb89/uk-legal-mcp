@@ -66,10 +66,27 @@ class TestParseClmlSection:
         assert result.extent == ["E", "W"] or set(result.extent) <= {"England", "Wales"}
 
     def test_version_date_parsed(self):
+        """version_date is the section's effective version date — the
+        date the current revised state took effect (RestrictStartDate),
+        NOT the Act's original enactment date.
+
+        For s.21 Housing Act 1988, the version date is 2026-05-01 (the
+        Renters' Rights Act 2025 commencement that repealed Chapter II).
+        Asserting 1988 here would re-introduce the original silent bug:
+        the enactment date is misleadingly old for any amended section.
+        """
         from src.modules.legislation.tools import _parse_clml_section
         result = _parse_clml_section(_clml(), "21", 10_000)
         assert result.version_date is not None
-        assert result.version_date.year == 1988
+        # The s.21 repeal commenced 2026-05-01; allow anything in 2025
+        # or later in case the fixture is refreshed against a different
+        # version date.
+        assert result.version_date.year >= 2025, (
+            f"Expected version_date from RestrictStartDate (≥2025 for the "
+            f"repeal-era state), got {result.version_date}. If this asserts "
+            f"1988 the parser is reading EnactmentDate instead of "
+            f"RestrictStartDate — the silent bug is back."
+        )
 
     def test_truncation_respected(self):
         from src.modules.legislation.tools import _parse_clml_section
@@ -101,12 +118,246 @@ class TestParseClmlSection:
         assert result.warnings == []
 
     def test_structured_content_token_budget(self):
-        """Typical XML section response stays under 500 tokens."""
+        """A full real-CLML section response stays within a sensible budget.
+
+        Earlier limit was 500 tokens, which only held against a synthetic
+        fixture stripped down to 2 subsections (a known doctored fixture —
+        see Observation 153). The production fixture for s.21 has 40+
+        subsections totalling ~6300 chars / ~1550 tokens. The honest
+        budget is the production size with reasonable headroom; if the
+        token count grows substantially beyond that, the parser is
+        adding noise (e.g. element attributes leaking into content)."""
         from src.modules.legislation.tools import _parse_clml_section
         result = _parse_clml_section(_clml(), "21", 10_000)
         payload = json.loads(result.model_dump_json())
         tokens = tok(json.dumps(payload, indent=2))
-        assert tokens < 500, f"XML response is {tokens} tokens — check for bloat"
+        assert tokens < 2_500, f"XML response is {tokens} tokens — check for bloat"
+
+
+class TestExtentContract:
+    """Extent parsing must follow the documented contract:
+
+    > Empty list means unknown — do not assume full UK extent.
+
+    Prior bug (PR #18 follow-up): when the parser could not find the
+    extent element, it silently defaulted to ['England','Wales','Scotland',
+    'Northern Ireland']. A lawyer trusting that for an England-only Act
+    could cite a section as binding in Scotland.
+
+    These tests use a CLML payload shaped like real legislation.gov.uk
+    responses (RestrictExtent attribute on structural elements, no
+    <ukm:Extent> element), reproducing the conditions that surfaced the
+    bug in the live MCP session of 2026-05-28.
+    """
+
+    REAL_CLML_E_W_ONLY = """<?xml version="1.0"?>
+<Legislation xmlns="http://www.legislation.gov.uk/namespaces/legislation"
+             xmlns:ukm="http://www.legislation.gov.uk/namespaces/metadata"
+             RestrictExtent="E+W+S">
+  <ukm:Metadata>
+    <ukm:PrimaryMetadata>
+      <ukm:EnactmentDate Date="1988-11-15"/>
+    </ukm:PrimaryMetadata>
+  </ukm:Metadata>
+  <Body RestrictExtent="E+W+S">
+    <Part RestrictExtent="E+W+S">
+      <Chapter RestrictExtent="E+W+S">
+        <P1group id="section-21" RestrictExtent="E+W">
+          <Title>Recovery of possession</Title>
+          <P1>
+            <P1para>The section text goes here. Possession on expiry.</P1para>
+          </P1>
+        </P1group>
+      </Chapter>
+    </Part>
+  </Body>
+</Legislation>"""
+
+    REAL_CLML_NO_EXTENT_ANYWHERE = """<?xml version="1.0"?>
+<Legislation xmlns="http://www.legislation.gov.uk/namespaces/legislation"
+             xmlns:ukm="http://www.legislation.gov.uk/namespaces/metadata">
+  <ukm:Metadata>
+    <ukm:PrimaryMetadata>
+      <ukm:EnactmentDate Date="2000-01-01"/>
+    </ukm:PrimaryMetadata>
+  </ukm:Metadata>
+  <Body>
+    <P1group id="section-1">
+      <Title>Some provision</Title>
+      <P1><P1para>Text.</P1para></P1>
+    </P1group>
+  </Body>
+</Legislation>"""
+
+    def test_section_specific_extent_overrides_act_default(self):
+        """When the section's own element carries RestrictExtent='E+W' but
+        the Act-level default is 'E+W+S', the section-specific value wins."""
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(self.REAL_CLML_E_W_ONLY, "21", 10_000)
+        assert result.extent == ["England", "Wales"], (
+            f"Expected ['England','Wales'] from section-specific RestrictExtent, "
+            f"got {result.extent}. Most-specific RestrictExtent must win — "
+            f"otherwise an England-only section reads as UK-wide."
+        )
+
+    def test_empty_extent_when_no_restrict_extent_anywhere(self):
+        """When neither RestrictExtent nor the legacy ukm:Extent element
+        is present, extent MUST be the empty list per the documented contract.
+
+        This is the regression test for the silent fabrication bug — the
+        prior parser returned all four UK nations when it found nothing."""
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(self.REAL_CLML_NO_EXTENT_ANYWHERE, "1", 10_000)
+        assert result.extent == [], (
+            f"Expected [] (unknown) per the documented contract, got {result.extent}. "
+            f"The parser must NOT fabricate full UK extent when it can't find one."
+        )
+
+    def test_extent_codes_map_to_canonical_names(self):
+        """E/W/S/N.I. codes map to the canonical full names used elsewhere
+        in the model (LegislationSection.extent type)."""
+        from src.modules.legislation.tools import _extent_codes_to_names
+        assert _extent_codes_to_names("E+W+S+N.I.") == [
+            "England", "Wales", "Scotland", "Northern Ireland",
+        ]
+        assert _extent_codes_to_names("E+W") == ["England", "Wales"]
+        assert _extent_codes_to_names("S") == ["Scotland"]
+        # Unknown codes are skipped silently — never fabricate jurisdictions.
+        assert _extent_codes_to_names("E+XYZ+W") == ["England", "Wales"]
+        assert _extent_codes_to_names("") == []
+
+    def test_in_force_is_none_when_unknown(self):
+        """Honest contract: when the parser cannot reliably determine in-force
+        status, return None rather than guessing. Mirrors the HTML parser."""
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(self.REAL_CLML_NO_EXTENT_ANYWHERE, "1", 10_000)
+        assert result.in_force is None
+
+
+class TestRepealAndVersionDate:
+    """Repeal detection + version_date semantics.
+
+    These cover the second wave of bugs surfaced by the lawyer's live
+    test of s.21 Housing Act 1988 (2026-05-28):
+      - in_force returned None for a section that's explicitly marked
+        repealed in the CLML via <Repeal RetainText="true"> wrappers
+      - version_date returned the Act's 1988 enactment date instead of
+        the section's 2026-05-01 RestrictStartDate (the lawyer's
+        "valid from" date)
+    """
+
+    REPEALED_SECTION_CLML = """<?xml version="1.0"?>
+<Legislation xmlns="http://www.legislation.gov.uk/namespaces/legislation"
+             xmlns:ukm="http://www.legislation.gov.uk/namespaces/metadata"
+             RestrictStartDate="2026-05-01">
+  <ukm:Metadata>
+    <ukm:PrimaryMetadata>
+      <ukm:EnactmentDate Date="1988-11-15"/>
+    </ukm:PrimaryMetadata>
+  </ukm:Metadata>
+  <Body>
+    <Part>
+      <Title>Part I — Rented Accommodation</Title>
+      <Chapter RestrictStartDate="2026-05-01">
+        <P1group RestrictExtent="E+W" RestrictStartDate="2026-05-01">
+          <Title>
+            <Repeal CommentaryRef="key-X" RetainText="true">Recovery of possession on expiry or termination</Repeal>
+          </Title>
+          <P1 id="section-21">
+            <Pnumber><Repeal CommentaryRef="key-X" RetainText="true">21</Repeal></Pnumber>
+            <P1para><P2><Text><Repeal CommentaryRef="key-X" RetainText="true">Repealed text retained for historical reading.</Repeal></Text></P2></P1para>
+          </P1>
+        </P1group>
+      </Chapter>
+    </Part>
+  </Body>
+</Legislation>"""
+
+    ACTIVE_SECTION_CLML = """<?xml version="1.0"?>
+<Legislation xmlns="http://www.legislation.gov.uk/namespaces/legislation"
+             xmlns:ukm="http://www.legislation.gov.uk/namespaces/metadata"
+             RestrictStartDate="2025-10-27">
+  <ukm:Metadata>
+    <ukm:PrimaryMetadata>
+      <ukm:EnactmentDate Date="2025-10-27"/>
+    </ukm:PrimaryMetadata>
+  </ukm:Metadata>
+  <Body>
+    <P1group RestrictExtent="E+W">
+      <Title>Assured tenancies: introduction</Title>
+      <P1 id="section-1">
+        <Pnumber>1</Pnumber>
+        <P1para><P2><Text>Active section text.</Text></P2></P1para>
+      </P1>
+    </P1group>
+  </Body>
+</Legislation>"""
+
+    def test_repealed_section_returns_in_force_false(self):
+        """When the section's <Title> contains a <Repeal> child, in_force
+        must be False — not None. The Repeal wrapper is the upstream's
+        explicit, machine-readable repeal signal; ignoring it would
+        leave the lawyer's agent uncertain about a section whose status
+        the source literally tells us."""
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(self.REPEALED_SECTION_CLML, "21", 10_000)
+        assert result.in_force is False, (
+            f"Expected in_force=False for a section with <Repeal> in its "
+            f"<Title>, got {result.in_force}. The CLML explicitly marks this "
+            f"section as repealed (RetainText='true' preserves the text for "
+            f"historical reading); the parser must surface that."
+        )
+        assert result.prospective is False
+
+    def test_active_section_in_force_remains_none_without_explicit_signal(self):
+        """Conversely, a section with NO <Repeal> wrapper and no
+        <ukm:InForce> signal returns in_force=None (unknown) — we do not
+        guess True just because Repeal is absent. The absence of evidence
+        is not evidence of presence."""
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(self.ACTIVE_SECTION_CLML, "1", 10_000)
+        assert result.in_force is None
+        assert result.prospective is None
+
+    def test_version_date_prefers_restrict_start_date(self):
+        """version_date must reflect when the current revised state of
+        the section took effect (RestrictStartDate), not when the Act was
+        originally enacted. For the repealed s.21 example, that's
+        2026-05-01 — the date the repeal commenced — not the Act's
+        1988-11-15 enactment."""
+        from datetime import date
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(self.REPEALED_SECTION_CLML, "21", 10_000)
+        assert result.version_date == date(2026, 5, 1), (
+            f"Expected version_date=2026-05-01 from RestrictStartDate, "
+            f"got {result.version_date}. If this is 1988-11-15 the parser "
+            f"is reading EnactmentDate (the Act's original enactment) "
+            f"instead of the section's effective revision date."
+        )
+
+    def test_version_date_falls_back_to_enactment_date(self):
+        """When neither the section nor any ancestor carries
+        RestrictStartDate, fall back to <ukm:EnactmentDate>. Old / never-
+        amended sections may have no RestrictStartDate at all."""
+        from datetime import date
+        from src.modules.legislation.tools import _parse_clml_section
+        no_restrict_start_date = """<?xml version="1.0"?>
+<Legislation xmlns="http://www.legislation.gov.uk/namespaces/legislation"
+             xmlns:ukm="http://www.legislation.gov.uk/namespaces/metadata">
+  <ukm:Metadata>
+    <ukm:PrimaryMetadata>
+      <ukm:EnactmentDate Date="1999-12-01"/>
+    </ukm:PrimaryMetadata>
+  </ukm:Metadata>
+  <Body>
+    <P1group RestrictExtent="E+W">
+      <Title>Pristine section</Title>
+      <P1 id="section-1"><Pnumber>1</Pnumber><P1para><P2><Text>Original text.</Text></P2></P1para></P1>
+    </P1group>
+  </Body>
+</Legislation>"""
+        result = _parse_clml_section(no_restrict_start_date, "1", 10_000)
+        assert result.version_date == date(1999, 12, 1)
 
 
 # ── 2. HTML fallback parser ────────────────────────────────────────────────

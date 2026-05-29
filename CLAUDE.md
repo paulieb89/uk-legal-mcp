@@ -63,6 +63,15 @@ fly secrets set HMRC_CLIENT_ID=xxx HMRC_CLIENT_SECRET=xxx --app uk-legal-mcp
 
 **Critical:** `hansard.parliament.uk` (the website) is behind Cloudflare JS challenge and will 403. Always use `hansard-api.parliament.uk` for the data API.
 
+## Upstream API schema references
+
+CLML (legislation.gov.uk) and Hansard API schemas captured during the May 2026 parser-correctness work. Both live in the project memory system:
+
+- [`memory/clml-schema.md`](../../.claude/projects/-home-bch-dev-mcpfleet-uk-legal-mcp/memory/clml-schema.md) — element names, ID patterns (section/regulation/article/paragraph), RestrictExtent walk-up, Repeal/RetainText encoding, known parser footguns.
+- [`memory/hansard-schema.md`](../../.claude/projects/-home-bch-dev-mcpfleet-uk-legal-mcp/memory/hansard-schema.md) — Swagger contract for hansard-api.parliament.uk, DebateItem fields, the `/search.json` 4-row cap, column-number carry-forward for OSCOLA citation.
+
+Auto-loaded into context at session start via `MEMORY.md`. If you're investigating an upstream schema bug, read these before re-probing.
+
 ## Known APIs not yet integrated
 
 - `committees-api.parliament.uk` — Committee publications and document retrieval (large binary/HTML blobs)

@@ -15,7 +15,13 @@ class JudgmentIdentifier(BaseModel):
         ..., description="Identifier type: 'ukncn' for neutral citation, 'fclid' for Find Case Law internal ID"
     )
     value: str = Field(..., description="Human-readable identifier, e.g. '[2024] UKSC 12'")
-    slug: str = Field(..., description="URL slug form, e.g. 'uksc/2024/12'")
+    slug: str = Field(..., description=(
+        "URL slug form, e.g. 'uksc/2024/12'. Use as {slug*} in "
+        "judgment://{slug*}/header (metadata, ~1k tokens), "
+        "judgment://{slug*}/index (paragraph list, ~4k tokens), "
+        "judgment://{slug*}/para/{eId} (one paragraph), or as the "
+        "`slug` input to case_law_grep_judgment for pattern search."
+    ))
 
 
 class JudgmentSummary(BaseModel):
@@ -80,7 +86,11 @@ class CaseLawGrepInput(BaseModel):
 class GrepHit(BaseModel):
     """A single paragraph match from grep_judgment."""
 
-    eId: str = Field(..., description="LegalDocML paragraph identifier, e.g. 'para_12'")
+    eId: str = Field(..., description=(
+        "LegalDocML paragraph identifier, e.g. 'para_12'. Use as {eId} in "
+        "judgment://{slug*}/para/{eId} to read the full paragraph "
+        "(typically 400-1700 tokens) with its sub-paragraphs."
+    ))
     snippet: str = Field(..., description="~200 chars of context around the match")
     match: str = Field(..., description="The exact text that matched the pattern")
 

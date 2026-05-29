@@ -60,6 +60,7 @@ from .modules.legislation.resources import (
     register_legislation_resources,
 )
 from .modules.parliament import parliament_mcp
+from .modules.parliament.resources import register_parliament_resources
 from .modules.votes import votes_mcp
 
 # ---------------------------------------------------------------------------
@@ -133,14 +134,19 @@ gateway = FastMCP(
     name="uk-legal-mcp",
     lifespan=http_lifespan,
     instructions=(
-        "UK legal research server. Eight namespaced modules:\n\n"
+        "UK legal research server. Returns primary sources (judgments, statutes, Hansard "
+        "contributions, divisions, committee evidence, HMRC guidance) with citation metadata. "
+        "Does not interpret the law, classify positions, or prescribe a research strategy — "
+        "the caller's agent decides how to use the data on the caller's behalf.\n\n"
+        "Eight namespaced modules:\n\n"
         "• case_law_search / case_law_grep_judgment\n"
         "  Search UK court judgments from TNA Find Case Law and grep within them.\n"
         "  Read judgment content via judgment://{slug}/{header,index,para/{eId}} resources.\n\n"
         "• legislation_search / legislation_get_toc / legislation_get_section\n"
         "  Find Acts of Parliament and Statutory Instruments. Always check 'extent' field.\n\n"
-        "• parliament_search_hansard / parliament_vibe_check / parliament_find_member / parliament_member_interests / parliament_search_petitions\n"
-        "  Search Hansard debates, assess parliamentary reception, member interests, and petitions.\n\n"
+        "• parliament_search_hansard / parliament_policy_position_summary / parliament_get_debate_divisions / parliament_lookup_by_column / parliament_find_member / parliament_member_debates / parliament_member_interests / parliament_search_petitions\n"
+        "  Search Hansard with full corpus envelope, aggregate facets, chain debates to divisions, resolve OSCOLA column citations, member interests, petitions.\n"
+        "  Read full debate / contribution / biography content via hansard://debate/{ext_id}/{header,contribution/{ext_id}} and hansard://member/{id}/biography resources.\n\n"
         "• bills_search_bills / bills_get_bill\n"
         "  Search and retrieve UK parliamentary bills, stages, and sponsors.\n\n"
         "• votes_search_divisions / votes_get_division\n"
@@ -225,6 +231,7 @@ gateway.mount(hmrc_mcp,        namespace="hmrc")
 
 register_case_law_resources(gateway)
 register_legislation_resources(gateway)
+register_parliament_resources(gateway)
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +345,7 @@ async def metrics_endpoint(request: Request) -> Response:
 @gateway.custom_route("/.well-known/mcp/server-card.json", methods=["GET"])
 async def smithery_server_card(request: Request) -> Response:
     return JSONResponse({
-        "serverInfo": {"name": "uk-legal-mcp", "version": "0.4.4"},
+        "serverInfo": {"name": "uk-legal-mcp", "version": "0.5.0"},
     }, headers=CORS_HEADERS)
 
 

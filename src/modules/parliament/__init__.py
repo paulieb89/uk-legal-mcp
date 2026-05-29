@@ -8,13 +8,31 @@ from .prompts import register_prompts
 parliament_mcp = FastMCP(
     name="parliament",
     instructions=(
-        "Search UK parliamentary debates (Hansard), member information, and petitions. "
-        "Use parliament_search_hansard to find debates on a topic. "
-        "Use parliament_vibe_check to assess parliamentary reception of a policy. "
-        "Use parliament_find_member to look up an MP or Lord by name. "
-        "Use parliament_member_debates to retrieve a specific member's contributions. "
-        "Use parliament_member_interests to look up a member's registered financial interests. "
-        "Use parliament_search_petitions to search UK Parliament petitions by keyword."
+        "UK Parliament data: Hansard debates, member registers, petitions. Returns "
+        "primary sources with citation metadata. Does not interpret, classify positions, "
+        "or recommend research strategies — the caller's agent decides how to use the data.\n\n"
+        "Tools:\n"
+        "  parliament_search_hansard — top-ranked Hansard contributions for an exact "
+        "phrase, with full citation metadata. The response also carries an envelope "
+        "of corpus totals (total_debates, total_divisions, total_written_answers, etc.) "
+        "and two preview arrays (top_debates, top_divisions) so a single call gives the "
+        "lay of the land. Note: Hansard's /search.json caps at 4 contributions per query.\n"
+        "  parliament_policy_position_summary — deterministic debate-level facet counts "
+        "for a topic (by_house, by_section, by_year, top_debates). No per-member facets.\n"
+        "  parliament_get_debate_divisions — divisions (formal votes) held within a "
+        "specific debate. Chain from parliament_search_hansard's contribution.debate_ext_id "
+        "or top_debates[].debate_ext_id. Returns empty list for the typical no-vote case.\n"
+        "  parliament_lookup_by_column — resolve an OSCOLA Hansard citation "
+        "(column + volume) to a debate. Only resolves Bound Volume citations; Daily Part "
+        "columns require reading hansard://debate/{ext}/header for column markers.\n"
+        "  parliament_find_member — name → integer member ID.\n"
+        "  parliament_member_debates — one member's Hansard contributions.\n"
+        "  parliament_member_interests — one member's registered financial interests.\n"
+        "  parliament_search_petitions — UK Parliament petitions by keyword.\n\n"
+        "Resources (host-loaded, large payloads):\n"
+        "  hansard://debate/{debate_ext_id}/header — debate overview + ordered contribution index.\n"
+        "  hansard://debate/{debate_ext_id}/contribution/{contribution_ext_id} — one contribution's full text.\n"
+        "  hansard://member/{member_id}/biography — government / opposition / committee posts with dates."
     ),
 )
 
