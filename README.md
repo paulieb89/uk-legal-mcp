@@ -47,7 +47,7 @@ Useful from Claude Desktop on a residential IP — bypasses the legislation.gov.
 uvx uk-legal-mcp
 ```
 
-Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Claude Desktop config:
 
 ```json
 {
@@ -62,8 +62,6 @@ Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_conf
 
 ### Local development
 
-Two ways to point an MCP client at your working tree (so your edits are picked up without restarting anything):
-
 **stdio against your local checkout** — spawns a fresh process per MCP connection from the project's `[project.scripts]` entry, so the source is always read as edited. Replace `<abs-path>` with the absolute path to your clone:
 
 ```json
@@ -77,23 +75,6 @@ Two ways to point an MCP client at your working tree (so your edits are picked u
   }
 }
 ```
-
-> Tip: if your shell already has `VIRTUAL_ENV` set to a different venv, the `env` block strips it so `uv` cleanly picks the project's `.venv` (cosmetic — silences a noisy warning).
-
-**HTTP** — runs the gateway once, multiple clients can connect:
-
-```bash
-python -m src.gateway
-```
-
-Listens on `http://0.0.0.0:8080` (override with `PORT=…`):
-
-```json
-{ "mcpServers": { "uk-legal": { "type": "http", "url": "http://127.0.0.1:8080/mcp" } } }
-```
-
-stdio is the safer default for contributors — no "did I restart the gateway after my edit?" failure mode. HTTP is fine when you want a single long-running process you can hit from `curl` too.
-
 ---
 
 ## What's here
