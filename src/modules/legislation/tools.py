@@ -32,8 +32,16 @@ class LegislationSearchInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     query: str = Field(..., description="Search query, e.g. 'Housing Act 1988' or 'data protection personal data'", min_length=1, max_length=500)
-    type: str | None = Field(None, description="Filter by type: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts)")
-    year: int | None = Field(None, description="Filter by year of enactment", ge=1800, le=2100)
+    type: str | None = Field(None, description=(
+        "Filter by type: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). "
+        "Exact-match — omit if you don't already know whether you're looking for an Act vs an SI."
+    ))
+    year: int | None = Field(None, description=(
+        "Filter by year of enactment (exact-match — a single integer, not a range). "
+        "Omit unless you already know the Act's year. Speculating a year (e.g. 'this is recent so it must be 2026') "
+        "and getting it wrong will zero out the result set. Better workflow: query without `year`, then read the "
+        "year from the returned results."
+    ), ge=1800, le=2100)
     fulltext: bool = Field(
         False,
         description=(
@@ -412,7 +420,16 @@ def register_tools(mcp: FastMCP) -> None:
         """Search UK legislation on legislation.gov.uk.
 
         Returns ranked results: title, type, year, number, and legislation.gov.uk URL.
-        Use legislation_get_toc to explore structure, then legislation_get_section for provisions.
+
+        Filter discipline: `type` and `year` are exact-match. Use them only when you
+        already know the value. For currency-driven searches (e.g. "the recent
+        Renters' Rights Act"), query by phrase alone and read the year from the
+        returned results — guessing a year and then filtering by it zeroes the
+        result set when the guess is wrong.
+
+        For broader concept queries (find any Act mentioning a topic), set
+        `fulltext=True`. For structural drill-in once an Act is found, chain to
+        legislation_get_toc then legislation_get_section.
 
         Args:
             params: LegislationSearchInput with query, optional type filter, optional year.
