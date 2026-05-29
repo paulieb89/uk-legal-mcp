@@ -45,8 +45,15 @@ class CaseLawSearchInput(BaseModel):
         "'KC' etc. Speculating a fuller form than what TNA indexed will return 0 hits with no error."
     ))
     party: str | None = Field(None, description="Filter by party name")
-    from_date: date | None = Field(None, description="Earliest judgment date (YYYY-MM-DD)")
-    to_date: date | None = Field(None, description="Latest judgment date (YYYY-MM-DD)")
+    from_date: date | None = Field(None, description=(
+        "Earliest judgment date (YYYY-MM-DD). NOTE: the TNA atom.xml endpoint currently "
+        "appears to ignore this filter — the same results come back regardless. "
+        "Do not rely on it to narrow output; sort+slice client-side or refine `query` instead."
+    ))
+    to_date: date | None = Field(None, description=(
+        "Latest judgment date (YYYY-MM-DD). Same caveat as `from_date` — currently silently "
+        "ignored by upstream. Filtering happens client-side at best."
+    ))
     page: int = Field(1, description="Result page number (1-indexed)", ge=1, le=50)
 
 
@@ -159,6 +166,10 @@ def register_tools(mcp: FastMCP) -> None:
         judgment://{slug}/index to discover paragraphs and judgment://{slug}/para/{eId}
         to read individual paragraphs. For content-based discovery within a
         judgment, use case_law_grep_judgment.
+
+        Coverage: TNA Find Case Law indexes UK judgments from roughly the early 2000s
+        onwards. For older authorities, search for a modern judgment that quotes them
+        and read that paragraph instead of expecting the original judgment in this index.
 
         Args:
             params: CaseLawSearchInput with query, optional filters (court, judge,
