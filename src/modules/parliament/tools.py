@@ -338,7 +338,7 @@ def _parse_top_debates_preview(payload: dict) -> list[TopDebate]:
                 debate_title=(item.get("Title") or item.get("DebateSection") or "Unknown").strip(),
                 date=sitting_date,
                 house=house,
-                contribution_count=_safe_int(item.get("Rank"), 0),
+                relevance_rank=_safe_int(item.get("Rank"), 0),
             ))
         except (ValueError, TypeError):
             continue
@@ -645,7 +645,7 @@ def register_tools(mcp: FastMCP) -> None:
                     debate_title=(d.get("Title") or section or "Unknown").strip(),
                     date=sitting_date,
                     house=house,
-                    contribution_count=int(d.get("Rank") or 0),
+                    relevance_rank=int(d.get("Rank") or 0),
                 ))
 
         recent_12 = sorted(ym_counter.items(), reverse=True)[:12]
@@ -917,6 +917,14 @@ def register_tools(mcp: FastMCP) -> None:
         then read hansard://debate/{debate_ext_id}/header to find the
         contribution at the cited column.
 
+        Each match carries `contribution_count` — the real number of
+        contributions in the debate (populated by a secondary fetch of the
+        debate's Items list, filtered to ItemType == "Contribution"). A
+        non-zero value confirms the debate exists with content; zero or null
+        means the column resolved but no contributions were retrievable.
+        `relevance_rank` is always null on column-lookup matches (the
+        column-search endpoint does not compute relevance scores).
+
         Empty `matches` typically means:
           - The column is from a Daily Part (not yet consolidated into a Bound
             Volume). The endpoint only resolves Bound Volume citations
@@ -961,13 +969,32 @@ def register_tools(mcp: FastMCP) -> None:
                 sitting_date = date.fromisoformat(sitting_iso)
                 house_raw = item.get("House") or "Commons"
                 house_val = house_raw if house_raw in ("Commons", "Lords") else "Commons"
+
+                # Secondary call: fetch the debate's Items list to populate the
+                # real contribution_count. Column-lookup is the headline lawyer
+                # use case (verifying opposing counsel's citation) and benefits
+                # from the real count; one extra HTTP call per match is fine.
+                contribution_count: int | None = None
+                try:
+                    debate_resp = await client.get(f"{HANSARD_API}/debates/Debate/{ext_id}.json")
+                    debate_resp.raise_for_status()
+                    debate_payload = debate_resp.json() if debate_resp.content else {}
+                    debate_items = debate_payload.get("Items") or []
+                    contribution_count = sum(
+                        1 for i in debate_items if i.get("ItemType") == "Contribution"
+                    )
+                except httpx.HTTPError:
+                    # Leave count as None rather than fabricate a zero.
+                    pass
+
                 matches.append(TopDebate(
-                    debate_id=0,
+                    debate_id=_safe_int(item.get("DebateSectionId"), 0),
                     debate_ext_id=ext_id,
                     debate_title=(item.get("Title") or item.get("DebateSection") or "Unknown").strip(),
                     date=sitting_date,
                     house=house_val,
-                    contribution_count=_safe_int(item.get("Rank"), 0),
+                    relevance_rank=None,  # column-search endpoint does not rank
+                    contribution_count=contribution_count,
                 ))
             except (ValueError, TypeError):
                 continue

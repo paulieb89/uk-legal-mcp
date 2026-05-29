@@ -153,7 +153,7 @@ class TopContributor(BaseModel):
 
 
 class TopDebate(BaseModel):
-    """A top debate section by contribution volume in the sampled window."""
+    """A top debate section returned as a search/lookup preview or aggregate result."""
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -162,7 +162,23 @@ class TopDebate(BaseModel):
     debate_title: str = Field(..., description="Debate title")
     date: Date = Field(..., description="Sitting date of the debate")
     house: Literal["Commons", "Lords"] = Field(..., description="House")
-    contribution_count: int = Field(..., ge=0, description="Number of contributions in this debate matching the topic")
+    relevance_rank: int | None = Field(
+        None, ge=0,
+        description=(
+            "Upstream Hansard relevance score for this debate against the search query (0–100). "
+            "Populated for relevance-scored searches (parliament_search_hansard, "
+            "parliament_policy_position_summary). Null for column-lookup matches — "
+            "the column-search endpoint does not rank."
+        ),
+    )
+    contribution_count: int | None = Field(
+        None, ge=0,
+        description=(
+            "Number of contributions in this debate. Populated only when the emitting tool "
+            "fetches the debate's full Items list (today: parliament_lookup_by_column). "
+            "Null on preview arrays where the secondary fetch is too costly."
+        ),
+    )
 
 
 class DivisionMatchLite(BaseModel):
@@ -323,11 +339,10 @@ class PolicyPositionSummary(BaseModel):
         "parliament_member_debates after picking a debate from top_debates."
     ))
     top_debates: list[TopDebate] = Field(default_factory=list, description=(
-        "Top 20 debates ranked by upstream search relevance (Rank), with "
-        "debate_ext_id for hansard://debate/{debate_ext_id}/header lookup. "
-        "contribution_count in this list carries the upstream Rank score, "
-        "not an actual contribution count (which requires fetching each "
-        "debate's full Items list — too costly for a summary)."
+        "Top 20 debates ranked by upstream relevance_rank, with debate_ext_id "
+        "for hansard://debate/{debate_ext_id}/header drill-down. "
+        "contribution_count is null in this preview shape (would require a "
+        "secondary call per debate)."
     ))
 
 
