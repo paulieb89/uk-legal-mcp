@@ -18,9 +18,8 @@ class HansardContribution(BaseModel):
 
     member_name: str = Field(..., description="Name of the contributing member (MemberName)")
     member_id: int | None = Field(None, description=(
-        "Members API integer ID. Use as `member_id` in parliament_member_debates "
-        "/ parliament_member_interests, or as {member_id} in "
-        "hansard://member/{member_id}/biography for role history."
+        "Members API integer ID. Use as {member_id} in "
+        "hansard://member/{member_id}/biography for the member's role history."
     ))
     attributed_to: str = Field(..., description="Full citable attribution string, e.g. 'The Minister of State, DESNZ (Lord Whitehead) (Lab)'. Includes role-at-time of contribution for ministerial interventions.")
     party: str | None = Field(None, description="Political party affiliation parsed from the trailing '(Party)' suffix in AttributedTo")
@@ -145,9 +144,8 @@ class TopContributor(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     member_id: int = Field(..., description=(
-        "Members API integer ID. Use as `member_id` in parliament_member_debates "
-        "/ parliament_member_interests, or as {member_id} in "
-        "hansard://member/{member_id}/biography for role history."
+        "Members API integer ID. Use as {member_id} in "
+        "hansard://member/{member_id}/biography for the member's role history."
     ))
     member_name: str = Field(..., description="Member display name")
     party: str | None = Field(None, description="Party affiliation parsed from AttributedTo")
@@ -181,8 +179,16 @@ class DivisionMatchLite(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     id: int = Field(..., description=(
-        "Division ID. Use as the `division_id` input to votes_get_division for the "
-        "full member-by-member voting record."
+        "Hansard-side division ID — distinct ID-space from the Lords/Commons Votes API. "
+        "This value does NOT chain to votes_get_division (different API). For per-member "
+        "voting, see `votes_id` below — populated when cross-resolution succeeded."
+    ))
+    votes_id: int | None = Field(None, description=(
+        "Lords/Commons Votes API division ID, cross-resolved from the upstream by "
+        "(date + house + number). Use as the `division_id` input to votes_get_division "
+        "for the full member-by-member voting record. None when the cross-resolve found "
+        "no match (e.g. some Daily Part divisions are recorded in Hansard before the "
+        "Votes API publishes them)."
     ))
     external_id: str = Field(..., description="Division GUID (ExternalId). Stable identifier for cross-reference.")
     number: str = Field(..., description="Division number within the sitting (e.g. '1', '2').")

@@ -1,0 +1,43 @@
+{
+  "_discipline": "Each seed MUST produce a non-empty primary response. If the audit reports EMPTY for a chain whose source-side returned data, that's a chain failure — not a data-availability false negative. Update seeds in this file when an upstream entity is deleted; otherwise leave alone.",
+  "_provenance": "All seeds verified live against hansard-api / legislation.gov.uk / TNA Find Case Law on 2026-05-29. The Lords division ext_ids are from the Renters' Rights Bill ping-pong of 14 Oct 2025 (3 known divisions on Motions A1/C1/H1).",
+
+  "debate_ext_ids": [
+    "1A160C9B-71AC-4761-8A13-BCEBCCFC3224"
+  ],
+  "_debate_ext_id_note": "Renters' Rights Bill, Lords, 14 Oct 2025. Known to contain 3 divisions and many contributions (Lord Pannick et al). Exercises divisions chain + contribution drill-down.",
+
+  "member_ids": [
+    62,
+    4514
+  ],
+  "_member_id_note": "62 = Lord Whitehead (now Minister of State, DESNZ — known to have governmentPosts and oppositionPosts in biography). 4514 = Sir Keir Starmer (current PM — extensive Hansard record).",
+
+  "contribution_ext_ids": [
+    "A889A40D-F841-42DD-8D0D-0323E14A8DD7"
+  ],
+  "_contribution_ext_id_note": "Baroness Bowles, Financial Services and Markets Bill, 25 Jan 2023 (verified live in PR #18 smoke tests). Exercises hansard://debate/{ext}/contribution/{ext} resource.",
+
+  "judgment_slugs": [
+    "uksc/2024/12"
+  ],
+  "_judgment_slug_note": "A real TNA Find Case Law judgment. Exercises judgment://{slug*}/{header,index,para/{eId}} resource family. Returns LegalDocML XML.",
+
+  "legislation_triples": [
+    {"type": "ukpga", "year": 1988, "number": 50, "section": "21"}
+  ],
+  "_legislation_triple_note": "Housing Act 1988 s.21 (the section we've been smoke-testing for extent + Repeal detection). Exercises legislation_get_section + legislation_get_toc + legislation://{type}/{year}/{number}/section/{section} resource.",
+
+  "column_volume_house": [
+    {"column_number": "200", "volume_number": 849, "house": "Lords"}
+  ],
+  "_column_volume_house_note": "Lord Pannick's Motion C1 citation from the Renters' Rights debate. Known-good Bound Volume resolution. Exercises parliament_lookup_by_column.",
+
+  "topic_phrases": [
+    "climate"
+  ],
+  "_topic_phrase_note": "High-volume topic (61,609 Hansard hits as of 2026-05-29). Used to exercise parliament_search_hansard and verify the corpus envelope (top_debates, top_divisions, totals) is populated.",
+
+  "petition_ids": [],
+  "_petition_id_note": "Empty — we don't currently have a stable seed. The petitions module's chains are exercised via petition.parliament.uk live queries instead. Add a seed if a stable open petition becomes a target."
+}

@@ -383,6 +383,71 @@ def _parse_division_match(item: dict) -> DivisionMatchLite | None:
         return None
 
 
+async def _populate_votes_ids(
+    client: httpx.AsyncClient, divisions: list[DivisionMatchLite]
+) -> None:
+    """Cross-resolve Hansard `id` to Lords/Commons Votes API `votes_id` in place.
+
+    The Hansard-side `/debates/divisions/{ext}` endpoint returns its own
+    integer IDs which are NOT the IDs the Lords/Commons Votes APIs use.
+    Both APIs publish the same divisions but in different ID-spaces.
+    The reliable join key is (date, house, number).
+
+    One upstream HTTP per (date, house) group — typically one call per
+    debate because all divisions in a debate share date+house.
+
+    Lords endpoint: GET lordsvotes-api.parliament.uk/data/Divisions/search
+      ?StartDate=YYYY-MM-DD&EndDate=YYYY-MM-DD
+      → list[{divisionId, number, title, ...}] (camelCase JSON)
+    Commons endpoint: GET commonsvotes-api.parliament.uk/data/divisions.json/search
+      ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+      → list[{DivisionId, Number, Title, ...}] (PascalCase JSON)
+
+    Verified live 2026-05-29 against Lords debates of 14 Oct 2025
+    (RRA Bill — Hansard Number=3 → Lords Votes divisionId=3392).
+    """
+    if not divisions:
+        return
+    # Group by (date, house) — usually all divisions share one group.
+    groups: dict[tuple[date, str], list[DivisionMatchLite]] = {}
+    for d in divisions:
+        groups.setdefault((d.date, d.house), []).append(d)
+
+    for (sitting_date, house), group in groups.items():
+        date_iso = sitting_date.isoformat()
+        if house == "Lords":
+            url = "https://lordsvotes-api.parliament.uk/data/Divisions/search"
+            params = {"StartDate": date_iso, "EndDate": date_iso}
+        else:
+            url = "https://commonsvotes-api.parliament.uk/data/divisions.json/search"
+            params = {"startDate": date_iso, "endDate": date_iso}
+        try:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            payload = resp.json()
+        except httpx.HTTPError:
+            continue
+        if not isinstance(payload, list):
+            continue
+        # Build number → votes_id map (case-tolerant for the two key conventions)
+        by_number: dict[str, int] = {}
+        for entry in payload:
+            if not isinstance(entry, dict):
+                continue
+            n = entry.get("number") if "number" in entry else entry.get("Number")
+            div_id = entry.get("divisionId") if "divisionId" in entry else entry.get("DivisionId")
+            if n is None or div_id is None:
+                continue
+            try:
+                by_number[str(n)] = int(div_id)
+            except (TypeError, ValueError):
+                continue
+        # Apply the resolved IDs back to the divisions in this group
+        for div in group:
+            if div.number and div.number in by_number:
+                div.votes_id = by_number[div.number]
+
+
 def _parse_top_divisions_preview(payload: dict) -> list[DivisionMatchLite]:
     """Parse `Divisions[]` preview from /search.json into DivisionMatchLite entries."""
     out: list[DivisionMatchLite] = []
@@ -794,8 +859,16 @@ def register_tools(mcp: FastMCP) -> None:
         statements, urgent questions, debates without a vote. A populated list
         typically appears around bill stages, motions, and contested amendments.
 
-        For one named member's voting record across many divisions, use
-        votes_search_divisions or chain via the returned `id` to votes_get_division.
+        Each returned division carries TWO IDs:
+          - `id` — Hansard-side reference. Useful for cross-referencing in Hansard.
+          - `votes_id` — Lords/Commons Votes API ID (cross-resolved by date+number).
+            Use as the `division_id` input to votes_get_division for the full
+            member-by-member voting record.
+
+        The two upstreams use distinct ID-spaces (Hansard Number=3 might be
+        Votes-API divisionId=3392). The cross-resolve runs once per (date, house)
+        group — typically one extra HTTP per debate. `votes_id` is None when the
+        cross-resolve found no match.
 
         Args:
             params: GetDebateDivisionsInput with the debate_ext_id GUID
@@ -821,6 +894,10 @@ def register_tools(mcp: FastMCP) -> None:
             parsed = _parse_division_match(item) if isinstance(item, dict) else None
             if parsed is not None:
                 divisions.append(parsed)
+
+        # Cross-resolve Hansard-side `id` to Lords/Commons Votes API `votes_id`
+        # by (date, house) group. Same (date, house) → single upstream call.
+        await _populate_votes_ids(client, divisions)
 
         return DebateDivisions(
             debate_ext_id=params.debate_ext_id,

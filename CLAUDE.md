@@ -72,6 +72,15 @@ CLML (legislation.gov.uk) and Hansard API schemas captured during the May 2026 p
 
 Auto-loaded into context at session start via `MEMORY.md`. If you're investigating an upstream schema bug, read these before re-probing.
 
+## Cartography & parameter audits
+
+Two re-runnable audit scripts in `tests/`. Run them before merging anything that touches model field descriptions, tool docstrings, or upstream HTTP calls:
+
+- `tests/audit_parliament_params.py` — **static, no network.** Walks every `client.get(f"{HANSARD_API}/…", params=…)` call via AST and validates the param keys against `references/hansard-swagger-v1.json`. Catches silent-200 wire-name lies (e.g. sending `column` when the spec only declares `columnNumber`). Trigger: `uv run python tests/audit_parliament_params.py`.
+- `tests/audit_cartography_chains.py` — **live, needs the local gateway running.** Walks every Field description and tool docstring for `Use as {x} in <consumer>` chain promises, then executes each chain against the gateway with seeds from `tests/cartography_seeds.json`. Reports PASS / FAIL / EMPTY / SKIPPED. Catches runtime lies that the static audit cannot (e.g. cross-API ID-space mismatches like Hansard division `id` vs Lords Votes `divisionId`). Trigger: `RUN_LIVE_AUDIT=1 uv run python tests/audit_cartography_chains.py`.
+
+Together they cover the three layers a parser can silently fail at (Obs 155): wire names (static audit), endpoint choice (manual), and chain honesty (live audit). Decision tree for failed chains: drop the cartography (honest disownment) OR cross-resolve at the server. See `parliament_get_debate_divisions`'s `_populate_votes_ids` for the cross-resolve pattern.
+
 ## Known APIs not yet integrated
 
 - `committees-api.parliament.uk` — Committee publications and document retrieval (large binary/HTML blobs)
