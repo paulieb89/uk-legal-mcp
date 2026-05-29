@@ -42,7 +42,16 @@ MEMBERS_BASE = "https://members-api.parliament.uk/api"
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
-_COLUMN_NUMBER_RE = re.compile(r'data-column-number="(\d+)"')
+# Broad data-column-number= scan is insufficient — cross-reference spans
+# (<span class="cross-reference" data-column-number="N" data-house-id="...">) embed
+# column numbers from other debates or houses and must not be treated as positional
+# markers in the current contribution. Parse each <span> individually instead.
+_SPAN_RE = re.compile(r"<span\b([^>]*)>", re.IGNORECASE)
+_COL_NUM_ATTR_RE = re.compile(r'\bdata-column-number="(\d+)"')
+# Real column-boundary markers always have class starting with "column-number"
+# (observed values: "column-number", "column-number column-hidden",
+#  "column-number column-only"). Cross-references use class="cross-reference".
+_IS_COLUMN_MARKER_RE = re.compile(r'\bclass="column-number[\s"]')
 
 
 def _strip_html(text: str) -> str:
@@ -50,15 +59,32 @@ def _strip_html(text: str) -> str:
 
 
 def _extract_column_numbers(html: str) -> list[int]:
-    """Find every `data-column-number` integer in a contribution's HTML.
+    """Find every `data-column-number` integer on a column-boundary span.
 
-    Hansard embeds column markers as `<span class="column-number..."
-    data-column-number="N">` at the position where each printed-record
-    column begins.
+    Hansard emits column markers as `<span class="column-number[...]"
+    data-column-number="N">` at each printed-column boundary. Some
+    contributions also contain cross-reference spans
+    (`<span class="cross-reference" data-column-number="N" data-house-id="...">`)
+    that cite a column in a *different* debate or house — those must be excluded
+    or they corrupt column_start/column_end for the current contribution.
+
+    Verified live against 7+ debates (May 2026): cross-references appear in
+    both Houses across bill stages, budget debates, and immigration debates.
+    The worst case observed (Renters' Rights Bill Lords, 14 Oct 2025) produced
+    the impossible span column_start=637, column_end=200 for Lord Pannick's
+    contribution, where Commons col-637 preceded the real Lords col-200 marker.
     """
     if not html:
         return []
-    return [int(m) for m in _COLUMN_NUMBER_RE.findall(html)]
+    out: list[int] = []
+    for m in _SPAN_RE.finditer(html):
+        attrs = m.group(1)
+        if not _IS_COLUMN_MARKER_RE.search(attrs):
+            continue
+        col_m = _COL_NUM_ATTR_RE.search(attrs)
+        if col_m:
+            out.append(int(col_m.group(1)))
+    return out
 
 
 def _assign_columns(items: list[dict]) -> dict[int, tuple[int | None, int | None]]:

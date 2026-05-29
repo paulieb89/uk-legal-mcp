@@ -14,6 +14,10 @@ A Model Context Protocol server for UK legal research. One MCP connection wires 
 
  No API keys required for the legal sources (HMRC's authenticated endpoint is optional).
 
+ For best results remind the agent to use the uk-legal-mcp server. The location depends on the agent or setup you are using. It maybe project instructions, MEMORY.md, AGENTS.md etc.
+
+ If you face issues refresh the server in the Apps / Customise menu. 
+
 ---
 
 ## Connect
