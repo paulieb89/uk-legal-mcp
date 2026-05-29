@@ -38,7 +38,12 @@ class CaseLawSearchInput(BaseModel):
         "'ukut/iac', 'ukut/aac', 'ukut/tcc', 'ukut/lc', "
         "'ukftt/tc', 'ukftt/grc', 'nica', 'niqb'."
     ))
-    judge: str | None = Field(None, description="Filter by judge surname")
+    judge: str | None = Field(None, description=(
+        "Filter by judge surname. Case-insensitive substring match against the indexed form. "
+        "Use the surname alone ('Reed', 'Sumption') or with the bare title ('Lord Reed'). "
+        "Honorific suffixes silently zero the result set — do not append 'JSC', 'of Allermuir', "
+        "'KC' etc. Speculating a fuller form than what TNA indexed will return 0 hits with no error."
+    ))
     party: str | None = Field(None, description="Filter by party name")
     from_date: date | None = Field(None, description="Earliest judgment date (YYYY-MM-DD)")
     to_date: date | None = Field(None, description="Latest judgment date (YYYY-MM-DD)")
