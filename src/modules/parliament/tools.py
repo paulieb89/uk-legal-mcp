@@ -97,8 +97,8 @@ class HansardSearchInput(BaseModel):
         "offset=offset+returned to paginate; has_more flags whether more remain."
     ))
     limit: int = Field(20, ge=1, le=100, description=(
-        "Max contributions per call. Default 20; raise toward 100 for bulk sweeps "
-        "(paginated via offset). The total corpus size is in total_corpus on the response."
+        "Max contributions per call (1–100). Default 20. Paginate further with "
+        "offset; total corpus size is in total_corpus on the response."
     ))
 
 
@@ -190,11 +190,12 @@ class MemberInterestsInput(BaseModel):
     limit: int = Field(
         20,
         ge=1,
-        le=100,
+        le=20,
         description=(
-            "Maximum interests to return in this call. Default 20 keeps "
-            "responses focused; raise to 50 or 100 only when you need a "
-            "bulk view and have context headroom to spend."
+            "Max interests per call. Hard-capped at 20 by the upstream "
+            "interests-api.parliament.uk (verified live 2026-05-29: "
+            "Take=100 still returns 20). For prolific members, paginate via "
+            "offset; total size is in totalResults on the response."
         ),
     )
     max_description_chars: int = Field(

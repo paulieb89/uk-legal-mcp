@@ -187,10 +187,9 @@ def register_tools(mcp: FastMCP) -> None:
         snippets centred on the match — so the LLM can decide which full
         paragraphs to read via judgment://{slug}/para/{eId}.
 
-        Use this when answering content-based questions ("what did the judges
-        say about negligence?", "find the test for foreseeability", "did this
-        case cite Donoghue?") rather than navigating by paragraph number
-        (which uses the index resource).
+        Content-based search within one judgment (e.g. "negligence", "test for
+        foreseeability", "Donoghue"). For paragraph-number navigation, read
+        judgment://{slug}/index instead.
 
         Pattern is regex; if it doesn't compile, falls back to literal
         substring search.

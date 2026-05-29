@@ -81,8 +81,8 @@ class LegislationTOC(BaseModel):
     total_items: int = Field(
         ...,
         description=(
-            "Total number of structural items parsed from the XML, "
-            "before offset/limit. Use this to know the full size of the TOC."
+            "Total structural items parsed from the XML, before offset/limit. "
+            "Compare to `returned` and `has_more` to decide whether to paginate."
         ),
     )
     has_more: bool = Field(
