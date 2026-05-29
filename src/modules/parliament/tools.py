@@ -7,6 +7,7 @@ Upstream APIs (all public, no auth required):
   - members-api.parliament.uk — MPs and Lords lookup
 """
 
+import asyncio
 import re
 from datetime import date
 from typing import Literal
@@ -85,13 +86,19 @@ class HansardSearchInput(BaseModel):
         "For full contribution text without the cap, read the resource "
         "hansard://debate/{debate_ext_id}/contribution/{contribution_ext_id}."
     ))
-    offset: int = Field(0, ge=0, le=2000, description=(
-        "Number of contributions to skip before this page. Default 0. "
-        "Re-call with offset=offset+returned while has_more is true to paginate."
+    contribution_type: Literal["Spoken", "Written", "Corrections"] = Field("Spoken", description=(
+        "Which Hansard section to paginate. 'Spoken' = chamber + Westminster Hall debates "
+        "(the default; what a lawyer usually means). 'Written' = written answers and "
+        "statements. 'Corrections' = published corrections to the record. The corpus envelope "
+        "(total_debates, total_divisions, etc.) is independent of this and always populated."
+    ))
+    offset: int = Field(0, ge=0, le=5000, description=(
+        "Skip this many contributions before the page. Default 0. Re-call with "
+        "offset=offset+returned to paginate; has_more flags whether more remain."
     ))
     limit: int = Field(20, ge=1, le=100, description=(
-        "Maximum contributions to return in this call. Default 20 keeps "
-        "responses focused; raise to 100 for a bulk sweep."
+        "Max contributions per call. Default 20; raise toward 100 for bulk sweeps "
+        "(paginated via offset). The total corpus size is in total_corpus on the response."
     ))
 
 
@@ -400,8 +407,15 @@ def register_tools(mcp: FastMCP) -> None:
         debate_ext_id and contribution_ext_id to drill into full content via the
         hansard:// resource family.
 
+        Pagination: limit + offset honour the upstream `/search/contributions/{type}.json`
+        endpoint, which actually paginates (verified live 2026-05-29). For breadth
+        across a topic without reading every contribution, see
+        parliament_policy_position_summary; for one named member's contributions, see
+        parliament_member_debates.
+
         Args:
-            params: HansardSearchInput with query, optional date range, house, member, text_mode.
+            params: HansardSearchInput with query, optional date range, house, member_id,
+                text_mode, contribution_type, offset, limit.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {
@@ -418,10 +432,34 @@ def register_tools(mcp: FastMCP) -> None:
         if params.member_id:
             qp["memberId"] = params.member_id
 
-        resp = await client.get(f"{HANSARD_API}/search.json", params=qp)
-        resp.raise_for_status()
-        payload = resp.json()
-        contributions = _parse_hansard_contributions(payload, text_mode=params.text_mode)
+        # Fire both upstream calls in parallel:
+        #   1. /search/contributions/{type}.json — paginated contributions (real take/skip)
+        #   2. /search.json                       — corpus envelope (totals + top_debates +
+        #                                           top_divisions previews; ignored
+        #                                           Contributions[] since the dedicated
+        #                                           endpoint paginates correctly)
+        # Envelope query: same filters minus take/skip (envelope doesn't paginate anyway).
+        envelope_qp = {k: v for k, v in qp.items() if k not in ("take", "skip")}
+        contribs_task = client.get(
+            f"{HANSARD_API}/search/contributions/{params.contribution_type}.json",
+            params=qp,
+        )
+        envelope_task = client.get(f"{HANSARD_API}/search.json", params=envelope_qp)
+        contribs_resp, envelope_resp = await asyncio.gather(contribs_task, envelope_task)
+        contribs_resp.raise_for_status()
+        envelope_resp.raise_for_status()
+        contribs_payload = contribs_resp.json()
+        payload = envelope_resp.json()  # name 'payload' preserved for envelope-field reads below
+
+        # The dedicated contributions endpoint returns Results[] (same SearchReferencesItem
+        # shape as /search.json's Contributions[]); reshape it for the existing parser.
+        contributions = _parse_hansard_contributions(
+            {"Contributions": contribs_payload.get("Results") or []},
+            text_mode=params.text_mode,
+        )
+        # Use the dedicated endpoint's total when available — it's authoritative for the
+        # contribution category we paginated; fall back to /search.json's TotalContributions.
+        total_corpus = contribs_payload.get("TotalResultCount") or payload.get("TotalContributions")
         party_breakdown, house_breakdown, date_range = _compute_search_facets(contributions)
         return HansardSearchResult(
             query=params.query,
@@ -433,7 +471,7 @@ def register_tools(mcp: FastMCP) -> None:
             offset=params.offset,
             limit=params.limit,
             total=len(contributions),
-            total_corpus=payload.get("TotalContributions"),
+            total_corpus=total_corpus,
             total_debates=payload.get("TotalDebates"),
             total_divisions=payload.get("TotalDivisions"),
             total_written_statements=payload.get("TotalWrittenStatements"),
