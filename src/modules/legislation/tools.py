@@ -13,6 +13,8 @@ from datetime import date
 import httpx
 from fastmcp import FastMCP, Context
 from lxml import etree, html
+
+from ...xml_safe import parse_xml
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import LegislationUpstreamError, format_http_error
@@ -269,8 +271,7 @@ def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> Legislat
     we fall back to that to keep test fixtures portable, but real CLML uses
     RestrictExtent.
     """
-    from lxml import etree
-    root = etree.fromstring(xml_text.encode())
+    root = parse_xml(xml_text)
     ns = {
         "leg": "http://www.legislation.gov.uk/namespaces/legislation",
         "ukm": "http://www.legislation.gov.uk/namespaces/metadata",
@@ -397,8 +398,7 @@ def _parse_toc_xml(xml_text: str) -> list[str]:
     Returns every structural element that has an @id and a <Title>, in
     document order. No slicing — callers apply offset/limit themselves.
     """
-    from lxml import etree
-    root = etree.fromstring(xml_text.encode())
+    root = parse_xml(xml_text)
     ns = {"leg": "http://www.legislation.gov.uk/namespaces/legislation"}
     items = []
     for el in root.iter():
@@ -445,7 +445,7 @@ def register_tools(mcp: FastMCP) -> None:
 
         resp = await client.get(f"{LEGISLATION_BASE}{path}", params=qp)
         resp.raise_for_status()
-        root = etree.fromstring(resp.content)
+        root = parse_xml(resp.content)
 
         total_el = root.findtext(".//os:totalResults", namespaces=ATOM_NS)
         total = int(total_el) if total_el else 0

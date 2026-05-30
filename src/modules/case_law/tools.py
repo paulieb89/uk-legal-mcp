@@ -75,8 +75,8 @@ def _parse_atom_feed(xml_bytes: bytes) -> JudgmentSearchResult:
     the full root-cause analysis.
     """
     try:
-        from lxml import etree
-        root = etree.fromstring(xml_bytes)
+        from ...xml_safe import parse_xml
+        root = parse_xml(xml_bytes)
         ns = {
             "atom": "http://www.w3.org/2005/Atom",
             "tna": "https://caselaw.nationalarchives.gov.uk",
