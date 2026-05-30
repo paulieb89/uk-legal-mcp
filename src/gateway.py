@@ -1,8 +1,8 @@
 """
 uk-legal-mcp gateway
 
-Single FastMCP v3 gateway that mounts all eight legal research sub-modules in-process.
-One deployed service. One MCP connection. 24 tools across 8 namespaced modules.
+Single FastMCP v3 gateway that mounts eight legal research sub-modules in-process.
+One deployed service. One MCP connection.
 
 Architecture:
   gateway
@@ -15,7 +15,7 @@ Architecture:
   ├── citations    (namespace: citations_)    — OSCOLA parser (self-contained ★)
   └── hmrc         (namespace: hmrc_)         — VAT rates, MTD, GOV.UK guidance
 
-Transport: Streamable HTTP, port 8000
+Transport: Streamable HTTP, port from $PORT (default 8080)
 Region:    lhr (London) — co-located with UK legal data sources
 """
 
@@ -228,14 +228,18 @@ gateway.add_transform(ResourcesAsTools(gateway))
 # Mount sub-modules (in-process — zero network hop)
 # ---------------------------------------------------------------------------
 
-gateway.mount(case_law_mcp,    namespace="case_law")
-gateway.mount(legislation_mcp, namespace="legislation")
-gateway.mount(parliament_mcp,  namespace="parliament")
-gateway.mount(bills_mcp,       namespace="bills")
-gateway.mount(votes_mcp,       namespace="votes")
-gateway.mount(committees_mcp,  namespace="committees")
-gateway.mount(citations_mcp,   namespace="citations")
-gateway.mount(hmrc_mcp,        namespace="hmrc")
+MOUNTED_MODULES: tuple[tuple[str, FastMCP], ...] = (
+    ("case_law",    case_law_mcp),
+    ("legislation", legislation_mcp),
+    ("parliament",  parliament_mcp),
+    ("bills",       bills_mcp),
+    ("votes",       votes_mcp),
+    ("committees",  committees_mcp),
+    ("citations",   citations_mcp),
+    ("hmrc",        hmrc_mcp),
+)
+for _ns, _sub in MOUNTED_MODULES:
+    gateway.mount(_sub, namespace=_ns)
 
 # ---------------------------------------------------------------------------
 # Resource templates — registered at GATEWAY level (not on sub-MCPs).
@@ -381,7 +385,7 @@ async def health(request: Request) -> Response:
     return JSONResponse({
         "status": "ok",
         "server": "uk-legal-mcp",
-        "modules": 8,
+        "modules": len(MOUNTED_MODULES),
     }, headers=CORS_HEADERS)
 
 
