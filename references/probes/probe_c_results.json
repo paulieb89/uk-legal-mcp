@@ -1,0 +1,210 @@
+{
+  "model": "gpt-5",
+  "results": [
+    {
+      "prompt_id": "pannick_rra",
+      "surface": "A_namespaced",
+      "tool_calls": [
+        {
+          "name": "parliament_search_hansard",
+          "args": "{\"query\":\"\\\"Renters' Rights Bill\\\" 14 October 2025 Pannick\", \"house\":\"Lords\"}"
+        }
+      ],
+      "no_tool_response_excerpt": null,
+      "raw_finish_reason": "tool_calls",
+      "expected_any": [
+        "parliament_find_member",
+        "parliament_search_hansard",
+        "parliament_get_debate_contributions"
+      ],
+      "hit": true
+    },
+    {
+      "prompt_id": "pannick_rra",
+      "surface": "B_primitive",
+      "tool_calls": [
+        {
+          "name": "legal_search",
+          "args": "{\"query\": \"Renters' Rights Bill Lord Pannick 14 October 2025 Hansard\", \"scope\": \"hansard\", \"filters\": {\"date\": \"2025-10-14\"}}"
+        }
+      ],
+      "no_tool_response_excerpt": null,
+      "raw_finish_reason": "tool_calls",
+      "expected_any": [
+        "legal_search",
+        "legal_get"
+      ],
+      "hit": true
+    },
+    {
+      "prompt_id": "hale_online_safety",
+      "surface": "A_namespaced",
+      "tool_calls": [
+        {
+          "name": "parliament_find_member",
+          "args": "{\"name\":\"Baroness Hale of Richmond\"}"
+        }
+      ],
+      "no_tool_response_excerpt": null,
+      "raw_finish_reason": "tool_calls",
+      "expected_any": [
+        "parliament_find_member",
+        "parliament_search_hansard",
+        "parliament_get_debate_contributions"
+      ],
+      "hit": true
+    },
+    {
+      "prompt_id": "hale_online_safety",
+      "surface": "B_primitive",
+      "tool_calls": [
+        {
+          "name": "legal_search",
+          "args": "{\"query\":\"Baroness Hale Online Safety Bill Lords\", \"scope\":\"hansard\"}"
+        }
+      ],
+      "no_tool_response_excerpt": null,
+      "raw_finish_reason": "tool_calls",
+      "expected_any": [
+        "legal_search",
+        "legal_get"
+      ],
+      "hit": true
+    },
+    {
+      "prompt_id": "smith_v_hmrc",
+      "surface": "A_namespaced",
+      "tool_calls": [
+        {
+          "name": "case_law_search",
+          "args": "{\"query\":\"Smith v HMRC VAT recovery\"}"
+        }
+      ],
+      "no_tool_response_excerpt": null,
+      "raw_finish_reason": "tool_calls",
+      "expected_any": [
+        "case_law_search",
+        "citations_parse",
+        "citations_resolve"
+      ],
+      "hit": true
+    },
+    {
+      "prompt_id": "smith_v_hmrc",
+      "surface": "B_primitive",
+      "tool_calls": [
+        {
+          "name": "legal_search",
+          "args": "{\"query\":\"\\\"Smith v HMRC\\\" VAT recovery neutral citation\", \"scope\":\"case_law\"}"
+        }
+      ],
+      "no_tool_response_excerpt": null,
+      "raw_finish_reason": "tool_calls",
+      "expected_any": [
+        "legal_search",
+        "legal_verify_citation"
+      ],
+      "hit": true
+    },
+    {
+      "prompt_id": "manchester_landlord",
+      "surface": "A_namespaced",
+      "tool_calls": [
+        {
+          "name": "bills_search_bills",
+          "args": "{\"query\": \"Renters' Rights Bill\"}"
+        },
+        {
+          "name": "bills_search_bills",
+          "args": "{\"query\": \"Renters Rights Bill\"}"
+        }
+      ],
+      "no_tool_response_excerpt": null,
+      "raw_finish_reason": "tool_calls",
+      "expected_any": [
+        "legislation_search",
+        "legislation_get_section",
+        "legislation_get_toc",
+        "bills_search_bills",
+        "bills_get_bill"
+      ],
+      "hit": true
+    },
+    {
+      "prompt_id": "manchester_landlord",
+      "surface": "B_primitive",
+      "tool_calls": [
+        {
+          "name": "legal_search",
+          "args": "{\"query\":\"Renters' Rights Bill status section 21 abolition status bill progress\", \"scope\":\"bills\"}"
+        }
+      ],
+      "no_tool_response_excerpt": null,
+      "raw_finish_reason": "tool_calls",
+      "expected_any": [
+        "legal_search",
+        "legal_get"
+      ],
+      "hit": true
+    },
+    {
+      "prompt_id": "pet_abduction_act",
+      "surface": "A_namespaced",
+      "tool_calls": [
+        {
+          "name": "legislation_search",
+          "args": "{\"query\":\"Pet Abduction Act 2024\"}"
+        }
+      ],
+      "no_tool_response_excerpt": null,
+      "raw_finish_reason": "tool_calls",
+      "expected_any": [
+        "legislation_search",
+        "legislation_get_toc",
+        "legislation_get_section"
+      ],
+      "hit": true
+    },
+    {
+      "prompt_id": "pet_abduction_act",
+      "surface": "B_primitive",
+      "tool_calls": [
+        {
+          "name": "legal_search",
+          "args": "{\"query\":\"\\\"Pet Abduction Act 2024\\\" cat abduction sentencing maximum penalty\", \"scope\":\"legislation\"}"
+        }
+      ],
+      "no_tool_response_excerpt": null,
+      "raw_finish_reason": "tool_calls",
+      "expected_any": [
+        "legal_search",
+        "legal_get"
+      ],
+      "hit": true
+    },
+    {
+      "prompt_id": "oscola_citation",
+      "surface": "A_namespaced",
+      "tool_calls": [],
+      "no_tool_response_excerpt": "R v Brown [1994] 1 AC 212 (HL)",
+      "raw_finish_reason": "stop",
+      "expected_any": [
+        "citations_parse",
+        "citations_resolve"
+      ],
+      "hit": false
+    },
+    {
+      "prompt_id": "oscola_citation",
+      "surface": "B_primitive",
+      "tool_calls": [],
+      "no_tool_response_excerpt": "R v Brown [1994] 1 AC 212 (HL).",
+      "raw_finish_reason": "stop",
+      "expected_any": [
+        "legal_format_citation",
+        "legal_parse_citations"
+      ],
+      "hit": false
+    }
+  ]
+}
