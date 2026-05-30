@@ -32,7 +32,7 @@ Composed of two external-review findings plus four backlog items. No new tools, 
 - **N1 — AI-disclosure accuracy**: `citations_parse` `disambiguate` default `True→False` (pure regex unless opted in; when on, resolves via the *connected client's* model, not the server). `server://about` reworded `no_llm_in_loop`→`llm_posture`.
 - **N2 — bridge-tool annotation parity**: `list_resources`/`read_resource`/`list_prompts`/`get_prompt` now carry the full read-only annotation quartet, via a custom `Transform.list_tools` in `gateway.py`.
 - **v1.2-3 / v1.2-8 / v1.2-9** description tweaks: case_law narrow-first nudge; resource-URI mentions name a `read_resource(...)` companion; bills `session` clarified as numeric.
-- **Gateway integration tests** added (`tests/test_gateway.py`, 14 tests) — salvaged from a closed Devin PR, FastMCP version bump deliberately dropped. Suite now 136 non-live tests.
+- **Gateway integration tests** added (`tests/test_gateway.py`) — salvaged from a closed Devin PR (FastMCP version bump deliberately dropped). First gateway/integration coverage (server identity, tool listing + schema, companion tools, custom HTTP routes); previously only citation unit tests existed.
 - **CI tidy**: release actions bumped to Node 24 (`checkout@v5`, `setup-uv@v6`) + `skip-existing` kebab-case.
 
 ### 0.5.0 hardening ("v1.1") — shipped earlier, now released as part of 0.5.1
@@ -83,7 +83,7 @@ All 5 passed on 2026-05-30 unprimed against production. See `CHANGELOG.md` for v
 ## 6. Decisions in force (don't relitigate)
 
 - **Distribution (Phase C)**: Option C1 — all 11 plugins free at `uk-agents/uk-legal-plugins` (user owns at `/home/bch/company/skills-uk/uk-legal-plugins/`). No premium fork. Skill revenue not the v1 monetisation path. Future revenue paths (premium MCP tier, BOUCH advisory) recorded for context only.
-- **Content discipline (Phase D)**: tool descriptions, module instructions, and skills are NEUTRAL PROCEDURAL TEMPLATES, not OPINIONATED ADVICE. ChatGPT is the highest-risk surface — descriptions especially must not carry legal positions. Existing 140 skills already maintain this; new skills must too.
+- **Content discipline (Phase D)**: tool descriptions, module instructions, and skills are NEUTRAL PROCEDURAL TEMPLATES, not OPINIONATED ADVICE. ChatGPT is the highest-risk surface — descriptions especially must not carry legal positions. Existing skills already maintain this; new skills must too.
 - **Keep the resource bridges** (`ResourcesAsTools`/`PromptsAsTools`): cross-client testing showed ChatGPT can't consume the double-wrapped `{result:"<json>"}` output (1-token), but **Claude Code consumes it perfectly** and the bridge `list_resources` is the **only** surface that discovers the 8 resource templates (native `resources/list` returns static resources only). So the bridges are load-bearing for native-tool clients; ChatGPT's limitation is non-blocking (it succeeds via the named twin tools). N2's annotations are therefore justified, not throwaway. Do NOT remove the bridges. (Full diagnosis: `post-0.5.0-backlog.md` v1.2-11.)
 - **Versioning**: 0.5.1 is tagged (`v0.5.1`) + on PyPI. Lesson learned (Obs 231): a manual `fly deploy` ships prod but updates no recording surface — 0.5.0 ran in prod for days while PyPI/tags sat at 0.4.4. At every release boundary cross-check prod `/health` vs PyPI-latest vs git tag vs `uvx` resolution; they must agree.
 - **Branch hygiene**: All implementation on feature branches, never directly to main. Per Obs 192/193/205.
@@ -111,9 +111,9 @@ Renamed `docs/post-0.5.0-backlog.md`. Items tagged by actual semver target. Item
 
 **Next grouping (0.6.0)**: v1.2-2 + v1.2-4 (new resource template + new tool) is the headline; v1.2-1 (Hansard drift) and the FastMCP 3.3.1 eval are the other candidates. Infra items (v1.2-5/6/10) are independent of any server release. NB the Node-24 CI deprecation is already fixed (`c24d1b1`) — that was separate from v1.2-5/6/10.
 
-## 8. Phase B — 5 new skills (DEFERRED 1–2 weeks)
+## 8. Phase B — 5 new skills (DEFERRED — pending real lawyer dogfeed signal)
 
-Wait for real lawyer dogfeed on production 0.5.0 to surface failure modes the skills should be designed against. Then author via Anthropic's `skill-creator` skill. Template: `regulatory-legal-uk:reg-feed-watcher` (MCP-native, named tools in prose, source-tagged outputs, no-silent-supplement discipline).
+Wait for real lawyer dogfeed on production to surface failure modes the skills should be designed against. Then author via Anthropic's `skill-creator` skill. Template: `regulatory-legal-uk:reg-feed-watcher` (MCP-native, named tools in prose, source-tagged outputs, no-silent-supplement discipline).
 
 | # | Skill | Plugins | Workflow chain |
 |---|---|---|---|
@@ -133,7 +133,7 @@ uk-legal-mcp/
 ├── CHANGELOG.md                       # 0.5.0 entry + verdict matrix
 ├── README.md                          # user-facing
 ├── fastmcp.json                       # declarative manifest (A2)
-├── pyproject.toml                     # version = "0.5.0" (UNTAGGED)
+├── pyproject.toml                     # version source (tagged + published; check the file for the current value)
 ├── fly.toml                           # production Fly config
 ├── server.py                          # stdio entrypoint (PyPI install)
 ├── src/
@@ -151,9 +151,9 @@ uk-legal-mcp/
 │       ├── citations/                 # OSCOLA parser (self-contained, no upstream)
 │       └── hmrc/                      # VAT/MTD/guidance
 ├── tests/
-│   ├── test_citations.py              # 35 citation unit tests (regex, resolution, disambiguation)
+│   ├── test_citations.py              # citation unit tests (regex, resolution, disambiguation)
 │   ├── test_gateway.py                # gateway integration tests (identity, tool/schema, routes) — added 0.5.1
-│   ├── test_*.py                      # other unit tests; full non-live suite = 136 pass
+│   ├── test_*.py                      # other unit tests; run the full non-live suite via pytest -m "not live"
 │   ├── audit_descriptions.py          # regenerate doc + --check 150-word cap
 │   ├── audit_parliament_params.py     # static param-name audit
 │   ├── audit_parliament_responses.py  # static response-field audit (v1.2-1 findings here)
@@ -211,14 +211,14 @@ The other ~220 observations in the log are historical context for prior work and
 cd /home/bch/dev/mcpfleet/uk-legal-mcp
 git log --oneline -10                         # last 10 commits on main
 git status --short                            # working tree state
-git tag --list --sort=-v:refname | head -3    # latest tag should be v0.5.1
+git tag --list --sort=-v:refname | head -3    # note the latest tag
 curl -sS https://uk-legal-mcp.fly.dev/health  # production health
-curl -sS https://pypi.org/pypi/uk-legal-mcp/json | python3 -c "import sys,json;print(json.load(sys.stdin)['info']['version'])"  # PyPI: 0.5.1
-uv run pytest -m "not live" -q                # 136 pass expected
+curl -sS https://pypi.org/pypi/uk-legal-mcp/json | python3 -c "import sys,json;print(json.load(sys.stdin)['info']['version'])"  # PyPI latest
+uv run pytest -m "not live" -q                # all non-live tests should pass
 uv run python -m tests.audit_descriptions --check  # no tools over 150-word cap
 ```
 
-Cross-surface version check (Obs 231): prod `/mcp` initialize version, PyPI latest, git tag, and `uvx uk-legal-mcp` resolution should ALL read `0.5.1`. If they diverge, a manual deploy bypassed the release pipeline — reconcile before shipping more.
+Cross-surface version check (Obs 231): the `pyproject.toml` version, prod `/mcp` initialize version, PyPI latest, the latest git tag, and `uvx uk-legal-mcp` resolution should ALL read the **same** version. If they diverge, a manual deploy bypassed the release pipeline — reconcile before shipping more. (At the time of writing that version is 0.5.1.)
 
 ---
 

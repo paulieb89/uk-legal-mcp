@@ -1,6 +1,6 @@
 # Post-0.5.0 backlog
 
-Pre-existing drift and follow-up work surfaced during the hardening pass that shipped as **0.5.0** (production at `uk-legal-mcp.fly.dev`, currently untagged pending soak). "v1.2" used in earlier filenames and item IDs was project-shorthand for "the next batch of work" — it is NOT a semver promise. Actual semver targets are tagged on each item.
+Pre-existing drift and follow-up work surfaced during the hardening pass that shipped as **0.5.0**, now released as part of **v0.5.1** (tagged, on PyPI, production at `uk-legal-mcp.fly.dev`). "v1.2" used in earlier filenames and item IDs was project-shorthand for "the next batch of work" — it is NOT a semver promise. Actual semver targets are tagged on each item.
 
 Semver targets in use:
 
@@ -8,11 +8,11 @@ Semver targets in use:
 - **0.6.0 (minor)** — new optional features that don't break existing behaviour (new tool, new resource, new envelope field).
 - **infrastructure** — CI / tests / audit scripts; no server release.
 - **plugin** — work in `uk-legal-plugins/` (separate repo, separate cadence).
-- **Phase B** — the 5 new skills (deferred 1–2 weeks per main plan).
+- **Phase B** — the 5 new skills (deferred pending lawyer dogfeed signal — see handover §8).
 
 Item IDs (v1.2-N) are retained for stability of cross-references in commits, observations, and prior conversation.
 
-Last updated: 2026-05-30 (post 0.5.0 close-off).
+Last updated: 2026-05-30 (post 0.5.1 release).
 
 ## Server-side drift (carried over from A5 audit work)
 
@@ -68,7 +68,7 @@ Two pointers in one. Native clients keep the protocol; tool-only clients see bot
 
 **Two-tier fix — split between description layer and skill layer:**
 
-The 30-min description rewrite is the *baseline fix* for the ChatGPT cohort (which has no skills layer to lean on). The *real workflow tuning* belongs in Phase B's 5 new skills (deferred 1–2 weeks per main plan). Skills can carry the verbose "if user supplies a Hansard URI, call read_resource directly; otherwise compose find_member → get_debate_contributions and never construct a hansard:// URI yourself" guidance that tool descriptions cannot — no 150-word cap, no neutrality constraint on procedural specificity.
+The 30-min description rewrite is the *baseline fix* for the ChatGPT cohort (which has no skills layer to lean on). The *real workflow tuning* belongs in Phase B's 5 new skills (deferred — see handover §8). Skills can carry the verbose "if user supplies a Hansard URI, call read_resource directly; otherwise compose find_member → get_debate_contributions and never construct a hansard:// URI yourself" guidance that tool descriptions cannot — no 150-word cap, no neutrality constraint on procedural specificity.
 
 | Layer | Carries | Word budget |
 |---|---|---|
@@ -87,6 +87,8 @@ Dogfeed trace showed the agent attempting `session_id="2025"` (year string) and 
 ~5 minute fix in `bills/models.py` (or wherever the input model lives).
 
 ### v1.2-11 — `list_resources` empty on ChatGPT (ResourcesAsTools double-encoding)  *[retargeted 0.6.0 — design choice, NOT a 0.5.1 blocker; see 2026-05-30 update below]*
+
+> **RESOLVED — KEEP THE BRIDGES.** Server is healthy; only ChatGPT can't consume the double-wrapped output, while Claude Code can and depends on it for template discovery. The "remove the bridge (option A)" recommendation further down is **superseded** — read the two `UPDATE 2026-05-30` blocks at the end of this item for the final reasoning. Optional 0.6.0 follow-up: a clean named catalog tool for ChatGPT discovery.
 
 Test 5 dogfeed trace shows tool calls 2 and 3 both call `list_resources` and receive `"No tool response"` (1 token output). The agent retries once, gets nothing again, and proceeds via named tools (`legislation_get_*`, `parliament_search_*`). Working around it doesn't fix it — the ResourcesAsTools transform wired in A1.5 (commit ac3e565) isn't surfacing the resource catalog at runtime for ChatGPT-via-MCP.
 
