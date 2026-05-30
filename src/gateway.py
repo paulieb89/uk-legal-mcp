@@ -296,10 +296,11 @@ async def judgment_get_header(
     slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450'", min_length=3, max_length=200)],
     ctx: Context,
 ) -> dict:
-    """Get metadata for a UK court judgment: parties, judges, neutral citation, court, dates.
+    """USE THIS TOOL WHEN you have a judgment slug and need metadata (parties, judges, neutral citation, court, dates).
 
-    Use case_law_search to find the slug, then call this for orientation before
-    reading specific paragraphs via judgment_get_paragraph.
+    Call case_law_search FIRST to get the slug. AFTER calling, use
+    judgment_get_index to discover paragraphs, then judgment_get_paragraph to
+    read specific ones. Authoritative source for UK judgment metadata.
     """
     import httpx
     client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
@@ -316,10 +317,12 @@ async def judgment_get_index(
     slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12'", min_length=3, max_length=200)],
     ctx: Context,
 ) -> dict:
-    """Get the paragraph navigation index for a UK court judgment.
+    """USE THIS TOOL WHEN you have a judgment slug and want the paragraph navigation index (eId + preview line for every paragraph).
 
-    Returns eId: first_line pairs for every paragraph. Use this to discover
-    paragraph identifiers, then call judgment_get_paragraph to read specific ones.
+    Call case_law_search FIRST to get the slug. AFTER calling, pass an eId
+    from the returned list into judgment_get_paragraph to read that paragraph's
+    full text, or use case_law_grep_judgment for content search across all
+    paragraphs.
     """
     import httpx
     client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
@@ -343,10 +346,11 @@ async def judgment_get_paragraph(
     eId: Annotated[str, Field(description="Paragraph eId from judgment_get_index, e.g. 'para_12'. Numeric strings like '12' are accepted and normalized to 'para_12'.", min_length=1, max_length=100)],
     ctx: Context,
 ) -> dict:
-    """Get a single paragraph from a UK court judgment by its LegalDocML eId.
+    """USE THIS TOOL WHEN you have a judgment slug + LegalDocML eId and want that paragraph's full text.
 
-    Use judgment_get_index first to discover available eIds. Returns the paragraph
-    XML content (400–1,700 tokens typical).
+    Call judgment_get_index FIRST to discover available eIds (or use
+    case_law_grep_judgment to locate paragraphs by content). Returns the
+    paragraph XML content (400–1,700 tokens typical).
     """
     import httpx
     client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]

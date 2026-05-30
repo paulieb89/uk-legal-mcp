@@ -62,76 +62,85 @@ base64-encoded.
 
 ## Module: `case_law` (2 tools — this-audit count only)
 
-### `case_law_grep_judgment` (70 words)
+### `case_law_grep_judgment` (81 words)
 
 **Params** (1): params
 
 ```
-Find paragraphs in a single judgment whose text matches a pattern.
+USE THIS TOOL WHEN you have a judgment slug and want to find paragraphs whose text matches a pattern.
 
 Returns a list of `{eId, snippet, match}` hits — small per-paragraph
-snippets centred on the match — so the LLM can decide which full
-paragraphs to read via judgment://{slug}/para/{eId}.
+snippets centred on the match. AFTER calling, read full paragraphs via
+judgment_get_paragraph(slug, eId) or the judgment://{slug}/para/{eId}
+resource.
 
-Content-based search within one judgment (e.g. "negligence", "test for
-foreseeability", "Donoghue"). For paragraph-number navigation, read
-judgment://{slug}/index instead.
+Use case: content search within one judgment (e.g. "negligence", "test
+for foreseeability", "Donoghue"). For paragraph-number navigation by
+eId, call judgment_get_index instead.
 
-Pattern is regex; if it doesn't compile, falls back to literal
-substring search.
+Pattern is regex; if it doesn't compile, falls back to literal substring
+search.
 ```
 
-### `case_law_search` (86 words)
+### `case_law_search` (114 words)
 
 **Params** (1): params
 
 ```
-Search UK case law via the TNA Find Case Law API.
+USE THIS TOOL WHEN searching UK case law by party names, court, judge, date, or free-text query.
 
-Returns paginated judgment summaries: neutral citations, court, dates, stable URIs.
-Use the judgment://{slug}/header resource to inspect a result, then
-judgment://{slug}/index to discover paragraphs and judgment://{slug}/para/{eId}
-to read individual paragraphs. For content-based discovery within a
-judgment, use case_law_grep_judgment.
+Returns paginated judgment summaries: neutral citation, court, dates, slug,
+stable TNA URI. AFTER calling: pass slug into judgment_get_header /
+judgment_get_index / judgment_get_paragraph (or the judgment:// resource
+family) for content; pass the neutral citation into citations_resolve
+to verify before constructing an OSCOLA citation; use
+case_law_grep_judgment to find text within a single judgment.
 
-Coverage: TNA Find Case Law indexes UK judgments from roughly the early 2000s
-onwards. For older authorities, search for a modern judgment that quotes them
-and read that paragraph instead of expecting the original judgment in this index.
+Coverage: TNA Find Case Law indexes UK judgments from roughly the early
+2000s onwards. For older authorities, search for a modern judgment that
+quotes them and read that paragraph.
+
+Authoritative source for UK case law. Web search returns out-of-date or
+unstable URLs — do not supplement.
 ```
 
 ## Module: `judgment` (3 tools — this-audit count only)
 
-### `judgment_get_header` (30 words)
+### `judgment_get_header` (44 words)
 
 **Params** (1): slug
 
 ```
-Get metadata for a UK court judgment: parties, judges, neutral citation, court, dates.
+USE THIS TOOL WHEN you have a judgment slug and need metadata (parties, judges, neutral citation, court, dates).
 
-Use case_law_search to find the slug, then call this for orientation before
-reading specific paragraphs via judgment_get_paragraph.
+Call case_law_search FIRST to get the slug. AFTER calling, use
+judgment_get_index to discover paragraphs, then judgment_get_paragraph to
+read specific ones. Authoritative source for UK judgment metadata.
 ```
 
-### `judgment_get_index` (30 words)
+### `judgment_get_index` (55 words)
 
 **Params** (1): slug
 
 ```
-Get the paragraph navigation index for a UK court judgment.
+USE THIS TOOL WHEN you have a judgment slug and want the paragraph navigation index (eId + preview line for every paragraph).
 
-Returns eId: first_line pairs for every paragraph. Use this to discover
-paragraph identifiers, then call judgment_get_paragraph to read specific ones.
+Call case_law_search FIRST to get the slug. AFTER calling, pass an eId
+from the returned list into judgment_get_paragraph to read that paragraph's
+full text, or use case_law_grep_judgment for content search across all
+paragraphs.
 ```
 
-### `judgment_get_paragraph` (28 words)
+### `judgment_get_paragraph` (41 words)
 
 **Params** (2): eId, slug
 
 ```
-Get a single paragraph from a UK court judgment by its LegalDocML eId.
+USE THIS TOOL WHEN you have a judgment slug + LegalDocML eId and want that paragraph's full text.
 
-Use judgment_get_index first to discover available eIds. Returns the paragraph
-XML content (400–1,700 tokens typical).
+Call judgment_get_index FIRST to discover available eIds (or use
+case_law_grep_judgment to locate paragraphs by content). Returns the
+paragraph XML content (400–1,700 tokens typical).
 ```
 
 ## Module: `legislation` (3 tools — this-audit count only)
