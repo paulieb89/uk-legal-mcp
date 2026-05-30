@@ -490,9 +490,9 @@ def register_tools(mcp: FastMCP) -> None:
         Scotland or Northern Ireland. Reciting a section without checking
         extent is a recurring legal-research error.
 
-        Alternative: read `legislation://{type}/{year}/{number}/section/{section}`
-        for raw CLML XML; use this tool when you want the parsed structured
-        response instead.
+        Alternative: call read_resource(uri="legislation://{type}/{year}/{number}/
+        section/{section}") for raw CLML XML; use this tool when you want the
+        parsed structured response instead.
 
         Args:
             params: LegislationGetSectionInput.
@@ -524,10 +524,10 @@ def register_tools(mcp: FastMCP) -> None:
         Large statutes (Companies Act 2006 has many hundreds of items) are
         paginated via offset/limit. Check has_more and total_items.
 
-        Alternative: read `legislation://{type}/{year}/{number}/toc` for the
-        full TOC as a newline-separated `id: title` string (no pagination).
-        Use this tool when you need the structured response with offset /
-        limit / has_more for stepping through large statutes.
+        Alternative: call read_resource(uri="legislation://{type}/{year}/{number}/
+        toc") for the full TOC as a newline-separated `id: title` string (no
+        pagination). Use this tool when you need the structured response with
+        offset / limit / has_more for stepping through large statutes.
 
         Args:
             params: LegislationGetTocInput.

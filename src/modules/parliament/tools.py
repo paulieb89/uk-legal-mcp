@@ -569,7 +569,10 @@ def register_tools(mcp: FastMCP) -> None:
 
         Returns contributions with citation-grade metadata: member_id, attributed_to,
         column_ref, debate_id, debate_ext_id, contribution_ext_id, public URL. AFTER
-        calling, drill into full content via the hansard:// resource family.
+        calling, drill into full content via read_resource(uri="hansard://debate/
+        {debate_ext_id}/header") — or, equivalently, call
+        parliament_get_debate_contributions(debate_ext_id) for the same content
+        as a structured tool response.
 
         DO NOT text-search by member name — to find what a named member said,
         chain parliament_find_member → parliament_get_debate_contributions
@@ -1111,8 +1114,10 @@ def register_tools(mcp: FastMCP) -> None:
         """USE THIS TOOL WHEN you have an OSCOLA-style Hansard citation (column + volume + house) and need the debate.
 
         Example input: 'HL Deb 14 Oct 2025, vol 849, col 200'. AFTER calling, read
-        hansard://debate/{debate_ext_id}/header for the contribution at the cited
-        column, or call parliament_get_debate_contributions for the full list.
+        the contribution at the cited column via
+        read_resource(uri="hansard://debate/{debate_ext_id}/header") — or,
+        equivalently, call parliament_get_debate_contributions(debate_ext_id) for
+        the full list as a structured tool response.
 
         Each match carries:
           - `contribution_count` — real contribution count from the debate's Items

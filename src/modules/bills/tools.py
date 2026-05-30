@@ -37,8 +37,9 @@ class BillSearchInput(BaseModel):
         "e.g. 'online safety' or 'financial services'."
     ), min_length=1, max_length=500)
     session: int | None = Field(None, description=(
-        "Parliamentary session ID. Omit to search all sessions. "
-        "Session numbers change each year (e.g. 40 = 2024-25, 39 = 2023-24)."
+        "Numeric parliamentary session ID (e.g. 40 = 2024-25, 39 = 2023-24). "
+        "NOT a year string like '2025'. If you only know the year, omit this "
+        "and filter the results instead. Omit to search all sessions."
     ), ge=1)
     house: Literal["Commons", "Lords", "All"] | None = Field(None, description="Filter by originating house. Omit for all houses.")
     stage: Literal["firstreading", "secondreading", "committee", "report", "thirdreading", "royalassent"] | None = Field(

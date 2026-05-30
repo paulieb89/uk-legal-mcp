@@ -41,7 +41,10 @@ from fastmcp.server.middleware.caching import (
 from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.logging import StructuredLoggingMiddleware
 from fastmcp.server.middleware.timing import DetailedTimingMiddleware
-from fastmcp.server.transforms import PromptsAsTools, ResourcesAsTools
+from collections.abc import Sequence
+from fastmcp.server.transforms import PromptsAsTools, ResourcesAsTools, Transform
+from fastmcp.tools.tool import Tool
+from mcp.types import ToolAnnotations
 from prometheus_client import CONTENT_TYPE_LATEST, Counter as PromCounter, Histogram, generate_latest
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -215,6 +218,30 @@ gateway.add_transform(PromptsAsTools(gateway))
 # Codex, Cowork, Inspector) see both surfaces; the duplication is harmless.
 gateway.add_transform(ResourcesAsTools(gateway))
 
+# The PromptsAsTools / ResourcesAsTools transforms above generate the four
+# bridge tools (list_prompts, get_prompt, list_resources, read_resource) with
+# only partial annotations — read_resource/list_resources get readOnlyHint only,
+# the prompt bridges get none. Domain tools carry the full quartet, so cautious
+# clients (auto-confirm, caching) get weaker safety signal on the bridges. Stamp
+# the standard read-only quartet onto them. Registered AFTER the As-Tools
+# transforms so list_tools sees the generated bridge tools in the catalog.
+_BRIDGE_TOOL_NAMES = ("list_resources", "read_resource", "list_prompts", "get_prompt")
+_BRIDGE_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True
+)
+
+
+class _BridgeAnnotationTransform(Transform):
+    async def list_tools(self, tools: Sequence[Tool]) -> Sequence[Tool]:
+        return [
+            t.model_copy(update={"annotations": _BRIDGE_ANNOTATIONS})
+            if t.name in _BRIDGE_TOOL_NAMES else t
+            for t in tools
+        ]
+
+
+gateway.add_transform(_BridgeAnnotationTransform())
+
 # NOTE: ResponseLimitingMiddleware was removed because it silently drops
 # structured_content from oversize tool responses, which fails strict MCP
 # clients (claude.ai) that validate against the advertised outputSchema.
@@ -273,10 +300,10 @@ def server_about() -> str:
             {"module": "bills",       "api": "bills-api.parliament.uk",                                           "auth": "none"},
             {"module": "votes",       "api": "commonsvotes-api.parliament.uk + lordsvotes-api.parliament.uk",     "auth": "none"},
             {"module": "committees",  "api": "committees-api.parliament.uk",                                      "auth": "none"},
-            {"module": "citations",   "api": "none (pure regex)",                                                  "auth": "n/a"},
+            {"module": "citations",   "api": "none (regex; optional client-side LLM disambiguation, off by default)", "auth": "n/a"},
             {"module": "hmrc",        "api": "test-api.service.hmrc.gov.uk + gov.uk/api/search.json",             "auth": "OAuth 2.0 (sandbox by default)"},
         ],
-        "no_llm_in_loop": "this server does not call an LLM; all tool responses are direct from the named APIs",
+        "llm_posture": "this server runs no LLM of its own. All tool responses come directly from the named APIs, EXCEPT citations_parse with disambiguate=True (off by default), which asks the connected client's own model to resolve an ambiguous court division via MCP sampling.",
         "no_data_retention": "no user query or response data is stored",
         "all_tools_read_only": True,
     }, indent=2)

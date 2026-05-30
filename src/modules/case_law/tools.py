@@ -166,7 +166,10 @@ def register_tools(mcp: FastMCP) -> None:
         judgment_get_index / judgment_get_paragraph (or the judgment:// resource
         family) for content; pass the neutral citation into citations_resolve
         to verify before constructing an OSCOLA citation; use
-        case_law_grep_judgment to find text within a single judgment.
+        case_law_grep_judgment to find text within a single judgment. When a
+        party name returns several candidates, narrow with court + year filters
+        before grep-iterating across full judgments — targeted filtering beats
+        scanning every candidate.
 
         Coverage: TNA Find Case Law indexes UK judgments from roughly the early
         2000s onwards. For older authorities, search for a modern judgment that

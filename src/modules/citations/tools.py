@@ -41,8 +41,14 @@ class CitationsParseInput(BaseModel):
         max_length=50_000,
     )
     disambiguate: bool = Field(
-        True,
-        description="If True, ambiguous citations (e.g. bare EWHC without division) are sent to the LLM for disambiguation via sampling.",
+        False,
+        description=(
+            "Default False — pure-regex parsing, no model in the loop. If True, "
+            "ambiguous citations (e.g. bare EWHC without a division) are sent to the "
+            "connected client's own LLM, via MCP sampling, to resolve the division. "
+            "Opt in only when you want best-effort division resolution and accept "
+            "that a model shapes the result."
+        ),
     )
 
 
@@ -183,9 +189,11 @@ def register_tools(mcp: FastMCP) -> None:
         100), legislation sections (s.47 Companies Act 2006), SIs (SI 2018/1234),
         retained EU law (Regulation (EU) 2016/679).
 
-        Ambiguous citations (e.g. bare [2024] EWHC without division) are
-        optionally disambiguated via LLM sampling. Citations resolve to TNA /
-        legislation.gov.uk URLs when possible.
+        Parsing is pure regex by default. Ambiguous citations (e.g. bare [2024]
+        EWHC without division) can OPTIONALLY be disambiguated by setting
+        disambiguate=True, which asks the CONNECTED CLIENT's own model (not this
+        server) to resolve the division via MCP sampling — off by default.
+        Citations resolve to TNA / legislation.gov.uk URLs when possible.
 
         AFTER calling, pass each citation through citations_resolve to verify it
         points at a real document before quoting or formatting it — the parser
