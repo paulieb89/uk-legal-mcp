@@ -2,6 +2,26 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [Unreleased] — 0.5.1 (patch)
+
+Patch on top of 0.5.0. No new tools, no API changes. Two findings from an external review + four backlog items. Verified on a throwaway staging deploy (`uk-legal-mcp-staging.fly.dev`, since destroyed) via ChatGPT dogfeed and via Claude Code as a native client; production not yet updated.
+
+### Changed
+
+- **AI-disclosure accuracy (citations).** `citations_parse`'s `disambiguate` now defaults to **`False`** (was `True`) — parsing is pure regex unless the caller opts in. When `True`, ambiguous citations (e.g. bare `EWHC` without a division) are sent to the **connected client's own model** via MCP sampling — the server still runs no LLM of its own. `server://about` renames `no_llm_in_loop` → `llm_posture` with precise wording, and the citations upstream entry now reads `"none (regex; optional client-side LLM disambiguation, off by default)"`. Closes the disclosure gap where the server advertised "no LLM / responses direct from APIs" while a default-on path routed through a client model.
+- **`case_law_search` description** — adds a nudge to narrow by court + year filters before grep-iterating across full judgments (Smith v HMRC dogfeed dropped from 13 → 7 calls).
+- **`bills_search_bills` `session` field** — description now states it is a numeric session ID (e.g. `40` = 2024-25), NOT a year string; omit and filter if only the year is known.
+- **Resource-URI mentions name a tool companion** — `parliament_search_hansard`, `parliament_lookup_by_column`, `legislation_get_section`, `legislation_get_toc`, and the parliament prompts now pair every `hansard://` / `legislation://` URI with an explicit `read_resource(uri=...)` / named-companion-tool form, so tool-only clients (ChatGPT) have an executable path. All descriptions remain within the 150-word cap.
+
+### Added
+
+- **Bridge-tool annotation parity** — the auto-generated `ResourcesAsTools`/`PromptsAsTools` bridge tools (`list_resources`, `read_resource`, `list_prompts`, `get_prompt`) now carry the full `readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint` quartet (previously partial/absent), via a small custom `Transform.list_tools` in `gateway.py`. Confirmed on the ChatGPT wire (every bridge call shows READ + OPEN WORLD).
+
+### Verified / investigated
+
+- **`list_resources` empty on ChatGPT (backlog v1.2-11) — diagnosed, kept.** Server is healthy (emits the full 3635-char catalog, `200 OK`, `status=ok`); ChatGPT receives ~1 token because its MCP client cannot consume `ResourcesAsTools`' double-encoded `{result:"<json>"}` shape. **Claude Code (native+tool client) consumes the identical output perfectly** and relies on the bridge as the only surface that discovers the 8 resource templates (native `resources/list` returns static resources only). **Decision: keep the bridges** — they are load-bearing for native-tool clients (Claude Code, Codex); ChatGPT's limitation is non-blocking (it succeeds via the named twin tools). Optional additive follow-up (0.6.0): a clean named catalog tool for ChatGPT discovery.
+- **Staging dogfeed (ChatGPT, 5 unprimed prompts, 2026-05-30):** Miller OSCOLA, Lord Hope / Hereditary Peers Bill (6 contributions), Smith v HMRC (`[2026] UKFTT 00663 (TC)`), Pet Abduction, Online Safety Act both-sides — all produced correct, cited, honestly-hedged answers. `/metrics` showed every domain tool `status=ok`, zero errors.
+
 ## [Unreleased] — 0.5.0 (post-hardening)
 
 Released to production at `uk-legal-mcp.fly.dev` on 2026-05-30. No git tag yet (deferred pending production dogfeed soak).

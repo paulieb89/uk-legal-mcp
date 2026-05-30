@@ -86,7 +86,7 @@ Dogfeed trace showed the agent attempting `session_id="2025"` (year string) and 
 
 ~5 minute fix in `bills/models.py` (or wherever the input model lives).
 
-### v1.2-11 — `list_resources` returns empty response in production  *[target: 0.5.1 (bug fix, blocks discovery)]*
+### v1.2-11 — `list_resources` empty on ChatGPT (ResourcesAsTools double-encoding)  *[retargeted 0.6.0 — design choice, NOT a 0.5.1 blocker; see 2026-05-30 update below]*
 
 Test 5 dogfeed trace shows tool calls 2 and 3 both call `list_resources` and receive `"No tool response"` (1 token output). The agent retries once, gets nothing again, and proceeds via named tools (`legislation_get_*`, `parliament_search_*`). Working around it doesn't fix it — the ResourcesAsTools transform wired in A1.5 (commit ac3e565) isn't surfacing the resource catalog at runtime for ChatGPT-via-MCP.
 
@@ -95,6 +95,24 @@ Test 5 dogfeed trace shows tool calls 2 and 3 both call `list_resources` and rec
 **Why it matters:** without `list_resources` returning the catalog, the agent has no discoverable way to learn that resource URIs exist. It falls back to named tools (which is fine, often better), but the resources-as-tools surface is dead weight if it can't be discovered. Either fix the discovery or remove the transform.
 
 **Pairs with v1.2-8:** if list_resources doesn't discover the catalog, the URI-mention rewrite in v1.2-8 is the only path agents have to learn about resources. So v1.2-11 makes v1.2-8 more urgent for the ChatGPT cohort.
+
+**UPDATE 2026-05-30 (0.5.1 staging dogfeed) — DIAGNOSED, retargeted 0.6.0, NOT a 0.5.1 blocker.** Root cause confirmed end-to-end:
+
+- A FastMCP `Client` probe (local + production + staging) returns the full **3635-char** catalog — so the original "close as not reproduced" was wrong: it tested the WRONG client. The symptom is ChatGPT-transport-specific.
+- ChatGPT staging dogfeed (3 separate traces) shows `list_resources` returning **1 token of output** — empty to the agent.
+- Live staging Fly logs + `/metrics` during a real call prove the **server is healthy**: `Tool 'list_resources' completed`, `List resources completed in 4.23ms`, `POST /mcp 200 OK`, `status=ok`, sends 3635 chars with `structured_content = {"result": "<stringified-JSON>"}`.
+- **Conclusion:** not a server bug. It's the `ResourcesAsTools` **double-encoding** (`{result: "<stringified json>"}`) — the exact shape the gateway's own comment flags as why the named companion tools return clean dicts. ChatGPT's MCP client can't consume the double-encoded structured output; native/FastMCP clients can.
+- **Not blocking:** all 5 staging dogfeed prompts succeeded via named tools (v1.2-8 working as designed — agents reach content via `parliament_get_debate_contributions`, `legislation_get_section`, `judgment_get_header`, not via `list_resources` discovery).
+- **Fix is a design choice (target 0.6.0):** either (A) remove the dead `ResourcesAsTools` `list_resources`/`read_resource` bridge (it's dead weight on ChatGPT; native clients have native resources), or (B) add a clean NAMED catalog tool (e.g. `legal_resource_catalog`) returning a plain dict — mirroring the existing companion pattern — so ChatGPT CAN discover resources. Decide A vs B against whether resource discovery (vs the already-working named-tool path) is worth a tool slot.
+- N2's annotation quartet on the bridge tools is confirmed visible on the ChatGPT wire (every bridge call shows READ + OPEN WORLD), so if the bridge is KEPT, it's at least properly annotated; if removed, N2's scope shrinks to whatever bridges remain.
+
+**UPDATE 2026-05-30 (cross-client test — REVERSES option A).** Tested the bridge as consumed by **Claude Code** (a native+tool MCP client) against production, directly:
+- **Claude Code consumes the `{result: "<stringified-JSON>"}` bridge output PERFECTLY** — both `list_resources` (full 9-entry catalog with descriptions) and `read_resource` (full `server://about`) come through readable. The double-wrap is **a ChatGPT-specific consumption limitation, NOT universal.**
+- **Native `resources/list` returns ONLY static resources** (just `server://about`) — the **8 templates are NOT listed** by the native protocol on any client. So the bridge `list_resources` tool is the **only surface that discovers the 8 templated resources with their descriptions** — and Claude Code/Codex can use it.
+- **Therefore option A (remove the bridges) is WRONG** — it would delete the only template-discovery surface for native-tool clients (Claude Code, Codex, Cowork) that actually consume it, while helping ChatGPT nothing (ChatGPT already ignores it and succeeds via twin tools).
+- **Revised recommendation: KEEP the bridges (and N2's annotations stay load-bearing).** v1.2-11 resolves to: ChatGPT cannot consume the double-wrapped discovery surface — a known ChatGPT MCP-client limitation, non-blocking (twins carry ChatGPT). N2 was the right call (it correctly annotates a surface Claude/Codex genuinely use).
+- **Optional additive 0.6.0 (NOT removal):** a clean NAMED `legal_resource_catalog` tool returning a plain dict would give ChatGPT a consumable discovery path too — additive, keeps the bridge for native clients. Low priority: ChatGPT already succeeds via twins, so resource discovery adds marginal value for that cohort.
+- **Secondary finding (all clients):** the raw resources return **unparsed CLML/XML** (a section read = ~30KB raw XML); the domain twins (`legislation_get_section` etc.) return *parsed* text + extent + in-force. So for CONTENT the domain tools beat raw resources for every client; the resources/bridge are a DISCOVERY + raw-access affordance, not the primary content path.
 
 ### v1.2-10 — Pre-merge dogfeed/description grep  *[target: infrastructure (no server release)]*
 
