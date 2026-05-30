@@ -48,7 +48,10 @@ parliament_mcp = FastMCP(
         "Resources (host-loaded, large payloads):\n"
         "  hansard://debate/{debate_ext_id}/header — debate overview + ordered contribution index.\n"
         "  hansard://debate/{debate_ext_id}/contribution/{contribution_ext_id} — one contribution's full text.\n"
-        "  hansard://member/{member_id}/biography — government / opposition / committee posts with dates."
+        "  hansard://member/{member_id}/biography — government / opposition / committee posts with dates.\n\n"
+        "On error, returns a {status, detail} envelope (status: ok|empty|not_found|"
+        "upstream_validation|upstream_timeout|upstream_unavailable|unknown_error) — "
+        "surface status to the user, not the raw error."
     ),
 )
 

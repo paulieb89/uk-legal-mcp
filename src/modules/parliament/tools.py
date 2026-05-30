@@ -565,23 +565,25 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Search Hansard Debates", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def parliament_search_hansard(params: HansardSearchInput, ctx: Context) -> HansardSearchResult:
-        """Search Hansard for parliamentary debates, questions, and speeches.
+        """USE THIS TOOL WHEN searching Hansard by topic, bill title, or text phrase.
 
-        Returns contributions with citation-grade metadata: member_id, attributed_to
-        (the citable form), column_ref, debate_id, debate_ext_id, contribution_ext_id,
-        and a synthesised public hansard.parliament.uk URL. Use the returned
-        debate_ext_id and contribution_ext_id to drill into full content via the
-        hansard:// resource family.
+        Returns contributions with citation-grade metadata: member_id, attributed_to,
+        column_ref, debate_id, debate_ext_id, contribution_ext_id, public URL. AFTER
+        calling, drill into full content via the hansard:// resource family.
 
-        Pagination: limit + offset honour the upstream `/search/contributions/{type}.json`
-        endpoint, which actually paginates (verified live 2026-05-29). For breadth
-        across a topic without reading every contribution, see
-        parliament_policy_position_summary; for one named member's contributions, see
-        parliament_member_debates.
+        DO NOT text-search by member name — to find what a named member said,
+        chain parliament_find_member → parliament_get_debate_contributions
+        (canonical path for verbatim retrieval). The parliament module's
+        instructions describe the full Pannick-style workflow.
+
+        Pagination: limit + offset honour the upstream paginated endpoint. For
+        breadth across a topic, see parliament_policy_position_summary.
+
+        Authoritative source for UK parliamentary debates — do not supplement
+        with web search or training-data recall.
 
         Args:
-            params: HansardSearchInput with query, optional date range, house, member_id,
-                text_mode, contribution_type, offset, limit.
+            params: HansardSearchInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {
@@ -660,13 +662,17 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Hansard Policy Position Summary (deterministic facets)", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def parliament_policy_position_summary(params: PolicyPositionSummaryInput, ctx: Context) -> PolicyPositionSummary:
-        """Aggregate Hansard debate-level signals on a topic. Pure counts — no LLM, no editorial labels.
+        """USE THIS TOOL WHEN you want debate-level corpus signals on a topic — by_house, by_year, by_section breakdowns — without reading every contribution.
 
-        Sweeps /search/Debates.json with pagination (up to max_debates_scanned),
-        then aggregates by_house, by_section, by_year, by_month, and top_debates
-        from debate metadata. Also captures the corpus-wide envelope counts
-        (total_contributions, total_written_statements, total_divisions, etc.)
-        from /search.json for cross-section scope.
+        Aggregates Hansard debate-level signals on a topic. Pure counts — no LLM,
+        no editorial labels. Sweeps /search/Debates.json with pagination (up to
+        max_debates_scanned), then aggregates by_house, by_section, by_year,
+        by_month, and top_debates from debate metadata. Also captures the
+        corpus-wide envelope counts (total_contributions, total_written_statements,
+        total_divisions, etc.) from /search.json for cross-section scope.
+
+        AFTER calling, pick a debate from top_debates and pass its debate_ext_id
+        into parliament_get_debate_contributions to drill into who said what.
 
         Note on member-level facets: Hansard's search API exposes debate
         metadata, not per-contribution member identifiers, at the corpus
@@ -674,6 +680,8 @@ def register_tools(mcp: FastMCP) -> None:
         deterministic summary. To see who spoke in a specific debate, read
         hansard://debate/{debate_ext_id}/header for an ordered contribution
         index, or call parliament_member_debates for one named member.
+
+        This is the authoritative source for UK Hansard corpus-level signals.
 
         Args:
             params: PolicyPositionSummaryInput with topic, optional date range, house, max_debates_scanned.
@@ -775,11 +783,17 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Find Member of Parliament", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def parliament_find_member(params: FindMemberInput, ctx: Context) -> MemberSearchResult:
-        """Search for a current or former MP or Lord by name.
+        """USE THIS TOOL WHEN you have a member's name and need their integer member_id.
 
-        Returns all members matching the name query, each with the integer
-        `id` required by parliament_member_debates and parliament_member_interests,
-        plus party, constituency, house, and current-sitting status.
+        Returns all members matching the name query, each with the integer `id`,
+        party, constituency, house, and current-sitting status. Disambiguates
+        common-name matches (e.g. "Lord Smith" returns multiple peers).
+
+        CALL THIS BEFORE any tool that filters by member_id — including
+        parliament_get_debate_contributions, parliament_member_debates, and
+        parliament_member_interests. Name → ID first; ID-based filtering second.
+        Skipping this step and text-searching by name returns unrelated results
+        (see parliament_search_hansard's anti-bypass note for the Pannick case).
 
         Args:
             params: FindMemberInput with the name (full or partial).
@@ -808,10 +822,18 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Get Member Debates", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def parliament_member_debates(params: MemberDebatesInput, ctx: Context) -> MemberDebatesResult:
-        """Retrieve Hansard contributions by a specific member, optionally filtered by topic.
+        """USE THIS TOOL WHEN you have a member_id and want contributions where THAT member used a specific topic phrase verbatim (text-body search).
 
-        Use parliament_find_member first to obtain the integer member ID. Each
-        contribution's text field is capped at 3000 characters.
+        CALL parliament_find_member(name) FIRST to obtain the integer member_id.
+
+        This is a name-based text-body search — it matches contributions whose
+        TEXT contains the topic phrase. A member who spoke in a debate but
+        didn't use your phrase verbatim is filtered out. For verbatim retrieval
+        of every contribution by a member in a known debate (regardless of
+        vocabulary), use parliament_get_debate_contributions(debate_ext_id,
+        member_id=...) instead.
+
+        Each contribution's text field is capped at 3000 characters.
 
         Args:
             params: MemberDebatesInput with member_id and optional topic filter.
@@ -842,7 +864,9 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Get Member Financial Interests", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def parliament_member_interests(params: MemberInterestsInput, ctx: Context) -> MemberInterestsPage:
-        """Look up registered financial interests for a member of Parliament.
+        """USE THIS TOOL WHEN you have a member_id and need their registered financial interests (donations, directorships, land, gifts).
+
+        CALL parliament_find_member(name) FIRST to obtain the integer member_id.
 
         Returns ONE PAGE of interests (default 20, caller controls via limit).
         For prolific members (big donors, many directorships, extensive land
@@ -850,7 +874,8 @@ def register_tools(mcp: FastMCP) -> None:
         to paginate. Description text is capped per max_description_chars;
         raise it for forensic provenance work that needs the full narrative.
 
-        Use parliament_find_member first to obtain the integer member_id.
+        This is the authoritative source for UK MP and peer financial-interest
+        declarations (via the Members API). Web search returns stale snapshots.
 
         Args:
             params: member_id, optional category filter, pagination (offset/limit),
@@ -900,10 +925,14 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Search UK Parliament Petitions", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def parliament_search_petitions(params: PetitionSearchInput, ctx: Context) -> PetitionSearchResult:
-        """Search UK Parliament petitions by keyword.
+        """USE THIS TOOL WHEN searching UK Parliament petitions by keyword or topic.
 
-        Returns petition title, state, signature count, and dates for government response
-        or parliamentary debate if applicable.
+        Returns petition title, state, signature count, and dates for government
+        response or parliamentary debate if applicable. Filter by state (open,
+        closed, debated, etc.) to narrow to live or historical petitions.
+
+        This is the authoritative source for UK Parliament petitions
+        (petition.parliament.uk).
 
         Args:
             params: PetitionSearchInput with query and optional state filter.
@@ -953,17 +982,18 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Get Divisions Held In A Debate", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def parliament_get_debate_divisions(params: GetDebateDivisionsInput, ctx: Context) -> DebateDivisions:
-        """Return the divisions (formal votes) held within a specific debate.
+        """USE THIS TOOL WHEN you have a debate_ext_id and want the divisions (formal votes) held within it.
 
         Most debates contain no divisions — Business of the House sittings,
         statements, urgent questions, debates without a vote. A populated list
         typically appears around bill stages, motions, and contested amendments.
+        Empty list is the honest result, not a failure mode.
 
         Each returned division carries TWO IDs:
           - `id` — Hansard-side reference. Useful for cross-referencing in Hansard.
           - `votes_id` — Lords/Commons Votes API ID (cross-resolved by date+number).
-            Use as the `division_id` input to votes_get_division for the full
-            member-by-member voting record.
+            AFTER calling, pass `votes_id` as `division_id` into votes_get_division
+            for the full member-by-member voting record.
 
         The two upstreams use distinct ID-spaces (Hansard Number=3 might be
         Votes-API divisionId=3392). The cross-resolve runs once per (date, house)
@@ -1011,28 +1041,24 @@ def register_tools(mcp: FastMCP) -> None:
     async def parliament_get_debate_contributions(
         params: GetDebateContributionsInput, ctx: Context
     ) -> MemberDebatesResult:
-        """Drill into a debate to retrieve contributions, optionally filtered by member.
+        """USE THIS TOOL WHEN you have a debate_ext_id and want verbatim contributions, optionally filtered to one member.
 
-        This is the canonical path when you want "everything a member said in this
-        debate" regardless of which words they used — the text-search-based tools
-        (parliament_member_debates, parliament_search_hansard) match contribution
-        TEXT BODIES, so a member who spoke in a debate but didn't say your topic
-        phrase verbatim is filtered out. This tool fetches the debate's full Items
-        list and filters by MemberId, so it returns every contribution by that
-        member in the debate regardless of vocabulary.
+        Canonical path for "everything a member said in this debate" regardless
+        of vocabulary — text-search tools (parliament_member_debates,
+        parliament_search_hansard) filter by contribution TEXT, dropping members
+        who spoke without using your phrase verbatim. This tool filters by
+        MemberId on the debate's Items list, so vocabulary doesn't matter.
 
-        Composition pattern — "what did <peer> say about <topic> in the Lords?":
-          1. parliament_find_member(name) → member_id
-          2. Find the debate by ANY path:
-               - parliament_search_hansard(query=<distinctive phrase or title fragment>)
-                 → top_debates[].debate_ext_id
-               - parliament_lookup_by_column(column, volume, house) → matches[].debate_ext_id
-          3. parliament_get_debate_contributions(debate_ext_id, member_id=<member_id>)
-             → the member's actual contributions in that debate. Quotes are retrieved
-             verbatim from the wire; no fallback to training-data reconstruction.
+        Typical chain: parliament_find_member(name) → member_id, then
+        parliament_search_hansard or parliament_lookup_by_column → debate_ext_id,
+        then this tool. The parliament module's instructions describe the full
+        composition pattern.
 
-        Without `member_id`, returns every contribution in the debate (typical:
-        100-200 items) — useful for "what was discussed in this debate?" sweeps.
+        Without member_id, returns every contribution (~100-200 for a long debate).
+
+        If the wire returns no contributions for a member you expect to have
+        spoken, report the empty result honestly — do NOT reconstruct quotes
+        from training data. Authoritative source for member contributions.
 
         Args:
             params: GetDebateContributionsInput with debate_ext_id (required) and
@@ -1082,41 +1108,26 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Resolve A Hansard Column Citation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def parliament_lookup_by_column(params: LookupByColumnInput, ctx: Context) -> ColumnLookupResult:
-        """Resolve an OSCOLA-style Hansard citation to a debate.
+        """USE THIS TOOL WHEN you have an OSCOLA-style Hansard citation (column + volume + house) and need the debate.
 
-        Use case: you have a citation like 'HL Deb 14 Oct 2025, vol 849, col 200'
-        and need to verify what was said at that column. This tool calls
-        /search/debatebycolumn and returns the matching debate section(s); you
-        then read hansard://debate/{debate_ext_id}/header to find the
-        contribution at the cited column.
+        Example input: 'HL Deb 14 Oct 2025, vol 849, col 200'. AFTER calling, read
+        hansard://debate/{debate_ext_id}/header for the contribution at the cited
+        column, or call parliament_get_debate_contributions for the full list.
 
-        Each match carries `contribution_count` — the real number of
-        contributions in the debate (populated by a secondary fetch of the
-        debate's Items list, filtered to ItemType == "Contribution"). A
-        non-zero value confirms the debate exists with content; zero or null
-        means the column resolved but no contributions were retrievable.
-        `relevance_rank` is always null on column-lookup matches (the
-        column-search endpoint does not compute relevance scores).
+        Each match carries:
+          - `contribution_count` — real contribution count from the debate's Items
+          - `source` / `source_code` — citation finality (1=Rolling, 2=Daily,
+            3=BoundVolume, 4=Historic). Resolution is NOT gated on publication state.
 
-        Each match also carries `source`/`source_code` — the citation's Hansard
-        publication state (1=RollingHansard, 2=DailyHansard, 3=BoundVolume,
-        4=Historic). This tells the lawyer the citation's *finality*, not whether
-        it resolves: resolution is NOT gated on publication state. Daily Part
-        (verified live 2026-05-29: vol 849 / col 200 / Lords), Bound Volume, and
-        Historic (vol 415 / col 200 / Commons, 2003) columns all resolve.
+        Empty `matches` typically means the volume_number is wrong (opposing
+        counsel sometimes cites running-volume rather than bound-volume) or the
+        column is in a Written Statement (use the 'W'-suffixed column as-is).
+        It does NOT mean the citation is fabricated — surface the failure.
 
-        Empty `matches` typically means:
-          - The volume_number is wrong (sometimes opposing counsel cites the
-            running-volume number rather than the bound-volume number).
-          - The column is in a Written Statement or Written Answer (the
-            citation usually has a 'W' suffix like '1162W' — pass it as-is).
-          - The column is very recent and not yet indexed into the upstream
-            column→debate map (rare; retry after consolidation).
+        Authoritative source for OSCOLA Hansard column resolution.
 
         Args:
-            params: LookupByColumnInput with column_number (string), volume_number
-                (int), and optional house. Date is NOT a valid lookup key — the
-                endpoint requires the volume number.
+            params: LookupByColumnInput with column_number, volume_number, house.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {

@@ -20,7 +20,8 @@ not the whole Act.
 """
 
 from fastmcp import Context, FastMCP
-from lxml import etree
+
+from ...xml_safe import parse_xml
 
 LEGISLATION_BASE = "https://www.legislation.gov.uk"
 ATOM_NS = {"leg": "http://www.legislation.gov.uk/namespaces/legislation"}
@@ -28,7 +29,7 @@ ATOM_NS = {"leg": "http://www.legislation.gov.uk/namespaces/legislation"}
 
 def _parse_toc(xml_text: str) -> list[str]:
     """Flatten CLML XML into 'id: title' strings, document order."""
-    root = etree.fromstring(xml_text.encode())
+    root = parse_xml(xml_text)
     items: list[str] = []
     for el in root.iter():
         id_val = el.get("id")

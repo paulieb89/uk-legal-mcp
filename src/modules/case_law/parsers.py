@@ -16,6 +16,8 @@ import re
 
 from lxml import etree
 
+from ...xml_safe import parse_xml
+
 LEGALDOCML_NS = {
     "akn": "http://docs.oasis-open.org/legaldocml/ns/akn/3.0",
     "uk": "https://caselaw.nationalarchives.gov.uk/akn",
@@ -26,7 +28,7 @@ _SNIPPET_RADIUS = 100
 
 
 def _root(xml_text: str) -> etree._Element:
-    return etree.fromstring(xml_text.encode())
+    return parse_xml(xml_text)
 
 
 def _first_line(el: etree._Element, max_len: int = _FIRST_LINE_MAX) -> str:

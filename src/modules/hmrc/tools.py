@@ -106,15 +106,17 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Get VAT Rate for Commodity", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     )
     async def hmrc_get_vat_rate(params: HMRCVATRateInput) -> VATRate:
-        """Look up the UK VAT rate for a commodity or service type.
+        """USE THIS TOOL WHEN you have a UK commodity or service description and want its VAT rate category.
 
-        Returns the rate category (standard 20%, reduced 5%, zero 0%, exempt),
-        effective date, and any relevant conditions or exceptions.
-        Uses a static lookup table current as of 22 Nov 2023 (Autumn Statement).
-        Rates may have changed — always verify against GOV.UK for recent Budgets.
+        Returns the rate (standard 20%, reduced 5%, zero 0%, exempt), effective
+        date, and any relevant conditions or exceptions.
+
+        IMPORTANT: Uses a static lookup table current as of 22 Nov 2023 (Autumn
+        Statement). Rates may have changed in subsequent Budgets — for
+        time-sensitive advice, verify against GOV.UK via hmrc_search_guidance.
 
         Args:
-            params: HMRCVATRateInput with the commodity_code (description of goods or service).
+            params: HMRCVATRateInput.
         """
         return _lookup_vat(params.commodity_code)
 
@@ -123,15 +125,18 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Check MTD VAT Status", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def hmrc_check_mtd_status(params: HMRCMTDStatusInput, ctx: Context) -> MTDStatus:
-        """Check a business's Making Tax Digital VAT mandate status via the HMRC API.
+        """USE THIS TOOL WHEN you have a 9-digit VAT Registration Number and need that business's Making Tax Digital VAT mandate status.
 
-        NOTE: Connects to the HMRC sandbox by default. Set HMRC_API_BASE env var to
-        'https://api.service.hmrc.gov.uk' for production.
-        Requires HMRC_CLIENT_ID and HMRC_CLIENT_SECRET environment variables (OAuth 2.0).
-        Returns whether the business is mandated for MTD, effective date, and trading name.
+        Returns whether the business is mandated for MTD, effective date, and
+        trading name.
+
+        Connects to the HMRC sandbox by default. Set HMRC_API_BASE to
+        'https://api.service.hmrc.gov.uk' for production. Requires
+        HMRC_CLIENT_ID + HMRC_CLIENT_SECRET environment variables (OAuth 2.0).
+        Raises if credentials are not configured — do not infer status.
 
         Args:
-            params: HMRCMTDStatusInput with the 9-digit VAT Registration Number.
+            params: HMRCMTDStatusInput.
         """
         client_id = os.getenv("HMRC_CLIENT_ID")
         client_secret = os.getenv("HMRC_CLIENT_SECRET")
@@ -175,13 +180,16 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Search HMRC Guidance", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def hmrc_search_guidance(params: HMRCGuidanceSearchInput, ctx: Context) -> HMRCGuidanceSearchResult:
-        """Search GOV.UK for HMRC tax guidance documents.
+        """USE THIS TOOL WHEN searching GOV.UK for HMRC tax guidance on a topic (VAT, income tax, corporation tax, etc.).
 
         Returns matching guidance titles, URLs, summaries, and last-updated dates.
         Searches the official GOV.UK content API filtered to HMRC publications.
 
+        Authoritative source for current HMRC tax guidance. Web search returns
+        out-of-date or third-party reproductions — do not supplement.
+
         Args:
-            params: HMRCGuidanceSearchInput with query (topic to search).
+            params: HMRCGuidanceSearchInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         resp = await client.get(

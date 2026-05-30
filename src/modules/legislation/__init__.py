@@ -9,11 +9,30 @@ from .prompts import register_prompts
 legislation_mcp = FastMCP(
     name="legislation",
     instructions=(
-        "Search and retrieve UK legislation (Acts, SIs, etc). "
-        "Use legislation_search to find Acts by topic. "
-        "Use legislation_get_toc to see structure before diving into sections. "
-        "Use legislation_get_section for specific provisions with extent and in-force status. "
-        "Always surface 'extent' — legislation may not apply in all UK jurisdictions."
+        "UK legislation — Acts of Parliament and Statutory Instruments — via "
+        "legislation.gov.uk + the i.AI Lex API. Returns primary-source statute text with "
+        "section IDs, extent (jurisdiction), and in-force status. Extent and in-force are "
+        "returned verbatim from the wire; the caller's agent decides interpretation.\n\n"
+        "Tools:\n"
+        "  legislation_search — find Acts and SIs by topic, title, or year.\n"
+        "  legislation_get_toc — table of contents for a given Act/SI (use before diving "
+        "into sections).\n"
+        "  legislation_get_section — full text of a specific section/regulation/article "
+        "with extent + in-force status.\n\n"
+        "Workflow — 'find section X of the Y Act':\n"
+        "  1. legislation_search(query='Y') → identifier (e.g. ukpga/2024/2)\n"
+        "  2. legislation_get_toc(identifier) → confirm section X exists + its section ID\n"
+        "  3. legislation_get_section(identifier, section_id) → text + extent + in-force.\n\n"
+        "CRITICAL: always surface 'extent' — UK legislation often differs by jurisdiction "
+        "(England / Wales / Scotland / Northern Ireland). Quoting 'England and Wales only' "
+        "provisions to a Scottish user is a duty-of-care issue.\n\n"
+        "Resources (host-loaded, large payloads):\n"
+        "  legislation://{type}/{year}/{number}/toc{?date} — table of contents; optional "
+        "date returns the version in force on that date.\n"
+        "  legislation://{type}/{year}/{number}/section/{section}{?date} — full section text.\n\n"
+        "On error, returns a {status, detail} envelope (status: ok|empty|not_found|"
+        "upstream_validation|upstream_timeout|upstream_unavailable|unknown_error) — "
+        "surface status to the user, not the raw error."
     ),
 )
 

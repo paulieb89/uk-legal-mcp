@@ -13,6 +13,8 @@ from datetime import date
 import httpx
 from fastmcp import FastMCP, Context
 from lxml import etree, html
+
+from ...xml_safe import parse_xml
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...deps import LegislationUpstreamError, format_http_error
@@ -269,8 +271,7 @@ def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> Legislat
     we fall back to that to keep test fixtures portable, but real CLML uses
     RestrictExtent.
     """
-    from lxml import etree
-    root = etree.fromstring(xml_text.encode())
+    root = parse_xml(xml_text)
     ns = {
         "leg": "http://www.legislation.gov.uk/namespaces/legislation",
         "ukm": "http://www.legislation.gov.uk/namespaces/metadata",
@@ -397,8 +398,7 @@ def _parse_toc_xml(xml_text: str) -> list[str]:
     Returns every structural element that has an @id and a <Title>, in
     document order. No slicing — callers apply offset/limit themselves.
     """
-    from lxml import etree
-    root = etree.fromstring(xml_text.encode())
+    root = parse_xml(xml_text)
     ns = {"leg": "http://www.legislation.gov.uk/namespaces/legislation"}
     items = []
     for el in root.iter():
@@ -417,22 +417,23 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Search UK Legislation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def legislation_search(params: LegislationSearchInput, ctx: Context) -> LegislationSearchResult:
-        """Search UK legislation on legislation.gov.uk.
+        """USE THIS TOOL WHEN searching UK Acts and Statutory Instruments by title, phrase, or full-text.
 
-        Returns ranked results: title, type, year, number, and legislation.gov.uk URL.
+        Returns ranked results: title, type, year, number, legislation.gov.uk URL,
+        and next_steps hints (toc URI, section template). AFTER calling, chain
+        to legislation_get_toc then legislation_get_section for structural drill-in.
 
-        Filter discipline: `type` and `year` are exact-match. Use them only when you
-        already know the value. For currency-driven searches (e.g. "the recent
+        Filter discipline: `type` and `year` are exact-match. Use only when you
+        already know the value. For currency-driven searches ("the recent
         Renters' Rights Act"), query by phrase alone and read the year from the
-        returned results — guessing a year and then filtering by it zeroes the
-        result set when the guess is wrong.
+        results — guessing a year and filtering by it zeroes results when wrong.
+        For broader concept queries across content, set `fulltext=True`.
 
-        For broader concept queries (find any Act mentioning a topic), set
-        `fulltext=True`. For structural drill-in once an Act is found, chain to
-        legislation_get_toc then legislation_get_section.
+        Authoritative source for UK primary and secondary legislation
+        (legislation.gov.uk).
 
         Args:
-            params: LegislationSearchInput with query, optional type filter, optional year.
+            params: LegislationSearchInput.
         """
         client = ctx.lifespan_context["legislation_http"]
         path = f"/{params.type}" if params.type else "/search"
@@ -445,7 +446,7 @@ def register_tools(mcp: FastMCP) -> None:
 
         resp = await client.get(f"{LEGISLATION_BASE}{path}", params=qp)
         resp.raise_for_status()
-        root = etree.fromstring(resp.content)
+        root = parse_xml(resp.content)
 
         total_el = root.findtext(".//os:totalResults", namespaces=ATOM_NS)
         total = int(total_el) if total_el else 0
@@ -478,23 +479,23 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Get Legislation Section", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def legislation_get_section(params: LegislationGetSectionInput, ctx: Context) -> LegislationSection:
-        """Retrieve a specific section of a UK Act or Statutory Instrument.
+        """USE THIS TOOL WHEN you have a known Act / SI and want the parsed text of a specific section, with extent and in-force metadata.
 
-        Returns the full section text, territorial extent, in-force status,
-        and prospective flag. Content is capped per max_chars (default 10,000,
-        ~2,500 tokens) — raise max_chars for unusually long definition
-        sections. Check content_truncated in the response to see if it was cut.
+        Returns full section text, territorial extent, in-force status, and
+        prospective flag. Content capped per max_chars (default 10,000,
+        ~2,500 tokens) — raise for unusually long definition sections; check
+        content_truncated in the response.
 
-        IMPORTANT: Always check `extent` — a section may apply to England &
-        Wales but not Scotland or Northern Ireland.
+        ALWAYS check `extent` — a section may apply to England & Wales but not
+        Scotland or Northern Ireland. Reciting a section without checking
+        extent is a recurring legal-research error.
 
-        Alternative: read the resource template
-        `legislation://{type}/{year}/{number}/section/{section}` to get raw
-        CLML XML directly. Use this tool when you want the parsed structured
-        response (extent, in-force, version_date) instead of raw XML.
+        Alternative: read `legislation://{type}/{year}/{number}/section/{section}`
+        for raw CLML XML; use this tool when you want the parsed structured
+        response instead.
 
         Args:
-            params: type, year, number, section identifier, optional max_chars.
+            params: LegislationGetSectionInput.
         """
         client = ctx.lifespan_context["legislation_http"]
         section = _normalise_section_id(params.section)
@@ -514,23 +515,22 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Get Legislation Table of Contents", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def legislation_get_toc(params: LegislationGetTocInput, ctx: Context) -> LegislationTOC:
-        """Retrieve the table of contents for a UK Act or SI.
+        """USE THIS TOOL WHEN you have a known Act / SI and want the structural table of contents (parts, chapters, sections, schedules).
 
-        Returns structural elements (parts, chapters, sections, schedules) with XML id
-        and title, e.g. 'section-47: Definitions'. When calling legislation_get_section,
-        pass only the numeric part — use '47', not 'section-47'.
+        Returns structural elements with XML id and title, e.g. 'section-47:
+        Definitions'. AFTER calling, pass the numeric section identifier (use
+        '47', NOT 'section-47') into legislation_get_section for full text.
 
-        Large statutes (Companies Act 2006 has 1300+ items) are paginated
-        via offset/limit. Check has_more and total_items on the response.
+        Large statutes (Companies Act 2006 has many hundreds of items) are
+        paginated via offset/limit. Check has_more and total_items.
 
-        Alternative: read the resource template
-        `legislation://{type}/{year}/{number}/toc` for the full TOC as a
-        newline-separated `id: title` string (no pagination). Use this tool
-        when you need the structured `LegislationTOC` response with
-        offset/limit/has_more for stepping through Companies-Act-scale lists.
+        Alternative: read `legislation://{type}/{year}/{number}/toc` for the
+        full TOC as a newline-separated `id: title` string (no pagination).
+        Use this tool when you need the structured response with offset /
+        limit / has_more for stepping through large statutes.
 
         Args:
-            params: LegislationGetTocInput with type, year, number, offset, limit.
+            params: LegislationGetTocInput.
         """
         client = ctx.lifespan_context["legislation_http"]
         url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/data.xml"

@@ -184,13 +184,16 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Search Parliamentary Bills", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def bills_search_bills(params: BillSearchInput, ctx: Context) -> BillSearchResult:
-        """Search UK parliamentary bills by keyword, session, house, or legislative stage.
+        """USE THIS TOOL WHEN searching UK parliamentary bills by keyword, session, house, or legislative stage.
 
-        Returns a paginated page of bill summaries including title, current stage, and
-        whether it has become an Act. Use bills_get_bill with the bill ID for full detail.
+        Returns a paginated page of bill summaries (title, current stage, whether
+        it became an Act). AFTER calling, pass a bill_id into bills_get_bill for
+        full detail (sponsors, long title, Royal Assent date).
+
+        Authoritative source for UK parliamentary bill status.
 
         Args:
-            params: BillSearchInput with query, optional session/house/stage filters, pagination.
+            params: BillSearchInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {
@@ -234,14 +237,18 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Get Bill Detail", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def bills_get_bill(params: BillDetailInput, ctx: Context) -> BillDetail:
-        """Get full detail for a specific parliamentary bill.
+        """USE THIS TOOL WHEN you have a bill_id (from bills_search_bills) and want the full detail.
 
-        Returns sponsors, current stage, long title, summary, and Royal Assent date
-        if enacted. Summary text is capped per max_summary_chars — check
-        summary_truncated in the response to see if it was cut.
+        Returns sponsors, current stage, long title, summary, and Royal Assent
+        date if enacted. Summary text is capped per max_summary_chars — check
+        summary_truncated in the response.
+
+        AFTER calling, use parliament_search_hansard(query=bill_short_title) to
+        find the bill's parliamentary debates, or bills_search_bills with a
+        related keyword for adjacent bills.
 
         Args:
-            params: BillDetailInput with bill_id and optional max_summary_chars.
+            params: BillDetailInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         resp = await client.get(f"{BILLS_BASE}/Bills/{params.bill_id}")

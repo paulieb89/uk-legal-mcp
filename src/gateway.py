@@ -1,8 +1,8 @@
 """
 uk-legal-mcp gateway
 
-Single FastMCP v3 gateway that mounts all eight legal research sub-modules in-process.
-One deployed service. One MCP connection. 24 tools across 8 namespaced modules.
+Single FastMCP v3 gateway that mounts eight legal research sub-modules in-process.
+One deployed service. One MCP connection.
 
 Architecture:
   gateway
@@ -15,7 +15,7 @@ Architecture:
   ├── citations    (namespace: citations_)    — OSCOLA parser (self-contained ★)
   └── hmrc         (namespace: hmrc_)         — VAT rates, MTD, GOV.UK guidance
 
-Transport: Streamable HTTP, port 8000
+Transport: Streamable HTTP, port from $PORT (default 8080)
 Region:    lhr (London) — co-located with UK legal data sources
 """
 
@@ -41,7 +41,7 @@ from fastmcp.server.middleware.caching import (
 from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.logging import StructuredLoggingMiddleware
 from fastmcp.server.middleware.timing import DetailedTimingMiddleware
-from fastmcp.server.transforms import PromptsAsTools
+from fastmcp.server.transforms import PromptsAsTools, ResourcesAsTools
 from prometheus_client import CONTENT_TYPE_LATEST, Counter as PromCounter, Histogram, generate_latest
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -208,6 +208,12 @@ gateway.add_middleware(ResponseCachingMiddleware(
     call_tool_settings=CallToolSettings(ttl=3600),
 ))
 gateway.add_transform(PromptsAsTools(gateway))
+# Expose resources as tools (list_resources, read_resource) so MCP clients
+# that don't support the resources spec natively — ChatGPT consumer being
+# the largest such audience — can still reach judgment://, hansard://,
+# legislation://, and server://about URIs. Native-resource clients (Claude,
+# Codex, Cowork, Inspector) see both surfaces; the duplication is harmless.
+gateway.add_transform(ResourcesAsTools(gateway))
 
 # NOTE: ResponseLimitingMiddleware was removed because it silently drops
 # structured_content from oversize tool responses, which fails strict MCP
@@ -222,14 +228,18 @@ gateway.add_transform(PromptsAsTools(gateway))
 # Mount sub-modules (in-process — zero network hop)
 # ---------------------------------------------------------------------------
 
-gateway.mount(case_law_mcp,    namespace="case_law")
-gateway.mount(legislation_mcp, namespace="legislation")
-gateway.mount(parliament_mcp,  namespace="parliament")
-gateway.mount(bills_mcp,       namespace="bills")
-gateway.mount(votes_mcp,       namespace="votes")
-gateway.mount(committees_mcp,  namespace="committees")
-gateway.mount(citations_mcp,   namespace="citations")
-gateway.mount(hmrc_mcp,        namespace="hmrc")
+MOUNTED_MODULES: tuple[tuple[str, FastMCP], ...] = (
+    ("case_law",    case_law_mcp),
+    ("legislation", legislation_mcp),
+    ("parliament",  parliament_mcp),
+    ("bills",       bills_mcp),
+    ("votes",       votes_mcp),
+    ("committees",  committees_mcp),
+    ("citations",   citations_mcp),
+    ("hmrc",        hmrc_mcp),
+)
+for _ns, _sub in MOUNTED_MODULES:
+    gateway.mount(_sub, namespace=_ns)
 
 # ---------------------------------------------------------------------------
 # Resource templates — registered at GATEWAY level (not on sub-MCPs).
@@ -284,16 +294,17 @@ from fastmcp import Context  # noqa: E402 (after gateway instantiation)
 
 @gateway.tool(
     name="judgment_get_header",
-    annotations={"title": "Get Judgment Header", "readOnlyHint": True, "idempotentHint": True},
+    annotations={"title": "Get Judgment Header", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
 )
 async def judgment_get_header(
     slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450'", min_length=3, max_length=200)],
     ctx: Context,
 ) -> dict:
-    """Get metadata for a UK court judgment: parties, judges, neutral citation, court, dates.
+    """USE THIS TOOL WHEN you have a judgment slug and need metadata (parties, judges, neutral citation, court, dates).
 
-    Use case_law_search to find the slug, then call this for orientation before
-    reading specific paragraphs via judgment_get_paragraph.
+    Call case_law_search FIRST to get the slug. AFTER calling, use
+    judgment_get_index to discover paragraphs, then judgment_get_paragraph to
+    read specific ones. Authoritative source for UK judgment metadata.
     """
     import httpx
     client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
@@ -304,16 +315,18 @@ async def judgment_get_header(
 
 @gateway.tool(
     name="judgment_get_index",
-    annotations={"title": "Get Judgment Paragraph Index", "readOnlyHint": True, "idempotentHint": True},
+    annotations={"title": "Get Judgment Paragraph Index", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
 )
 async def judgment_get_index(
     slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12'", min_length=3, max_length=200)],
     ctx: Context,
 ) -> dict:
-    """Get the paragraph navigation index for a UK court judgment.
+    """USE THIS TOOL WHEN you have a judgment slug and want the paragraph navigation index (eId + preview line for every paragraph).
 
-    Returns eId: first_line pairs for every paragraph. Use this to discover
-    paragraph identifiers, then call judgment_get_paragraph to read specific ones.
+    Call case_law_search FIRST to get the slug. AFTER calling, pass an eId
+    from the returned list into judgment_get_paragraph to read that paragraph's
+    full text, or use case_law_grep_judgment for content search across all
+    paragraphs.
     """
     import httpx
     client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
@@ -330,17 +343,18 @@ async def judgment_get_index(
 
 @gateway.tool(
     name="judgment_get_paragraph",
-    annotations={"title": "Get Judgment Paragraph", "readOnlyHint": True, "idempotentHint": True},
+    annotations={"title": "Get Judgment Paragraph", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
 )
 async def judgment_get_paragraph(
     slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12'", min_length=3, max_length=200)],
     eId: Annotated[str, Field(description="Paragraph eId from judgment_get_index, e.g. 'para_12'. Numeric strings like '12' are accepted and normalized to 'para_12'.", min_length=1, max_length=100)],
     ctx: Context,
 ) -> dict:
-    """Get a single paragraph from a UK court judgment by its LegalDocML eId.
+    """USE THIS TOOL WHEN you have a judgment slug + LegalDocML eId and want that paragraph's full text.
 
-    Use judgment_get_index first to discover available eIds. Returns the paragraph
-    XML content (400–1,700 tokens typical).
+    Call judgment_get_index FIRST to discover available eIds (or use
+    case_law_grep_judgment to locate paragraphs by content). Returns the
+    paragraph XML content (400–1,700 tokens typical).
     """
     import httpx
     client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
@@ -371,7 +385,7 @@ async def health(request: Request) -> Response:
     return JSONResponse({
         "status": "ok",
         "server": "uk-legal-mcp",
-        "modules": 8,
+        "modules": len(MOUNTED_MODULES),
     }, headers=CORS_HEADERS)
 
 

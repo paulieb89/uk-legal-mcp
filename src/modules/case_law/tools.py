@@ -75,8 +75,8 @@ def _parse_atom_feed(xml_bytes: bytes) -> JudgmentSearchResult:
     the full root-cause analysis.
     """
     try:
-        from lxml import etree
-        root = etree.fromstring(xml_bytes)
+        from ...xml_safe import parse_xml
+        root = parse_xml(xml_bytes)
         ns = {
             "atom": "http://www.w3.org/2005/Atom",
             "tna": "https://caselaw.nationalarchives.gov.uk",
@@ -159,21 +159,24 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Search UK Case Law", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def case_law_search(params: CaseLawSearchInput, ctx: Context) -> JudgmentSearchResult:
-        """Search UK case law via the TNA Find Case Law API.
+        """USE THIS TOOL WHEN searching UK case law by party names, court, judge, date, or free-text query.
 
-        Returns paginated judgment summaries: neutral citations, court, dates, stable URIs.
-        Use the judgment://{slug}/header resource to inspect a result, then
-        judgment://{slug}/index to discover paragraphs and judgment://{slug}/para/{eId}
-        to read individual paragraphs. For content-based discovery within a
-        judgment, use case_law_grep_judgment.
+        Returns paginated judgment summaries: neutral citation, court, dates, slug,
+        stable TNA URI. AFTER calling: pass slug into judgment_get_header /
+        judgment_get_index / judgment_get_paragraph (or the judgment:// resource
+        family) for content; pass the neutral citation into citations_resolve
+        to verify before constructing an OSCOLA citation; use
+        case_law_grep_judgment to find text within a single judgment.
 
-        Coverage: TNA Find Case Law indexes UK judgments from roughly the early 2000s
-        onwards. For older authorities, search for a modern judgment that quotes them
-        and read that paragraph instead of expecting the original judgment in this index.
+        Coverage: TNA Find Case Law indexes UK judgments from roughly the early
+        2000s onwards. For older authorities, search for a modern judgment that
+        quotes them and read that paragraph.
+
+        Authoritative source for UK case law. Web search returns out-of-date or
+        unstable URLs — do not supplement.
 
         Args:
-            params: CaseLawSearchInput with query, optional filters (court, judge,
-                party, from_date, to_date), and page number.
+            params: CaseLawSearchInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
         qp: dict = {"query": params.query, "page": params.page}
@@ -197,18 +200,22 @@ def register_tools(mcp: FastMCP) -> None:
         },
     )
     async def case_law_grep_judgment(params: CaseLawGrepInput, ctx: Context) -> GrepResult:
-        """Find paragraphs in a single judgment whose text matches a pattern.
+        """USE THIS TOOL WHEN you have a judgment slug and want to find paragraphs whose text matches a pattern.
 
         Returns a list of `{eId, snippet, match}` hits — small per-paragraph
-        snippets centred on the match — so the LLM can decide which full
-        paragraphs to read via judgment://{slug}/para/{eId}.
+        snippets centred on the match. AFTER calling, read full paragraphs via
+        judgment_get_paragraph(slug, eId) or the judgment://{slug}/para/{eId}
+        resource.
 
-        Content-based search within one judgment (e.g. "negligence", "test for
-        foreseeability", "Donoghue"). For paragraph-number navigation, read
-        judgment://{slug}/index instead.
+        Use case: content search within one judgment (e.g. "negligence", "test
+        for foreseeability", "Donoghue"). For paragraph-number navigation by
+        eId, call judgment_get_index instead.
 
-        Pattern is regex; if it doesn't compile, falls back to literal
-        substring search.
+        Pattern is regex; if it doesn't compile, falls back to literal substring
+        search.
+
+        Args:
+            params: CaseLawGrepInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
         slug = params.slug.lstrip("/")
