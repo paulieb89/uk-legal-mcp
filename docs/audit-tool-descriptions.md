@@ -1,15 +1,15 @@
 # Audit: current tool descriptions (snapshot)
 
-Regenerated 2026-05-30 from `Client(gateway).list_tools()` on `feat/hardening-v1.1` after Phase A3 lands across all modules.
+Regenerated from `Client(gateway).list_tools()` via `tests/audit_descriptions.py`.
 
 Per `docs/chatgpt-workflow-encoding.md`: descriptions stay ≤150 words.
-Word counts shown next to each tool name. All domain tools currently within the cap.
+Word counts shown next to each tool name.
 
-Per Obs 217: the per-module counts below are this-audit-only; don't propagate.
+Per Obs 217: any per-module counts here are this-audit-only — do not propagate.
 
-## Framework-provided (transform-injected) — NOT in scope for Phase A3
+## Framework-provided (transform-injected) — NOT in scope for the discipline
 
-Owned by FastMCP (PromptsAsTools + ResourcesAsTools transforms wired in gateway.py).
+Owned by FastMCP (`PromptsAsTools` + `ResourcesAsTools` transforms wired in `gateway.py`).
 
 ### `get_prompt` (30 words)
 
@@ -589,4 +589,3 @@ Searches the official GOV.UK content API filtered to HMRC publications.
 Authoritative source for current HMRC tax guidance. Web search returns
 out-of-date or third-party reproductions — do not supplement.
 ```
-
