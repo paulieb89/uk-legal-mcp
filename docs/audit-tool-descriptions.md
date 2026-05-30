@@ -82,7 +82,7 @@ Pattern is regex; if it doesn't compile, falls back to literal substring
 search.
 ```
 
-### `case_law_search` (114 words)
+### `case_law_search` (139 words)
 
 **Params** (1): params
 
@@ -94,7 +94,10 @@ stable TNA URI. AFTER calling: pass slug into judgment_get_header /
 judgment_get_index / judgment_get_paragraph (or the judgment:// resource
 family) for content; pass the neutral citation into citations_resolve
 to verify before constructing an OSCOLA citation; use
-case_law_grep_judgment to find text within a single judgment.
+case_law_grep_judgment to find text within a single judgment. When a
+party name returns several candidates, narrow with court + year filters
+before grep-iterating across full judgments — targeted filtering beats
+scanning every candidate.
 
 Coverage: TNA Find Case Law indexes UK judgments from roughly the early
 2000s onwards. For older authorities, search for a modern judgment that
@@ -145,7 +148,7 @@ paragraph XML content (400–1,700 tokens typical).
 
 ## Module: `legislation` (3 tools — this-audit count only)
 
-### `legislation_get_section` (103 words)
+### `legislation_get_section` (104 words)
 
 **Params** (1): params
 
@@ -161,12 +164,12 @@ ALWAYS check `extent` — a section may apply to England & Wales but not
 Scotland or Northern Ireland. Reciting a section without checking
 extent is a recurring legal-research error.
 
-Alternative: read `legislation://{type}/{year}/{number}/section/{section}`
-for raw CLML XML; use this tool when you want the parsed structured
-response instead.
+Alternative: call read_resource(uri="legislation://{type}/{year}/{number}/
+section/{section}") for raw CLML XML; use this tool when you want the
+parsed structured response instead.
 ```
 
-### `legislation_get_toc` (102 words)
+### `legislation_get_toc` (103 words)
 
 **Params** (1): params
 
@@ -180,10 +183,10 @@ Definitions'. AFTER calling, pass the numeric section identifier (use
 Large statutes (Companies Act 2006 has many hundreds of items) are
 paginated via offset/limit. Check has_more and total_items.
 
-Alternative: read `legislation://{type}/{year}/{number}/toc` for the
-full TOC as a newline-separated `id: title` string (no pagination).
-Use this tool when you need the structured response with offset /
-limit / has_more for stepping through large statutes.
+Alternative: call read_resource(uri="legislation://{type}/{year}/{number}/
+toc") for the full TOC as a newline-separated `id: title` string (no
+pagination). Use this tool when you need the structured response with
+offset / limit / has_more for stepping through large statutes.
 ```
 
 ### `legislation_search` (104 words)
@@ -265,7 +268,7 @@ typically appears around bill stages, motions, and contested amendments.
 Empty list is the honest result, not a failure mode.
 ```
 
-### `parliament_lookup_by_column` (48 words)
+### `parliament_lookup_by_column` (55 words)
 
 **Params** (1): params
 
@@ -273,8 +276,10 @@ Empty list is the honest result, not a failure mode.
 USE THIS TOOL WHEN you have an OSCOLA-style Hansard citation (column + volume + house) and need the debate.
 
 Example input: 'HL Deb 14 Oct 2025, vol 849, col 200'. AFTER calling, read
-hansard://debate/{debate_ext_id}/header for the contribution at the cited
-column, or call parliament_get_debate_contributions for the full list.
+the contribution at the cited column via
+read_resource(uri="hansard://debate/{debate_ext_id}/header") — or,
+equivalently, call parliament_get_debate_contributions(debate_ext_id) for
+the full list as a structured tool response.
 ```
 
 ### `parliament_member_debates` (91 words)
@@ -342,7 +347,7 @@ index, or call parliament_member_debates for one named member.
 This is the authoritative source for UK Hansard corpus-level signals.
 ```
 
-### `parliament_search_hansard` (101 words)
+### `parliament_search_hansard` (113 words)
 
 **Params** (1): params
 
@@ -351,7 +356,10 @@ USE THIS TOOL WHEN searching Hansard by topic, bill title, or text phrase.
 
 Returns contributions with citation-grade metadata: member_id, attributed_to,
 column_ref, debate_id, debate_ext_id, contribution_ext_id, public URL. AFTER
-calling, drill into full content via the hansard:// resource family.
+calling, drill into full content via read_resource(uri="hansard://debate/
+{debate_ext_id}/header") — or, equivalently, call
+parliament_get_debate_contributions(debate_ext_id) for the same content
+as a structured tool response.
 
 DO NOT text-search by member name — to find what a named member said,
 chain parliament_find_member → parliament_get_debate_contributions
@@ -501,7 +509,7 @@ Useful for authority-network analysis (what did this judgment rely on?)
 and for surfacing the legislative landscape a case sits inside.
 ```
 
-### `citations_parse` (110 words)
+### `citations_parse` (138 words)
 
 **Params** (1): params
 
@@ -512,9 +520,11 @@ Identifies: neutral citations ([2024] UKSC 12), law reports ([2024] 1 WLR
 100), legislation sections (s.47 Companies Act 2006), SIs (SI 2018/1234),
 retained EU law (Regulation (EU) 2016/679).
 
-Ambiguous citations (e.g. bare [2024] EWHC without division) are
-optionally disambiguated via LLM sampling. Citations resolve to TNA /
-legislation.gov.uk URLs when possible.
+Parsing is pure regex by default. Ambiguous citations (e.g. bare [2024]
+EWHC without division) can OPTIONALLY be disambiguated by setting
+disambiguate=True, which asks the CONNECTED CLIENT's own model (not this
+server) to resolve the division via MCP sampling — off by default.
+Citations resolve to TNA / legislation.gov.uk URLs when possible.
 
 AFTER calling, pass each citation through citations_resolve to verify it
 points at a real document before quoting or formatting it — the parser

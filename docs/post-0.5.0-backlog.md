@@ -16,7 +16,7 @@ Last updated: 2026-05-30 (post 0.5.0 close-off).
 
 ## Server-side drift (carried over from A5 audit work)
 
-### v1.2-1 — `audit_parliament_responses.py` reports drift  *[target: 0.5.1 (patch); some findings may be 0.6.0 if they require schema changes]*
+### v1.2-1 — `audit_parliament_responses.py` reports drift  *[⬜ OPEN — NOT done in 0.5.1; carried forward to 0.6.0]*
 
 22 consumed-undeclared fields + 1 semantic-mismatch heuristic hit. Pre-existing in v1; not an A5 regression. Each undeclared field is a silent-substitution risk: the parser reads a `.get("Field")` whose name doesn't appear in the Swagger response schema, so an upstream rename would silently return `None` rather than fail loudly.
 
@@ -30,7 +30,7 @@ In A3 the rich publication-state enum documentation (Rolling / Daily Part / Boun
 
 **Fix:** move the detailed enum docs into a `parliament://source-enum` resource. Tool description stays terse; lawyers who need to understand why source matters for OSCOLA finality read the resource.
 
-### v1.2-3 — `case_law_search` iteration count on uncertain matches  *[target: 0.5.1 (patch — description-only tweak)]*
+### v1.2-3 — `case_law_search` iteration count on uncertain matches  *[✅ SHIPPED 0.5.1 — commit 49b52a4]*
 
 Smith v HMRC dogfeed trace took 13 tool calls (8 of them grep iterations on a single candidate judgment). The agent did the right thing — verifying before claiming — but the description could nudge for narrower court+year filtering first.
 
@@ -54,7 +54,7 @@ Smith v HMRC dogfeed trace took 13 tool calls (8 of them grep iterations on a si
 
 **Fix:** add to GitHub Actions on every PR. Prevents future description bloat from landing without an explicit override.
 
-### v1.2-8 — Resource URI mentions ambiguous for tool-only clients  *[target: 0.5.1 (patch, description-only baseline) + Phase B (full workflow tuning lands in skills)]*
+### v1.2-8 — Resource URI mentions ambiguous for tool-only clients  *[✅ baseline SHIPPED 0.5.1 — commit 49b52a4; rich workflow tuning still Phase B]*
 
 Several tool descriptions point at resource URIs with phrasing like *"read `hansard://debate/{debate_ext_id}/header`"* or *"drill into the `hansard://` resource family"*. Native-resource clients (Claude / Codex / Inspector) parse this correctly. ChatGPT (tool-only via `ResourcesAsTools`) is ambiguous — does "read X://" mean the resources protocol it doesn't speak, or a tool call shape? When the agent tries the native form, ChatGPT can't execute it and falls back to a generic block message (looks like a safety check; it's actually "I can't process this MCP primitive").
 
@@ -78,7 +78,7 @@ The 30-min description rewrite is the *baseline fix* for the ChatGPT cohort (whi
 
 The implication for v1.2 prioritisation: rather than expanding tool descriptions to cover every ChatGPT edge case (descriptions get bloated and stale), invest the workflow-tuning effort in Phase B skills. Tool descriptions stay at the "good enough for the least-capability client" tier; skills are where the rich, opinionated procedural guidance lives.
 
-### v1.2-9 — `bills_search_bills` session_id Field description  *[target: 0.5.1 (patch)]*
+### v1.2-9 — `bills_search_bills` session_id Field description  *[✅ SHIPPED 0.5.1 — commit 49b52a4 (note: actual param is `session`, not `session_id`)]*
 
 Dogfeed trace showed the agent attempting `session_id="2025"` (year string) and failing, then recovering with `session_id=40` (numeric session). The Field description should be explicit:
 
@@ -150,8 +150,16 @@ This is significant because **regulatory-legal-uk is the reference template skil
 
 **Priority:** high if any skill in those 7 plugins names a uk-legal-mcp tool — that means the skill silently fails when the plugin loads alone.
 
+## Deferred upgrades (surfaced during 0.5.1)
+
+### NEW — FastMCP 3.2.4 → 3.3.1 upgrade evaluation  *[⬜ OPEN — 0.6.0 candidate]*
+
+A Devin-generated PR (#16, now closed) proposed bumping `fastmcp==3.2.4 → >=3.3.1,<4`. The PR was closed and its valuable half — `tests/test_gateway.py` — was salvaged onto main (commit `ddbf383`) WITHOUT the bump. The bump itself is deferred: 3.3.x may shift the transform internals that N2 relies on (the custom `Transform.list_tools` subclass that stamps bridge-tool annotations — see `gateway.py`).
+
+**Before adopting:** re-run the Phase-0 introspection (confirm `Transform`/`ToolTransformConfig` API unchanged), run the full non-live suite + `fastmcp inspect`, and re-dogfeed the resource-bridge surface on ChatGPT + Claude Code. Do NOT blind-merge a minor FastMCP bump.
+
 ## Notes on close-off discipline
 
 These all surfaced during v1.1 close-off. Per Obs 223, the discipline going forward: when a release is being scoped, deliberately sweep adjacent surfaces (plugins, downstream consumers, sibling MCPs) for gaps, not just the surface where the headline failure manifested.
 
-The v1.1 work is shipped at production `uk-legal-mcp.fly.dev/mcp`. Production dogfeed (Pannick / OSCOLA / Smith / Pet Abduction) by the user confirms the hardening landed cleanly before this backlog is acted on.
+The 0.5.0 hardening + 0.5.1 patch are shipped to production `uk-legal-mcp.fly.dev/mcp`, tagged `v0.5.1`, and on PyPI. ChatGPT staging dogfeed + Claude Code cross-client checks confirm it landed cleanly. The 0.5.1-shipped items above (v1.2-3/8/9, keep-bridges v1.2-11) are done; the rest are carried forward.

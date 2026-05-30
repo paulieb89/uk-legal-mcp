@@ -1,12 +1,12 @@
-# Handover — uk-legal-mcp 0.5.0 shipped, post-0.5.0 work pending
+# Handover — uk-legal-mcp 0.5.1 shipped + tagged, post-0.5.1 work pending
 
-**As of 2026-05-30.** Production hardening pass ("v1.1") shipped to `uk-legal-mcp.fly.dev/mcp` as version 0.5.0 (in `pyproject.toml`, **untagged** pending real-world soak). Five-prompt dogfeed validated with unprimed test cases against production. Post-0.5.0 backlog scoped and tagged by semver target. Phase B (5 new skills) deferred 1–2 weeks for lawyer dogfeed signal.
+**As of 2026-05-30.** 0.5.1 is shipped to production (`uk-legal-mcp.fly.dev/mcp`), **tagged `v0.5.1`**, and published to PyPI — `uvx uk-legal-mcp` now resolves 0.5.1, closing the gap where self-install lagged production by a minor version. The 0.5.1 release bundled the earlier 0.5.0 hardening pass (which had reached prod via a manual `fly deploy` but was never tagged or published) plus the 0.5.1 patch. Validated by ChatGPT staging dogfeed + Claude Code native-client cross-checks. Phase B (5 new skills) still deferred for real lawyer dogfeed signal.
 
 ---
 
 ## 1. What is uk-legal-mcp
 
-A FastMCP v3 server exposing 30 tools across 8 namespaced modules (case_law, legislation, parliament, bills, votes, committees, citations, hmrc) wrapping UK legal data sources (TNA Find Case Law, legislation.gov.uk, Hansard, Bills/Votes/Committees APIs, HMRC, GOV.UK). Single Fly.io deployment in lhr region. Streamable HTTP transport.
+A FastMCP v3 server exposing eight namespaced modules (case_law, legislation, parliament, bills, votes, committees, citations, hmrc) plus gateway-level companion tools, wrapping UK legal data sources (TNA Find Case Law, legislation.gov.uk, Hansard, Bills/Votes/Committees APIs, HMRC, GOV.UK). Single Fly.io deployment in lhr region. Streamable HTTP transport.
 
 Repo: `https://github.com/paulieb89/uk-legal-mcp`
 Production: `https://uk-legal-mcp.fly.dev/mcp` (no auth)
@@ -23,9 +23,21 @@ Local dev: `python -m src.gateway` or `fastmcp run` (fastmcp.json points at serv
 
 Implication: tool descriptions are the **lowest-common-denominator layer** — served to all cohorts, constrained to ~150 words, neutral procedural templates. Skills are where verbose workflow tuning belongs for cohorts that have them. Don't try to push procedural depth into descriptions just because that's the visible surface.
 
-## 3. What just shipped (0.5.0 — "v1.1 hardening")
+## 3. What shipped (0.5.0 hardening + 0.5.1 patch)
 
-Project-shorthand "v1.1" = actual semver `0.5.0` in `pyproject.toml`. No git tag yet (deferred pending production soak per user direction). The release composed of:
+### 0.5.1 patch (latest — tagged `v0.5.1`, on PyPI + prod)
+
+Composed of two external-review findings plus four backlog items. No new tools, no API changes; the only behaviour change is `citations_parse` defaulting to pure regex. Commits `49b52a4` (code) + `14f38fe` (release) + `80dd99b`/`cda1a6c`/`4507958` (README/images) + `c24d1b1` (CI tidy) + `ddbf383` (gateway tests).
+
+- **N1 — AI-disclosure accuracy**: `citations_parse` `disambiguate` default `True→False` (pure regex unless opted in; when on, resolves via the *connected client's* model, not the server). `server://about` reworded `no_llm_in_loop`→`llm_posture`.
+- **N2 — bridge-tool annotation parity**: `list_resources`/`read_resource`/`list_prompts`/`get_prompt` now carry the full read-only annotation quartet, via a custom `Transform.list_tools` in `gateway.py`.
+- **v1.2-3 / v1.2-8 / v1.2-9** description tweaks: case_law narrow-first nudge; resource-URI mentions name a `read_resource(...)` companion; bills `session` clarified as numeric.
+- **Gateway integration tests** added (`tests/test_gateway.py`, 14 tests) — salvaged from a closed Devin PR, FastMCP version bump deliberately dropped. Suite now 136 non-live tests.
+- **CI tidy**: release actions bumped to Node 24 (`checkout@v5`, `setup-uv@v6`) + `skip-existing` kebab-case.
+
+### 0.5.0 hardening ("v1.1") — shipped earlier, now released as part of 0.5.1
+
+Project-shorthand "v1.1" = semver `0.5.0`. Originally reached prod via manual deploy, untagged; now public as part of `v0.5.1`. The pass composed of:
 
 - **A1**: XML safety adapter (`src/xml_safe.py`, pure-lxml hardened parser; defusedxml deprecated upstream). 6/6 callsites routed.
 - **A1.5**: Wire `ResourcesAsTools` transform — closes ChatGPT capability gap.
@@ -41,11 +53,11 @@ Full record in `docs/v1.1-hardening-plan.md`. Final commits visible at `git log 
 ## 4. Production state (verified)
 
 - `/health` returns `{"status":"ok","server":"uk-legal-mcp","modules":8}` (modules derived from `len(MOUNTED_MODULES)`)
-- `/mcp` initialize reports version `0.5.0`
-- `/metrics` exposes Prometheus metrics
-- Staging app (`uk-legal-mcp-v1-1.fly.dev`) destroyed
-- v2 archive Fly app (`uk-legal-mcp-v2.fly.dev`) destroyed
-- v2 branch in `uk-legal-fleet/` tagged `archive/v2-experiment`, branch deleted (local-only — no remote)
+- `/mcp` initialize reports version `0.5.1`; `server://about` shows `llm_posture` (the N1 wording) — confirms 0.5.1 code is live
+- PyPI latest `0.5.1`; git tag `v0.5.1`; `/metrics` exposes Prometheus tool counters
+- 0.5.1 staging app (`uk-legal-mcp-staging.fly.dev`) created for dogfeed, then destroyed
+- Earlier disposables already gone: `uk-legal-mcp-v1-1.fly.dev`, v2 archive app, v2 branch (`archive/v2-experiment`)
+- All stale branches cleaned (feat/patch-0.5.1, chore/ci-node24-tidy, refactor/replace-vibe-check, two `devin/*`); remote + local are `main`-only
 
 ## 5. Dogfeed validation set — UNPRIMED prompts (Obs 224 discipline)
 
@@ -72,7 +84,8 @@ All 5 passed on 2026-05-30 unprimed against production. See `CHANGELOG.md` for v
 
 - **Distribution (Phase C)**: Option C1 — all 11 plugins free at `uk-agents/uk-legal-plugins` (user owns at `/home/bch/company/skills-uk/uk-legal-plugins/`). No premium fork. Skill revenue not the v1 monetisation path. Future revenue paths (premium MCP tier, BOUCH advisory) recorded for context only.
 - **Content discipline (Phase D)**: tool descriptions, module instructions, and skills are NEUTRAL PROCEDURAL TEMPLATES, not OPINIONATED ADVICE. ChatGPT is the highest-risk surface — descriptions especially must not carry legal positions. Existing 140 skills already maintain this; new skills must too.
-- **Version tag deferred**: 0.5.0 in pyproject.toml, no `v0.5.0` git tag yet. User explicitly deferred tagging pending production soak.
+- **Keep the resource bridges** (`ResourcesAsTools`/`PromptsAsTools`): cross-client testing showed ChatGPT can't consume the double-wrapped `{result:"<json>"}` output (1-token), but **Claude Code consumes it perfectly** and the bridge `list_resources` is the **only** surface that discovers the 8 resource templates (native `resources/list` returns static resources only). So the bridges are load-bearing for native-tool clients; ChatGPT's limitation is non-blocking (it succeeds via the named twin tools). N2's annotations are therefore justified, not throwaway. Do NOT remove the bridges. (Full diagnosis: `post-0.5.0-backlog.md` v1.2-11.)
+- **Versioning**: 0.5.1 is tagged (`v0.5.1`) + on PyPI. Lesson learned (Obs 231): a manual `fly deploy` ships prod but updates no recording surface — 0.5.0 ran in prod for days while PyPI/tags sat at 0.4.4. At every release boundary cross-check prod `/health` vs PyPI-latest vs git tag vs `uvx` resolution; they must agree.
 - **Branch hygiene**: All implementation on feature branches, never directly to main. Per Obs 192/193/205.
 - **Don't hardcode counts in prose** (Obs 217): document SHAPE (named modules, capabilities), not CENSUS (count, version, timestamp). Use `len(MOUNTED_MODULES)` etc.
 - **v2 rebuild is dead**: the primitive-collapse experiment failed ChatGPT dogfeed. Tagged + archived. Do not resurrect without explicit user direction.
@@ -81,23 +94,22 @@ All 5 passed on 2026-05-30 unprimed against production. See `CHANGELOG.md` for v
 
 Renamed `docs/post-0.5.0-backlog.md`. Items tagged by actual semver target. Item IDs (v1.2-N) retained for cross-reference stability.
 
-| ID | Title | Target |
-|---|---|---|
-| v1.2-1 | `audit_parliament_responses.py` reports drift (22 undeclared fields + 1 semantic mismatch) | 0.5.1 / 0.6.0 |
-| v1.2-2 | `parliament_lookup_by_column` Source enum docs → new resource template | 0.6.0 |
-| v1.2-3 | `case_law_search` description tweak (narrower court+year filters) | 0.5.1 |
-| v1.2-4 | New `citations_format_oscola` tool that gates on resolved input | 0.6.0 |
-| v1.2-5 | Wire `pytest -m live` into nightly CI | infrastructure |
-| v1.2-6 | `audit_descriptions.py --check` as PR-gate | infrastructure |
-| v1.2-7 | Only 4 of 11 plugins reference uk-legal-mcp — including regulatory-legal-uk | plugin (uk-legal-plugins repo) |
-| v1.2-8 | Resource URI mentions ambiguous for tool-only clients — fix tiered between description rewrite (0.5.1 baseline) and Phase B skills (workflow tuning) | 0.5.1 + Phase B |
-| v1.2-9 | `bills_search_bills` session_id Field description ("numeric, NOT year string") | 0.5.1 |
-| v1.2-10 | Pre-merge `audit_dogfeed_contamination.py` to grep dogfeed prompts against src/ | infrastructure |
-| v1.2-11 | `list_resources` returns empty in production — ResourcesAsTools discovery broken | 0.5.1 (bug fix, blocks resource discovery) |
+| ID | Title | Target | Status |
+|---|---|---|---|
+| v1.2-3 | `case_law_search` narrow-first nudge | 0.5.1 | ✅ shipped 0.5.1 |
+| v1.2-8 | Resource-URI mentions name a `read_resource(...)` companion (baseline tier) | 0.5.1 + Phase B | ✅ baseline shipped 0.5.1; rich tuning still Phase B |
+| v1.2-9 | `bills_search_bills` `session` numeric-not-year Field | 0.5.1 | ✅ shipped 0.5.1 |
+| v1.2-11 | `list_resources` empty on ChatGPT (ResourcesAsTools double-encoding) | 0.6.0 | ✅ resolved — **keep bridges** (see §6); optional 0.6.0 = clean named catalog tool |
+| v1.2-1 | `audit_parliament_responses.py` Hansard drift (22 undeclared + 1 semantic) | 0.6.0 | ⬜ open — NOT done in 0.5.1, carried forward |
+| v1.2-2 | `parliament_lookup_by_column` Source enum → new resource template | 0.6.0 | ⬜ open |
+| v1.2-4 | New `citations_format_oscola` tool (gates on resolved input) | 0.6.0 | ⬜ open |
+| v1.2-5 | Wire `pytest -m live` into nightly CI | infra | ⬜ open |
+| v1.2-6 | `audit_descriptions.py --check` as PR-gate | infra | ⬜ open |
+| v1.2-10 | `audit_dogfeed_contamination.py` pre-merge grep | infra | ⬜ open |
+| v1.2-7 | Only some plugins reference `uk-legal-mcp` | plugin repo | ⬜ open |
+| NEW | FastMCP 3.2.4→3.3.1 upgrade eval (deferred from closed PR #16) | 0.6.0 | ⬜ open — needs Phase-0 re-verify of transform internals before adopting |
 
-**Suggested 0.5.1 grouping**: v1.2-3 + v1.2-8 (baseline tier) + v1.2-9 + v1.2-11. All are description/Field tweaks or bug fixes; no API change. ~45 minutes of work.
-
-**Suggested 0.6.0 grouping**: v1.2-2 + v1.2-4. New tool + new resource template. ~half day.
+**Next grouping (0.6.0)**: v1.2-2 + v1.2-4 (new resource template + new tool) is the headline; v1.2-1 (Hansard drift) and the FastMCP 3.3.1 eval are the other candidates. Infra items (v1.2-5/6/10) are independent of any server release. NB the Node-24 CI deprecation is already fixed (`c24d1b1`) — that was separate from v1.2-5/6/10.
 
 ## 8. Phase B — 5 new skills (DEFERRED 1–2 weeks)
 
@@ -130,16 +142,18 @@ uk-legal-mcp/
 │   ├── xml_safe.py                    # A1 hardened XML parser
 │   ├── deps.py                        # http_lifespan, format_http_error
 │   └── modules/
-│       ├── case_law/                  # 2 tools + 3 judgment_* at gateway
-│       ├── legislation/               # 3 tools + resource templates
-│       ├── parliament/                # 9 tools + hansard:// resources (A-tier reference for instructions blob)
-│       ├── bills/                     # 2 tools
-│       ├── votes/                     # 2 tools
-│       ├── committees/                # 3 tools
-│       ├── citations/                 # 3 tools (self-contained, no upstream)
-│       └── hmrc/                      # 3 tools
+│       ├── case_law/                  # judgments + 3 judgment_* companion tools at gateway
+│       ├── legislation/               # Acts/SIs + legislation:// resource templates
+│       ├── parliament/                # Hansard/members + hansard:// resources (A-tier reference for instructions blob)
+│       ├── bills/                     # parliamentary bills
+│       ├── votes/                     # Commons/Lords divisions
+│       ├── committees/                # select committees + evidence
+│       ├── citations/                 # OSCOLA parser (self-contained, no upstream)
+│       └── hmrc/                      # VAT/MTD/guidance
 ├── tests/
-│   ├── test_*.py                      # 122 non-live tests pass
+│   ├── test_citations.py              # 35 citation unit tests (regex, resolution, disambiguation)
+│   ├── test_gateway.py                # gateway integration tests (identity, tool/schema, routes) — added 0.5.1
+│   ├── test_*.py                      # other unit tests; full non-live suite = 136 pass
 │   ├── audit_descriptions.py          # regenerate doc + --check 150-word cap
 │   ├── audit_parliament_params.py     # static param-name audit
 │   ├── audit_parliament_responses.py  # static response-field audit (v1.2-1 findings here)
@@ -161,22 +175,33 @@ Auto-memory (loaded at session start via `MEMORY.md`):
 
 ## 10. Open questions for next session
 
-1. **Real lawyer dogfeed signal**: what failure modes does production usage surface that the unprimed 5-prompt set doesn't catch?
-2. **0.5.0 → tag**: ready to `git tag -a v0.5.0` and `git push --tags`? Currently untagged by user direction.
-3. **0.5.1 grouping**: pick up v1.2-3 + v1.2-8 baseline + v1.2-9 + v1.2-11 as a small patch release?
-4. **`list_resources` empty (v1.2-11)**: is this a ChatGPT-side surface issue or a FastMCP transform bug? Run `Client(gateway).list_resources()` against production to bisect.
-5. **Phase B kickoff timing**: still 1–2 weeks out, or earlier if dogfeed shows skill-shaped gaps?
+1. **Real lawyer dogfeed signal**: what failure modes does production usage surface that the unprimed 5-prompt set (§5) doesn't catch? (Still the primary unknown.)
+2. **0.6.0 scope**: v1.2-2 (Source-enum resource) + v1.2-4 (`citations_format_oscola`) are the headline candidates; v1.2-1 (Hansard response drift) and the FastMCP 3.3.1 eval are the others. Which to bundle?
+3. **FastMCP 3.2.4 → 3.3.1**: the deferred upgrade (closed PR #16) needs a Phase-0-style re-verify of the transform internals (N2 relies on subclassing `Transform.list_tools`) + full suite run before adopting. Worth doing?
+4. **Phase B (5 new skills)**: still deferred for lawyer signal — kick off now, or keep waiting?
+5. **`docs/api-reference.md` unverified since 2026-03-31** (pre-parliament-refactor) — verify against current upstreams when convenient (low risk; the upstream APIs are stable).
+6. **Infra backlog** (v1.2-5 nightly live tests, v1.2-6 `audit_descriptions --check` PR-gate, v1.2-10 dogfeed-contamination grep) — none block a release; pick up opportunistically.
 
 ## 11. Recent observations worth reading on need (not pasting into prompt)
 
-Located at `~/.claude/skill-observations/log.md`. Six recent observations (216–226) are directly load-bearing for this project. Read by ID only when a relevant decision comes up:
+Located at `~/.claude/skill-observations/log.md`. Read by ID only when a relevant decision comes up.
 
-- **Obs 217** — don't hardcode counts in prose; document shape not census. (Also encoded in global CLAUDE.md + auto-memory.)
-- **Obs 222** — trace evaluation: honesty-under-uncertainty is the primary metric, not call count. An honest 13-call trace beats a confidently-wrong 4-call one.
-- **Obs 223** — hardening passes should sweep sibling surfaces (module instructions, prompts, resources), not just the targeted layer (tool descriptions). Family sweep.
-- **Obs 224** — dogfeed test cases must be disjoint from LLM-visible description examples. Grep `src/` for every test name before declaring a hardening pass done. Test 5 examples (Miller, Lord Hope) are the clean replacements.
-- **Obs 225** — naked retrieval prompts can't test sycophancy. Consumer-voice prompts ("I'm advising X, find me both sides") unlock adversarial-honesty testing.
-- **Obs 226** — venue selection bias: when an agent screws up workflow, the default impulse is to edit tool descriptions (visible surface). The right venue is usually skills (least-constrained layer for the cohort that has them). Order: skills > module instructions > tool descriptions.
+From the 0.5.0 work (216–226):
+- **Obs 217** — don't hardcode counts in prose; document shape not census. (Also in global CLAUDE.md + auto-memory.)
+- **Obs 222** — trace eval: honesty-under-uncertainty is the primary metric, not call count.
+- **Obs 223** — hardening passes should sweep sibling surfaces, not just the targeted layer.
+- **Obs 224** — dogfeed test cases must be disjoint from LLM-visible description examples.
+- **Obs 225** — consumer-voice prompts ("I'm advising X, find me both sides") unlock adversarial-honesty testing.
+- **Obs 226** — venue selection bias: prefer skills > module instructions > tool descriptions for workflow tuning.
+
+From the 0.5.1 work (228–235) — directly load-bearing for this repo:
+- **Obs 228** — verify a plan's library-API assumptions against the INSTALLED version, not the docs (FastMCP `ToolTransformConfig` had no `annotations` field in 3.2.4); reproduce a bug before fixing.
+- **Obs 229** — localize a producer↔consumer bug by triangulating emit (server logs/metrics) vs consume (client trace), not one side alone.
+- **Obs 230** — before removing a shared surface based on one client's failure, test ALL consumers; a loud-failing client biases you against a silent-succeeding one (the keep-bridges decision).
+- **Obs 231** — a manual `fly deploy` ships prod but updates no recording surface; cross-check prod/PyPI/tag/uvx at every release boundary.
+- **Obs 232** — after chained git state-changing commands, verify the END STATE with absolute refs; a silently-aborted `git checkout` (dirty tree) produces a false success cascade. Don't truncate output of mutating git commands.
+- **Obs 234** — `git branch --merged`/`cherry` answer ancestry, not integration; a squash-merged branch looks unmerged. Verify via PR state + content-superset.
+- **Obs 235** — "not merged" ≠ "safe to delete"; assess same-prefix branches per-branch (one Devin PR had real gateway tests, another was a 0-byte stub).
 
 The other ~220 observations in the log are historical context for prior work and don't need to be read for this project unless a specific discipline becomes relevant. Skim by topic on demand; don't bulk-load.
 
@@ -186,13 +211,14 @@ The other ~220 observations in the log are historical context for prior work and
 cd /home/bch/dev/mcpfleet/uk-legal-mcp
 git log --oneline -10                         # last 10 commits on main
 git status --short                            # working tree state
-git tag --list --sort=-v:refname | head -5    # latest tags
+git tag --list --sort=-v:refname | head -3    # latest tag should be v0.5.1
 curl -sS https://uk-legal-mcp.fly.dev/health  # production health
-uv run pytest -m "not live" -q                # 122 pass expected
-uv run python -m tests.audit_descriptions --check  # 0/34 over 150-word cap
+curl -sS https://pypi.org/pypi/uk-legal-mcp/json | python3 -c "import sys,json;print(json.load(sys.stdin)['info']['version'])"  # PyPI: 0.5.1
+uv run pytest -m "not live" -q                # 136 pass expected
+uv run python -m tests.audit_descriptions --check  # no tools over 150-word cap
 ```
 
-If all six come back clean, the state described above is current.
+Cross-surface version check (Obs 231): prod `/mcp` initialize version, PyPI latest, git tag, and `uvx uk-legal-mcp` resolution should ALL read `0.5.1`. If they diverge, a manual deploy bypassed the release pipeline — reconcile before shipping more.
 
 ---
 

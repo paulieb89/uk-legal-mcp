@@ -2,7 +2,7 @@
 
 ## What this is
 
-UK legal research MCP server. 27 tools across 8 modules (case_law, legislation, parliament, bills, votes, committees, citations, hmrc) mounted into a single FastMCP v3 gateway. Deployed to Fly.io (London region). Streamable HTTP transport.
+UK legal research MCP server. Eight namespaced modules (case_law, legislation, parliament, bills, votes, committees, citations, hmrc) plus gateway companion + resource-bridge tools, mounted into a single FastMCP v3 gateway. For the live tool count run `fastmcp inspect` or `len(await client.list_tools())` — don't hardcode it (Obs 217). Deployed to Fly.io (London region). Streamable HTTP transport.
 
 Live endpoint: `https://uk-legal-mcp.fly.dev/mcp`
 Repo: `https://github.com/paulieb89/uk-legal-mcp`
@@ -33,8 +33,9 @@ In `docs/`:
 # Run locally
 python -m src.gateway
 
-# Run tests (35 citation tests, no API needed)
-python -m pytest tests/test_citations.py -v
+# Run tests (no API needed) — full non-live suite, or just citations
+uv run pytest -m "not live" -q          # full suite (incl. gateway integration tests)
+python -m pytest tests/test_citations.py -v   # citation unit tests only
 
 # Syntax check all modules
 python -m py_compile src/gateway.py
@@ -129,9 +130,10 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 
 ## Testing
 
-- Citation tests are the only unit tests. They cover regex patterns, resolution, disambiguation, and mixed-text extraction.
-- Other modules hit live APIs — test manually via Claude Desktop or MCP Inspector.
-- Always run `python -m pytest tests/test_citations.py -v` before deploying.
+- Two non-live test files: `test_citations.py` (regex patterns, resolution, disambiguation, mixed-text extraction) and `test_gateway.py` (gateway integration — server identity, tool listing + schema validity, companion tools, resource templates, offline citation execution, and the custom `/health` `/metrics` `/.well-known/*` routes). Run offline, no API.
+- Domain modules that hit live APIs are exercised by `audit_*` scripts and manual/dogfeed testing via Claude Desktop, ChatGPT, or MCP Inspector.
+- Always run `uv run pytest -m "not live" -q` (the full non-live suite) before deploying.
+- Test discipline: prefer smoke tests + real runtime probes over fitted unit tests that just restate the implementation (see auto-memory `no-fitted-tests`).
 
 ## Deployment
 
@@ -144,4 +146,4 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 
 - No comments on obvious code. No docstrings on internal helpers unless the logic is non-obvious.
 - Commit messages: imperative mood, first line describes the change, body explains why.
-- Co-author line on all commits: `Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>`
+- Co-author line on all commits: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`
