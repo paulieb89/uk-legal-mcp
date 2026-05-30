@@ -110,13 +110,16 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Search Parliamentary Divisions", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def votes_search_divisions(params: DivisionSearchInput, ctx: Context) -> DivisionsSearchResult:
-        """Search parliamentary divisions (votes) in the Commons or Lords.
+        """USE THIS TOOL WHEN searching Commons or Lords formal votes by topic, date, or member.
 
-        Returns division summaries including title, date, vote counts, and whether the motion passed.
-        Use votes_get_division with the division ID for full voter lists.
+        Returns division summaries (title, date, vote counts, pass/fail). AFTER
+        calling, pass division_id + house into votes_get_division for the full
+        member-by-member voter lists.
+
+        Authoritative source for UK parliamentary vote records.
 
         Args:
-            params: DivisionSearchInput with optional query, house, date range, member filter.
+            params: DivisionSearchInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         url = _search_url(params.house)
@@ -160,13 +163,15 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Get Division Detail", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def votes_get_division(params: DivisionDetailInput, ctx: Context) -> DivisionDetail:
-        """Get full detail for a parliamentary division including how each member voted.
+        """USE THIS TOOL WHEN you have a division_id + house and want the full member-by-member voting record.
 
-        Voter lists are truncated to 100 per side to fit response limits.
-        Total voter counts are always accurate regardless of truncation.
+        Voter lists are truncated to 100 per side to fit response limits; total
+        voter counts are always accurate regardless of truncation. Chain from
+        votes_search_divisions or parliament_get_debate_divisions (which
+        cross-resolves Hansard division refs into votes-API division_ids).
 
         Args:
-            params: DivisionDetailInput with division_id and house.
+            params: DivisionDetailInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         url = _detail_url(params.house, params.division_id)

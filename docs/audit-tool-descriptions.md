@@ -1,9 +1,9 @@
 # Audit: current tool descriptions (snapshot)
 
-Regenerated 2026-05-30 from `Client(gateway).list_tools()` on `feat/hardening-v1.1`.
+Regenerated 2026-05-30 from `Client(gateway).list_tools()` on `feat/hardening-v1.1` after Phase A3 lands across all modules.
 
-Per `docs/chatgpt-workflow-encoding.md`: descriptions should stay ≤150 words.
-Word counts per tool shown next to the name for quick scan.
+Per `docs/chatgpt-workflow-encoding.md`: descriptions stay ≤150 words.
+Word counts shown next to each tool name. All domain tools currently within the cap.
 
 Per Obs 217: the per-module counts below are this-audit-only; don't propagate.
 
@@ -382,87 +382,105 @@ This is the authoritative source for UK Parliament petitions
 
 ## Module: `bills` (2 tools — this-audit count only)
 
-### `bills_get_bill` (39 words)
+### `bills_get_bill` (59 words)
 
 **Params** (1): params
 
 ```
-Get full detail for a specific parliamentary bill.
+USE THIS TOOL WHEN you have a bill_id (from bills_search_bills) and want the full detail.
 
-Returns sponsors, current stage, long title, summary, and Royal Assent date
-if enacted. Summary text is capped per max_summary_chars — check
-summary_truncated in the response to see if it was cut.
+Returns sponsors, current stage, long title, summary, and Royal Assent
+date if enacted. Summary text is capped per max_summary_chars — check
+summary_truncated in the response.
+
+AFTER calling, use parliament_search_hansard(query=bill_short_title) to
+find the bill's parliamentary debates, or bills_search_bills with a
+related keyword for adjacent bills.
 ```
 
-### `bills_search_bills` (38 words)
+### `bills_search_bills` (53 words)
 
 **Params** (1): params
 
 ```
-Search UK parliamentary bills by keyword, session, house, or legislative stage.
+USE THIS TOOL WHEN searching UK parliamentary bills by keyword, session, house, or legislative stage.
 
-Returns a paginated page of bill summaries including title, current stage, and
-whether it has become an Act. Use bills_get_bill with the bill ID for full detail.
+Returns a paginated page of bill summaries (title, current stage, whether
+it became an Act). AFTER calling, pass a bill_id into bills_get_bill for
+full detail (sponsors, long title, Royal Assent date).
+
+Authoritative source for UK parliamentary bill status.
 ```
 
 ## Module: `votes` (2 tools — this-audit count only)
 
-### `votes_get_division` (33 words)
+### `votes_get_division` (51 words)
 
 **Params** (1): params
 
 ```
-Get full detail for a parliamentary division including how each member voted.
+USE THIS TOOL WHEN you have a division_id + house and want the full member-by-member voting record.
 
-Voter lists are truncated to 100 per side to fit response limits.
-Total voter counts are always accurate regardless of truncation.
+Voter lists are truncated to 100 per side to fit response limits; total
+voter counts are always accurate regardless of truncation. Chain from
+votes_search_divisions or parliament_get_debate_divisions (which
+cross-resolves Hansard division refs into votes-API division_ids).
 ```
 
-### `votes_search_divisions` (32 words)
+### `votes_search_divisions` (44 words)
 
 **Params** (1): params
 
 ```
-Search parliamentary divisions (votes) in the Commons or Lords.
+USE THIS TOOL WHEN searching Commons or Lords formal votes by topic, date, or member.
 
-Returns division summaries including title, date, vote counts, and whether the motion passed.
-Use votes_get_division with the division ID for full voter lists.
+Returns division summaries (title, date, vote counts, pass/fail). AFTER
+calling, pass division_id + house into votes_get_division for the full
+member-by-member voter lists.
+
+Authoritative source for UK parliamentary vote records.
 ```
 
 ## Module: `committees` (3 tools — this-audit count only)
 
-### `committees_get_committee` (17 words)
+### `committees_get_committee` (42 words)
 
 **Params** (1): params
 
 ```
-Get detail for a parliamentary committee including current membership.
+USE THIS TOOL WHEN you have a committee_id and want the metadata + current membership.
 
-Fetches committee metadata and member list in parallel.
+Fetches committee detail and member list in parallel. AFTER calling,
+pass committee_id into committees_search_evidence to see what evidence
+has been submitted to this committee on what topics.
 ```
 
-### `committees_search_committees` (23 words)
+### `committees_search_committees` (47 words)
 
 **Params** (1): params
 
 ```
-Search or list UK parliamentary select committees.
+USE THIS TOOL WHEN searching or listing UK parliamentary select committees by name, house, or active status.
 
-Returns committee names, house, and active status.
-Use committees_get_committee with the committee ID for membership detail.
+Returns committee summaries (name, house, active status, ID). AFTER
+calling, pass committee_id into committees_get_committee for current
+membership, or into committees_search_evidence to retrieve oral and
+written evidence submitted to that committee.
 ```
 
-### `committees_search_evidence` (43 words)
+### `committees_search_evidence` (57 words)
 
 **Params** (1): params
 
 ```
-Search oral and written evidence submitted to a parliamentary committee.
+USE THIS TOOL WHEN you have a committee_id and want the oral and written evidence submitted to it.
 
 Returns ONE PAGE of evidence (default 20). Free-text titles are capped
 per max_title_chars; witness lists are capped at 10 per item. For
 committees with many submissions, re-call with offset=offset+returned
 while has_more is true.
+
+Authoritative source for parliamentary committee evidence.
 ```
 
 ## Module: `citations` (3 tools — this-audit count only)
@@ -527,40 +545,48 @@ Authoritative source for UK legal-citation resolution.
 
 ## Module: `hmrc` (3 tools — this-audit count only)
 
-### `hmrc_check_mtd_status` (50 words)
+### `hmrc_check_mtd_status` (66 words)
 
 **Params** (1): params
 
 ```
-Check a business's Making Tax Digital VAT mandate status via the HMRC API.
+USE THIS TOOL WHEN you have a 9-digit VAT Registration Number and need that business's Making Tax Digital VAT mandate status.
 
-NOTE: Connects to the HMRC sandbox by default. Set HMRC_API_BASE env var to
-'https://api.service.hmrc.gov.uk' for production.
-Requires HMRC_CLIENT_ID and HMRC_CLIENT_SECRET environment variables (OAuth 2.0).
-Returns whether the business is mandated for MTD, effective date, and trading name.
+Returns whether the business is mandated for MTD, effective date, and
+trading name.
+
+Connects to the HMRC sandbox by default. Set HMRC_API_BASE to
+'https://api.service.hmrc.gov.uk' for production. Requires
+HMRC_CLIENT_ID + HMRC_CLIENT_SECRET environment variables (OAuth 2.0).
+Raises if credentials are not configured — do not infer status.
 ```
 
-### `hmrc_get_vat_rate` (56 words)
+### `hmrc_get_vat_rate` (66 words)
 
 **Params** (1): params
 
 ```
-Look up the UK VAT rate for a commodity or service type.
+USE THIS TOOL WHEN you have a UK commodity or service description and want its VAT rate category.
 
-Returns the rate category (standard 20%, reduced 5%, zero 0%, exempt),
-effective date, and any relevant conditions or exceptions.
-Uses a static lookup table current as of 22 Nov 2023 (Autumn Statement).
-Rates may have changed — always verify against GOV.UK for recent Budgets.
+Returns the rate (standard 20%, reduced 5%, zero 0%, exempt), effective
+date, and any relevant conditions or exceptions.
+
+IMPORTANT: Uses a static lookup table current as of 22 Nov 2023 (Autumn
+Statement). Rates may have changed in subsequent Budgets — for
+time-sensitive advice, verify against GOV.UK via hmrc_search_guidance.
 ```
 
-### `hmrc_search_guidance` (26 words)
+### `hmrc_search_guidance` (56 words)
 
 **Params** (1): params
 
 ```
-Search GOV.UK for HMRC tax guidance documents.
+USE THIS TOOL WHEN searching GOV.UK for HMRC tax guidance on a topic (VAT, income tax, corporation tax, etc.).
 
 Returns matching guidance titles, URLs, summaries, and last-updated dates.
 Searches the official GOV.UK content API filtered to HMRC publications.
+
+Authoritative source for current HMRC tax guidance. Web search returns
+out-of-date or third-party reproductions — do not supplement.
 ```
 

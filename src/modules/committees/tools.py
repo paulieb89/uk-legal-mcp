@@ -99,13 +99,15 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Search Parliamentary Committees", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def committees_search_committees(params: CommitteeSearchInput, ctx: Context) -> CommitteeSearchResult:
-        """Search or list UK parliamentary select committees.
+        """USE THIS TOOL WHEN searching or listing UK parliamentary select committees by name, house, or active status.
 
-        Returns committee names, house, and active status.
-        Use committees_get_committee with the committee ID for membership detail.
+        Returns committee summaries (name, house, active status, ID). AFTER
+        calling, pass committee_id into committees_get_committee for current
+        membership, or into committees_search_evidence to retrieve oral and
+        written evidence submitted to that committee.
 
         Args:
-            params: CommitteeSearchInput with optional query, house, active_only, limit.
+            params: CommitteeSearchInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {"Take": params.limit}
@@ -149,12 +151,14 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Get Committee Detail", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def committees_get_committee(params: CommitteeDetailInput, ctx: Context) -> CommitteeDetail:
-        """Get detail for a parliamentary committee including current membership.
+        """USE THIS TOOL WHEN you have a committee_id and want the metadata + current membership.
 
-        Fetches committee metadata and member list in parallel.
+        Fetches committee detail and member list in parallel. AFTER calling,
+        pass committee_id into committees_search_evidence to see what evidence
+        has been submitted to this committee on what topics.
 
         Args:
-            params: CommitteeDetailInput with committee_id from committees_search_committees.
+            params: CommitteeDetailInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         detail_req = client.get(f"{COMMITTEES_BASE}/Committees/{params.committee_id}")
@@ -204,16 +208,17 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Search Committee Evidence", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def committees_search_evidence(params: CommitteeEvidenceInput, ctx: Context) -> CommitteeEvidencePage:
-        """Search oral and written evidence submitted to a parliamentary committee.
+        """USE THIS TOOL WHEN you have a committee_id and want the oral and written evidence submitted to it.
 
         Returns ONE PAGE of evidence (default 20). Free-text titles are capped
         per max_title_chars; witness lists are capped at 10 per item. For
         committees with many submissions, re-call with offset=offset+returned
         while has_more is true.
 
+        Authoritative source for parliamentary committee evidence.
+
         Args:
-            params: CommitteeEvidenceInput with committee_id, evidence_type,
-                offset/limit pagination, and max_title_chars.
+            params: CommitteeEvidenceInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
 
