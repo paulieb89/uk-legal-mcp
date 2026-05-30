@@ -16,7 +16,7 @@ A Model Context Protocol server for UK legal research. One MCP connection wires 
 
  For best results remind the agent to use the uk-legal-mcp server. The location depends on the agent or setup you are using. It maybe project instructions, MEMORY.md, AGENTS.md etc.
 
- If you face issues refresh the server in the Apps / Customise menu. 
+ If a tool stops responding, refresh the server from your client's Apps / Customise menu.
 
 ---
 
@@ -45,7 +45,7 @@ For clients that use `mcpServers` JSON:
 
 ### Local install (stdio)
 
-Useful from Claude Desktop on a residential IP — bypasses the legislation.gov.uk WAF that intermittently blocks the hosted server's cloud IP range:
+Runs on your own machine and IP — the most reliable path for very large Acts (e.g. the Companies Act 2006), which legislation.gov.uk occasionally rate-limits against shared cloud IPs:
 
 ```bash
 uvx uk-legal-mcp
@@ -118,13 +118,13 @@ Eight namespaced modules covering the UK's primary legal sources:
 | **citations** | Pure OSCOLA citation parser — no network, self-contained |
 | **hmrc** | UK VAT rate lookups, Making Tax Digital status, GOV.UK guidance search |
 
-Plus a small set of `judgment://`, `legislation://`, and `hansard://` URI-addressed resources for content the LLM can read on demand without bloating tool responses, and four orchestration prompts for common research workflows.
+Plus a small set of `judgment://`, `legislation://`, and `hansard://` URI-addressed resources for content the LLM can read on demand, keeping tool responses compact, and four orchestration prompts for common research workflows.
 
 ---
 
 ## A lawyer's workflow
 
-This server is a data pipe. It returns what the sources say, with citations. It does not interpret the law, classify members' positions, or recommend a research strategy — your agent does that work on your behalf.
+The server returns primary sources with the citation metadata you need to footnote them. It does not interpret the law, classify members' positions, or recommend a research strategy — your agent does that work on your behalf.
 
 A realistic end-to-end run: **advising a Manchester landlord on their eviction-notice exposure under the new Renters' Rights regime**, including verifying a column citation an opponent quoted at you.
 
@@ -147,7 +147,7 @@ Every response carries the metadata needed for an OSCOLA footnote: `attributed_t
 
 ### Example output
 
-A real ChatGPT session against the server: an OSCOLA citation resolved to its neutral citation, then a "what did this peer say?" question answered by resolving the member to their ID and filtering Hansard by that ID — not fragile name-text matching.
+A real ChatGPT session: an OSCOLA citation resolved to its neutral citation, then a peer's contributions to a 2025 Lords debate retrieved by member ID and quoted with their citable column references.
 
 ![ChatGPT using uk-legal-mcp — resolving "R (Miller) v The Prime Minister" to the neutral citation [2019] UKSC 41, then looking up Lord Hope of Craighead's contributions to the 2025 House of Lords (Hereditary Peers) Bill debates by member ID](https://raw.githubusercontent.com/paulieb89/uk-legal-mcp/main/assets/images/example.png)
 
@@ -276,7 +276,7 @@ Workflow templates exposed as tools via `PromptsAsTools` (for ChatGPT) and nativ
 - **Territorial extent always matters.** `legislation_get_section` exposes the `extent` field. Acts that apply in England and Wales do not automatically apply in Scotland or Northern Ireland. Read this before citing a section as binding in a jurisdiction.
 - **Verifying opposing counsel's citations** — when a brief cites *HL Deb [date], vol N, col M*, run `parliament_lookup_by_column(column_number="M", volume_number=N, house="Lords")` to resolve the citation to its debate, then read the header resource to find the contribution at the cited column. Citations from any era resolve — current Daily Part records, finalised Bound Volumes, and pre-2005 Historic Hansard. Each match tells you which Hansard format the volume sits in. Empty matches usually mean the volume number is wrong (e.g. opposing counsel quoted the running session-volume number rather than the bound-volume one) or the citation is to a Written Answer and needs the `W` suffix.
 - **What this server does not do.** It does not classify a member as supporting or opposing a policy, summarise a judgment's outcome in your client's favour, or recommend an argumentative line. Those are interpretive acts. The server returns the primary source verbatim with citation metadata; your agent and your judgement do the legal work.
-- **Legislation.gov.uk WAF.** Some heavy Acts (notably the Companies Act 2006) intermittently fail on the hosted server due to upstream WAF rules that block our cloud IP range. The local install (`uvx uk-legal-mcp`) runs on your own IP and bypasses this.
+- **Very large Acts.** A few exceptionally large Acts (notably the Companies Act 2006) can occasionally time out on the hosted endpoint when legislation.gov.uk rate-limits shared cloud IPs. Running the local install (`uvx uk-legal-mcp`) on your own IP resolves this.
 
 ---
 
