@@ -79,6 +79,28 @@ Claude Desktop config:
   }
 }
 ```
+
+**Run streamable-HTTP locally:**
+
+```bash
+# Direct invocation — the production runtime. main() wires _HttpGuard,
+# _AcceptNormalizer, uvicorn proxy_headers, and lifespan="on" — these are
+# load-bearing for the Fly deployment and the Dockerfile CMD.
+python -m src.gateway
+
+# Declarative invocation via fastmcp.json — convenient for `fastmcp inspect`
+# and for ops tooling that reads the manifest. Wraps the FastMCP runner
+# directly, so the custom uvicorn shape (HttpGuard, AcceptNormalizer,
+# proxy_headers) is NOT applied. Use for dev / inspection, not for prod.
+fastmcp run
+```
+
+**Inspect the tool surface without running the server:**
+
+```bash
+fastmcp inspect          # reads fastmcp.json
+```
+
 ---
 
 ## What's here
