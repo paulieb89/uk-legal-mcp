@@ -35,6 +35,7 @@ import httpx
 from fastmcp import Context, FastMCP
 
 from ...deps import format_http_error
+from ...envelope import error_envelope, not_found_envelope
 
 HANSARD_API = "https://hansard-api.parliament.uk"
 MEMBERS_BASE = "https://members-api.parliament.uk/api"
@@ -183,7 +184,7 @@ def register_parliament_resources(gateway: FastMCP) -> None:
         try:
             data = await _fetch_debate(debate_ext_id, ctx)
         except httpx.HTTPError as e:
-            return json.dumps({"error": format_http_error(e), "debate_ext_id": debate_ext_id})
+            return json.dumps(error_envelope(e, error=format_http_error(e), debate_ext_id=debate_ext_id))
 
         overview = data.get("Overview") or {}
         items = data.get("Items") or []
@@ -250,11 +251,12 @@ def register_parliament_resources(gateway: FastMCP) -> None:
         try:
             data = await _fetch_debate(debate_ext_id, ctx)
         except httpx.HTTPError as e:
-            return json.dumps({
-                "error": format_http_error(e),
-                "debate_ext_id": debate_ext_id,
-                "contribution_ext_id": contribution_ext_id,
-            })
+            return json.dumps(error_envelope(
+                e,
+                error=format_http_error(e),
+                debate_ext_id=debate_ext_id,
+                contribution_ext_id=contribution_ext_id,
+            ))
 
         overview = data.get("Overview") or {}
         items = data.get("Items") or []
@@ -265,11 +267,12 @@ def register_parliament_resources(gateway: FastMCP) -> None:
             None,
         )
         if match_idx is None:
-            return json.dumps({
-                "error": f"Contribution {contribution_ext_id} not found in debate {debate_ext_id}.",
-                "debate_ext_id": debate_ext_id,
-                "contribution_ext_id": contribution_ext_id,
-            })
+            return json.dumps(not_found_envelope(
+                f"Contribution {contribution_ext_id} not found in debate {debate_ext_id}.",
+                error=f"Contribution {contribution_ext_id} not found in debate {debate_ext_id}.",
+                debate_ext_id=debate_ext_id,
+                contribution_ext_id=contribution_ext_id,
+            ))
 
         match = items[match_idx]
         html_value = match.get("Value") or ""
@@ -310,5 +313,5 @@ def register_parliament_resources(gateway: FastMCP) -> None:
         try:
             bio = await _fetch_biography(member_id, ctx)
         except httpx.HTTPError as e:
-            return json.dumps({"error": format_http_error(e), "member_id": member_id})
+            return json.dumps(error_envelope(e, error=format_http_error(e), member_id=member_id))
         return json.dumps({"member_id": member_id, **bio}, indent=2, default=str)
