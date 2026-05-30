@@ -290,7 +290,7 @@ from fastmcp import Context  # noqa: E402 (after gateway instantiation)
 
 @gateway.tool(
     name="judgment_get_header",
-    annotations={"title": "Get Judgment Header", "readOnlyHint": True, "idempotentHint": True},
+    annotations={"title": "Get Judgment Header", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
 )
 async def judgment_get_header(
     slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450'", min_length=3, max_length=200)],
@@ -311,7 +311,7 @@ async def judgment_get_header(
 
 @gateway.tool(
     name="judgment_get_index",
-    annotations={"title": "Get Judgment Paragraph Index", "readOnlyHint": True, "idempotentHint": True},
+    annotations={"title": "Get Judgment Paragraph Index", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
 )
 async def judgment_get_index(
     slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12'", min_length=3, max_length=200)],
@@ -339,7 +339,7 @@ async def judgment_get_index(
 
 @gateway.tool(
     name="judgment_get_paragraph",
-    annotations={"title": "Get Judgment Paragraph", "readOnlyHint": True, "idempotentHint": True},
+    annotations={"title": "Get Judgment Paragraph", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
 )
 async def judgment_get_paragraph(
     slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12'", min_length=3, max_length=200)],
