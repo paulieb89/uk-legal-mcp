@@ -147,9 +147,13 @@ Every response carries the metadata needed for an OSCOLA footnote: `attributed_t
 
 ### Example output
 
-A real ChatGPT session: an OSCOLA citation resolved to its neutral citation, then a peer's contributions to a 2025 Lords debate retrieved by member ID and quoted with their citable column references.
+A real ChatGPT session. First, an OSCOLA citation resolved to its neutral citation, and a "what did this peer say?" question answered by resolving the member to their ID before searching Hansard:
 
 ![ChatGPT using uk-legal-mcp — resolving "R (Miller) v The Prime Minister" to the neutral citation [2019] UKSC 41, then looking up Lord Hope of Craighead's contributions to the 2025 House of Lords (Hereditary Peers) Bill debates by member ID](https://raw.githubusercontent.com/paulieb89/uk-legal-mcp/main/assets/images/example1.png)
+
+The result: each contribution returned with its date and substance, ready to quote and footnote.
+
+![Lord Hope of Craighead's six contributions to the 2025 House of Lords (Hereditary Peers) Bill debates — each dated (25 March, 9 July, 21 July 2025) with what he said — returned by uk-legal-mcp for direct quotation](https://raw.githubusercontent.com/paulieb89/uk-legal-mcp/main/assets/images/example2.png)
 
 ---
 
