@@ -134,7 +134,7 @@ The lawyer's prompt to their agent:
 
 A reasonable path the agent walks — and what the server returns at each step:
 
-1. **The statute** — `legislation_get_section(type="ukpga", year=1988, number=50, section="21")`. The response carries `extent` (England + Wales — confirms the Manchester tenancy is in scope, Scotland is not), `in_force` (False — the section is marked repealed in CLML via `<Repeal RetainText="true">` from Renters' Rights Act 2025), and `version_date` (the date the repeal commenced, not 1988's original enactment).
+1. **The statute** — `legislation_get_section(type="ukpga", year=1988, number=50, section="21")`. The response carries `extent` (England + Wales — confirms the Manchester tenancy is in scope, Scotland is not), `in_force` (False — the section is marked repealed by the Renters' Rights Act 2025, with the original text retained for reference), and `version_date` (the date the repeal commenced, not 1988's original enactment).
 2. **The new Act** — `legislation_search(query="Renters' Rights")` then `legislation_get_toc` to locate commencement / transitional provisions, then `legislation_get_section` for the substantive sections.
 3. **The parliamentary debate** — `parliament_search_hansard(query="Renters' Rights Bill")`. One call returns the corpus envelope: how many contributions, debates, divisions, written answers across the whole record, plus previews of the top debates and divisions touching the topic. Pick the relevant Lords debate from `top_debates`.
 4. **The full debate** — read `hansard://debate/{ext_id}/header` for the ordered contribution index (every contribution carrying its citable column number via carry-forward), then `hansard://debate/{ext_id}/contribution/{ext_id}` for the full text of any specific intervention.
@@ -147,11 +147,9 @@ Every response carries the metadata needed for an OSCOLA footnote: `attributed_t
 
 ### Example output
 
-> *Live output from the workflow above will be inserted here once the smoke test is run.*
+A real ChatGPT session against the server: an OSCOLA citation resolved to its neutral citation, then a "what did this peer say?" question answered by resolving the member to their ID and filtering Hansard by that ID — not fragile name-text matching.
 
-```
-<!-- PASTE LIVE SMOKE OUTPUT FROM A REAL AGENT SESSION HERE -->
-```
+![ChatGPT using uk-legal-mcp — resolving "R (Miller) v The Prime Minister" to the neutral citation [2019] UKSC 41, then looking up Lord Hope of Craighead's contributions to the 2025 House of Lords (Hereditary Peers) Bill debates by member ID](https://raw.githubusercontent.com/paulieb89/uk-legal-mcp/main/assets/images/example.png)
 
 ---
 
