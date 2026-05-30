@@ -41,7 +41,7 @@ from fastmcp.server.middleware.caching import (
 from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.logging import StructuredLoggingMiddleware
 from fastmcp.server.middleware.timing import DetailedTimingMiddleware
-from fastmcp.server.transforms import PromptsAsTools
+from fastmcp.server.transforms import PromptsAsTools, ResourcesAsTools
 from prometheus_client import CONTENT_TYPE_LATEST, Counter as PromCounter, Histogram, generate_latest
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -208,6 +208,12 @@ gateway.add_middleware(ResponseCachingMiddleware(
     call_tool_settings=CallToolSettings(ttl=3600),
 ))
 gateway.add_transform(PromptsAsTools(gateway))
+# Expose resources as tools (list_resources, read_resource) so MCP clients
+# that don't support the resources spec natively — ChatGPT consumer being
+# the largest such audience — can still reach judgment://, hansard://,
+# legislation://, and server://about URIs. Native-resource clients (Claude,
+# Codex, Cowork, Inspector) see both surfaces; the duplication is harmless.
+gateway.add_transform(ResourcesAsTools(gateway))
 
 # NOTE: ResponseLimitingMiddleware was removed because it silently drops
 # structured_content from oversize tool responses, which fails strict MCP
