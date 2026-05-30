@@ -1,12 +1,22 @@
-# v1.2 backlog
+# Post-0.5.0 backlog
 
-Pre-existing drift and follow-up work surfaced during v1.1 hardening + close-off. None of these are blockers for 0.5.0; each is independently sized so v1.2 can pick them up à la carte.
+Pre-existing drift and follow-up work surfaced during the hardening pass that shipped as **0.5.0** (production at `uk-legal-mcp.fly.dev`, currently untagged pending soak). "v1.2" used in earlier filenames and item IDs was project-shorthand for "the next batch of work" — it is NOT a semver promise. Actual semver targets are tagged on each item.
 
-Last updated: 2026-05-30 (post v1.1 close-off).
+Semver targets in use:
+
+- **0.5.1 (patch)** — bug fixes and small description tweaks; no API change.
+- **0.6.0 (minor)** — new optional features that don't break existing behaviour (new tool, new resource, new envelope field).
+- **infrastructure** — CI / tests / audit scripts; no server release.
+- **plugin** — work in `uk-legal-plugins/` (separate repo, separate cadence).
+- **Phase B** — the 5 new skills (deferred 1–2 weeks per main plan).
+
+Item IDs (v1.2-N) are retained for stability of cross-references in commits, observations, and prior conversation.
+
+Last updated: 2026-05-30 (post 0.5.0 close-off).
 
 ## Server-side drift (carried over from A5 audit work)
 
-### v1.2-1 — `audit_parliament_responses.py` reports drift
+### v1.2-1 — `audit_parliament_responses.py` reports drift  *[target: 0.5.1 (patch); some findings may be 0.6.0 if they require schema changes]*
 
 22 consumed-undeclared fields + 1 semantic-mismatch heuristic hit. Pre-existing in v1; not an A5 regression. Each undeclared field is a silent-substitution risk: the parser reads a `.get("Field")` whose name doesn't appear in the Swagger response schema, so an upstream rename would silently return `None` rather than fail loudly.
 
@@ -14,37 +24,37 @@ Last updated: 2026-05-30 (post v1.1 close-off).
 
 **Trigger to run:** `uv run python tests/audit_parliament_responses.py`
 
-### v1.2-2 — `parliament_lookup_by_column` Source enum semantics
+### v1.2-2 — `parliament_lookup_by_column` Source enum semantics  *[target: 0.6.0 (minor — new resource template)]*
 
 In A3 the rich publication-state enum documentation (Rolling / Daily Part / Bound Volume / Historic) was trimmed to fit the 150-word cap. The trimmed description still names the four states but loses the OSCOLA citation-finality rationale.
 
 **Fix:** move the detailed enum docs into a `parliament://source-enum` resource. Tool description stays terse; lawyers who need to understand why source matters for OSCOLA finality read the resource.
 
-### v1.2-3 — `case_law_search` iteration count on uncertain matches
+### v1.2-3 — `case_law_search` iteration count on uncertain matches  *[target: 0.5.1 (patch — description-only tweak)]*
 
 Smith v HMRC dogfeed trace took 13 tool calls (8 of them grep iterations on a single candidate judgment). The agent did the right thing — verifying before claiming — but the description could nudge for narrower court+year filtering first.
 
 **Fix:** add "AFTER calling, narrow with court + year filters before grep-iterating across full judgments" to `case_law_search` description. Re-dogfeed Smith v HMRC and confirm iteration count drops.
 
-### v1.2-4 — Add `citations_format_oscola` formatter tool
+### v1.2-4 — Add `citations_format_oscola` formatter tool  *[target: 0.6.0 (minor — new tool)]*
 
 `citations_resolve` returns structured fields; the agent constructs the OSCOLA string from those fields itself. A discrete `citations_format_oscola` tool would gate formatting behind a successful resolve and refuse to operate on unresolved input — making the verify-then-format discipline impossible to bypass.
 
 **Fix:** new tool in `citations/tools.py`. Input: a resolved citation dict from `citations_resolve`. Output: the formatted OSCOLA string. Refuse with `status: upstream_validation` if the input doesn't look like a resolved citation.
 
-### v1.2-5 — Wire live tests into nightly CI
+### v1.2-5 — Wire live tests into nightly CI  *[target: infrastructure (no server release)]*
 
 9 tests are marked `live` and currently deselected in regular runs. They hit upstream APIs and would catch upstream-shape changes the static audit scripts miss.
 
 **Fix:** add a GitHub Actions workflow that runs `uv run pytest -m live` on a nightly schedule. Failure opens an issue; no merge gate.
 
-### v1.2-6 — Audit script as CI guard
+### v1.2-6 — Audit script as CI guard  *[target: infrastructure (no server release)]*
 
 `tests/audit_descriptions.py --check` exits non-zero if any tool description exceeds the 150-word cap (shipped in 0.5.0).
 
 **Fix:** add to GitHub Actions on every PR. Prevents future description bloat from landing without an explicit override.
 
-### v1.2-8 — Resource URI mentions ambiguous for tool-only clients
+### v1.2-8 — Resource URI mentions ambiguous for tool-only clients  *[target: 0.5.1 (patch, description-only baseline) + Phase B (full workflow tuning lands in skills)]*
 
 Several tool descriptions point at resource URIs with phrasing like *"read `hansard://debate/{debate_ext_id}/header`"* or *"drill into the `hansard://` resource family"*. Native-resource clients (Claude / Codex / Inspector) parse this correctly. ChatGPT (tool-only via `ResourcesAsTools`) is ambiguous — does "read X://" mean the resources protocol it doesn't speak, or a tool call shape? When the agent tries the native form, ChatGPT can't execute it and falls back to a generic block message (looks like a safety check; it's actually "I can't process this MCP primitive").
 
@@ -68,7 +78,7 @@ The 30-min description rewrite is the *baseline fix* for the ChatGPT cohort (whi
 
 The implication for v1.2 prioritisation: rather than expanding tool descriptions to cover every ChatGPT edge case (descriptions get bloated and stale), invest the workflow-tuning effort in Phase B skills. Tool descriptions stay at the "good enough for the least-capability client" tier; skills are where the rich, opinionated procedural guidance lives.
 
-### v1.2-9 — `bills_search_bills` session_id Field description
+### v1.2-9 — `bills_search_bills` session_id Field description  *[target: 0.5.1 (patch)]*
 
 Dogfeed trace showed the agent attempting `session_id="2025"` (year string) and failing, then recovering with `session_id=40` (numeric session). The Field description should be explicit:
 
@@ -76,7 +86,7 @@ Dogfeed trace showed the agent attempting `session_id="2025"` (year string) and 
 
 ~5 minute fix in `bills/models.py` (or wherever the input model lives).
 
-### v1.2-11 — `list_resources` returns empty response in production
+### v1.2-11 — `list_resources` returns empty response in production  *[target: 0.5.1 (bug fix, blocks discovery)]*
 
 Test 5 dogfeed trace shows tool calls 2 and 3 both call `list_resources` and receive `"No tool response"` (1 token output). The agent retries once, gets nothing again, and proceeds via named tools (`legislation_get_*`, `parliament_search_*`). Working around it doesn't fix it — the ResourcesAsTools transform wired in A1.5 (commit ac3e565) isn't surfacing the resource catalog at runtime for ChatGPT-via-MCP.
 
@@ -86,7 +96,7 @@ Test 5 dogfeed trace shows tool calls 2 and 3 both call `list_resources` and rec
 
 **Pairs with v1.2-8:** if list_resources doesn't discover the catalog, the URI-mention rewrite in v1.2-8 is the only path agents have to learn about resources. So v1.2-11 makes v1.2-8 more urgent for the ChatGPT cohort.
 
-### v1.2-10 — Pre-merge dogfeed/description grep
+### v1.2-10 — Pre-merge dogfeed/description grep  *[target: infrastructure (no server release)]*
 
 Per Obs 224, the dogfeed test cases (Pannick, R v Brown, Renters' Rights Bill, 14 Oct 2025) overlapped with description examples — the tests were partly pedagogy, not validation. Add a `tests/audit_dogfeed_contamination.py` script that takes the active dogfeed prompt list and greps src/ for each named entity. Fail-loud if any test name appears in any LLM-visible surface.
 
@@ -94,7 +104,7 @@ Pair with `audit_descriptions.py --check` as the close-off gate before declaring
 
 ## Plugin-side gap (surfaced during close-off)
 
-### v1.2-7 — Only 4 of 11 plugins reference `uk-legal-mcp`
+### v1.2-7 — Only 4 of 11 plugins reference `uk-legal-mcp`  *[target: plugin (uk-legal-plugins repo, separate cadence)]*
 
 Plan assumed all 11 plugins in `uk-legal-plugins/` point at `uk-legal-mcp.fly.dev/mcp`. Reality:
 
