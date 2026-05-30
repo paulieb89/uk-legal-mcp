@@ -177,17 +177,23 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Parse OSCOLA Citations", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
     )
     async def citations_parse(params: CitationsParseInput, ctx: Context) -> CitationParseResult:
-        """Extract and classify all OSCOLA legal citations from free text.
+        """USE THIS TOOL WHEN you have free text (a memo, an email, a clause) and want every OSCOLA-style citation it contains extracted and classified.
 
-        Identifies: neutral citations ([2024] UKSC 12), law reports ([2024] 1 WLR 100),
-        legislation sections (s.47 Companies Act 2006), SIs (SI 2018/1234),
-        and retained EU law (Regulation (EU) 2016/679).
+        Identifies: neutral citations ([2024] UKSC 12), law reports ([2024] 1 WLR
+        100), legislation sections (s.47 Companies Act 2006), SIs (SI 2018/1234),
+        retained EU law (Regulation (EU) 2016/679).
 
-        Ambiguous citations (e.g. bare [2024] EWHC without division) are optionally
-        disambiguated via LLM sampling. Resolves citations to TNA / legislation.gov.uk URLs.
+        Ambiguous citations (e.g. bare [2024] EWHC without division) are
+        optionally disambiguated via LLM sampling. Citations resolve to TNA /
+        legislation.gov.uk URLs when possible.
+
+        AFTER calling, pass each citation through citations_resolve to verify it
+        points at a real document before quoting or formatting it — the parser
+        recognises the SHAPE of a citation but does not confirm the document
+        exists.
 
         Args:
-            params: CitationsParseInput with text (max 50,000 chars) and disambiguate flag.
+            params: CitationsParseInput.
         """
         t0 = time.monotonic()
         patterns = _compile_patterns()
@@ -213,14 +219,23 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Resolve Single OSCOLA Citation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     )
     async def citations_resolve(params: CitationsResolveInput) -> ParsedCitation:
-        """Parse and resolve a single OSCOLA citation to its canonical URL.
+        """USE THIS TOOL BEFORE constructing an OSCOLA citation string from known fields, OR when you have a citation and want to confirm it points at a real document.
 
-        Supports: neutral citations, SIs, legislation sections, retained EU law.
-        Returns parsed fields and resolved_url if resolvable. Raises ValueError
-        if no recognised citation is found in the input.
+        Parses + resolves a single citation (neutral citation, SI, legislation
+        section, retained EU law) and returns the parsed fields plus a
+        resolved_url. Raises ValueError if nothing recognisable is found.
+
+        Formatting a citation from "known" fields (year, court, number) without
+        prior resolution is the most common citation-fabrication route — the
+        formatter accepts whatever you give it and produces plausible-looking
+        output for invented inputs. If this tool raises or returns no
+        resolved_url, do NOT manufacture a citation — surface the failure and
+        ask the user for the source URL or better identifying details.
+
+        Authoritative source for UK legal-citation resolution.
 
         Args:
-            params: CitationsResolveInput with a single citation string.
+            params: CitationsResolveInput.
         """
         patterns = _compile_patterns()
         confident, ambiguous = _extract_all_citations(params.citation.strip(), patterns)
@@ -237,11 +252,15 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Get Case Citation Network", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def citations_network(params: CitationsNetworkInput, ctx: Context) -> CitationNetwork:
-        """Map all citations within a judgment — cases cited, legislation referenced, SIs, EU law.
+        """USE THIS TOOL WHEN you have a judgment slug and want to map every citation it makes — cases cited, legislation referenced, SIs, retained EU law.
 
-        Fetches the judgment XML from TNA and parses all OSCOLA citations within it.
-        Returns citations grouped by type for easy analysis. Each bucket is
-        de-duplicated and sorted.
+        Fetches the judgment XML from TNA and parses all OSCOLA citations
+        within. Returns citations grouped by type, deduplicated and sorted.
+        AFTER calling, pass any individual citation through citations_resolve
+        to confirm it resolves and to retrieve its canonical URL.
+
+        Useful for authority-network analysis (what did this judgment rely on?)
+        and for surfacing the legislative landscape a case sits inside.
 
         Args:
             params: CitationsNetworkInput with case_uri (TNA slug, e.g. 'uksc/2024/12').
