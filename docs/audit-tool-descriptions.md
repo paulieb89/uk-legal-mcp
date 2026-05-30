@@ -145,66 +145,66 @@ paragraph XML content (400–1,700 tokens typical).
 
 ## Module: `legislation` (3 tools — this-audit count only)
 
-### `legislation_get_section` (99 words)
+### `legislation_get_section` (103 words)
 
 **Params** (1): params
 
 ```
-Retrieve a specific section of a UK Act or Statutory Instrument.
+USE THIS TOOL WHEN you have a known Act / SI and want the parsed text of a specific section, with extent and in-force metadata.
 
-Returns the full section text, territorial extent, in-force status,
-and prospective flag. Content is capped per max_chars (default 10,000,
-~2,500 tokens) — raise max_chars for unusually long definition
-sections. Check content_truncated in the response to see if it was cut.
+Returns full section text, territorial extent, in-force status, and
+prospective flag. Content capped per max_chars (default 10,000,
+~2,500 tokens) — raise for unusually long definition sections; check
+content_truncated in the response.
 
-IMPORTANT: Always check `extent` — a section may apply to England &
-Wales but not Scotland or Northern Ireland.
+ALWAYS check `extent` — a section may apply to England & Wales but not
+Scotland or Northern Ireland. Reciting a section without checking
+extent is a recurring legal-research error.
 
-Alternative: read the resource template
-`legislation://{type}/{year}/{number}/section/{section}` to get raw
-CLML XML directly. Use this tool when you want the parsed structured
-response (extent, in-force, version_date) instead of raw XML.
+Alternative: read `legislation://{type}/{year}/{number}/section/{section}`
+for raw CLML XML; use this tool when you want the parsed structured
+response instead.
 ```
 
-### `legislation_get_toc` (93 words)
+### `legislation_get_toc` (102 words)
 
 **Params** (1): params
 
 ```
-Retrieve the table of contents for a UK Act or SI.
+USE THIS TOOL WHEN you have a known Act / SI and want the structural table of contents (parts, chapters, sections, schedules).
 
-Returns structural elements (parts, chapters, sections, schedules) with XML id
-and title, e.g. 'section-47: Definitions'. When calling legislation_get_section,
-pass only the numeric part — use '47', not 'section-47'.
+Returns structural elements with XML id and title, e.g. 'section-47:
+Definitions'. AFTER calling, pass the numeric section identifier (use
+'47', NOT 'section-47') into legislation_get_section for full text.
 
-Large statutes (Companies Act 2006 has 1300+ items) are paginated
-via offset/limit. Check has_more and total_items on the response.
+Large statutes (Companies Act 2006 has many hundreds of items) are
+paginated via offset/limit. Check has_more and total_items.
 
-Alternative: read the resource template
-`legislation://{type}/{year}/{number}/toc` for the full TOC as a
-newline-separated `id: title` string (no pagination). Use this tool
-when you need the structured `LegislationTOC` response with
-offset/limit/has_more for stepping through Companies-Act-scale lists.
+Alternative: read `legislation://{type}/{year}/{number}/toc` for the
+full TOC as a newline-separated `id: title` string (no pagination).
+Use this tool when you need the structured response with offset /
+limit / has_more for stepping through large statutes.
 ```
 
-### `legislation_search` (95 words)
+### `legislation_search` (104 words)
 
 **Params** (1): params
 
 ```
-Search UK legislation on legislation.gov.uk.
+USE THIS TOOL WHEN searching UK Acts and Statutory Instruments by title, phrase, or full-text.
 
-Returns ranked results: title, type, year, number, and legislation.gov.uk URL.
+Returns ranked results: title, type, year, number, legislation.gov.uk URL,
+and next_steps hints (toc URI, section template). AFTER calling, chain
+to legislation_get_toc then legislation_get_section for structural drill-in.
 
-Filter discipline: `type` and `year` are exact-match. Use them only when you
-already know the value. For currency-driven searches (e.g. "the recent
+Filter discipline: `type` and `year` are exact-match. Use only when you
+already know the value. For currency-driven searches ("the recent
 Renters' Rights Act"), query by phrase alone and read the year from the
-returned results — guessing a year and then filtering by it zeroes the
-result set when the guess is wrong.
+results — guessing a year and filtering by it zeroes results when wrong.
+For broader concept queries across content, set `fulltext=True`.
 
-For broader concept queries (find any Act mentioning a topic), set
-`fulltext=True`. For structural drill-in once an Act is found, chain to
-legislation_get_toc then legislation_get_section.
+Authoritative source for UK primary and secondary legislation
+(legislation.gov.uk).
 ```
 
 ## Module: `parliament` (9 tools — this-audit count only)
