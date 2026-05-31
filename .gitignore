@@ -19,6 +19,7 @@ build/
 
 research/
 plans/
-docs/
 references/
-LAUNCHGUIDE.md
+
+# Internal working notes — never committed. Public docs live directly in docs/.
+docs/internal/

@@ -18,14 +18,16 @@ Per the May 2026 dogfeed audit, four MCP-speaking client ecosystems are in scope
 | **Cowork** | Anthropic collab env | Same as Claude Code | Same as Claude Code |
 | **OpenAI Codex CLI** | OpenAI developer audience | Tools + resources + prompts + skills (via `.codex-plugin/`) | Tool descriptions + skills (dual-manifest plugins) |
 
-**Critical:** tool descriptions are LOAD-BEARING for the ChatGPT cohort. The 4-part description pattern (USE WHEN / what it returns / AFTER calling / authoritative-source clause) is mandatory for any new or modified tool. See `docs/chatgpt-workflow-encoding.md`.
+**Critical:** tool descriptions are LOAD-BEARING for the ChatGPT cohort. The 4-part description pattern (USE WHEN / what it returns / AFTER calling / authoritative-source clause) is mandatory for any new or modified tool. See `docs/internal/chatgpt-workflow-encoding.md`.
 
 ## Documentation index
 
-In `docs/`:
+Public docs ship in `docs/` (`api-reference.md`, `lawyer-guide.md`, `tool-reference.md`). Internal working notes live in `docs/internal/` — **gitignored, local-only, not in the public repo**:
 
-- [`v1.1-hardening-plan.md`](docs/v1.1-hardening-plan.md) — the in-flight hardening branch's scope (XML safety, fastmcp.json, description authority, annotations, audit-script port, deploy procedure)
-- [`chatgpt-workflow-encoding.md`](docs/chatgpt-workflow-encoding.md) — how to encode workflow knowledge in tool descriptions when skills aren't reachable; 4-part pattern + 4 worked examples
+- [`docs/internal/v1.1-hardening-plan.md`](docs/internal/v1.1-hardening-plan.md) — the hardening branch's scope (XML safety, fastmcp.json, description authority, annotations, audit-script port, deploy procedure)
+- [`docs/internal/chatgpt-workflow-encoding.md`](docs/internal/chatgpt-workflow-encoding.md) — how to encode workflow knowledge in tool descriptions when skills aren't reachable; 4-part pattern + 4 worked examples
+- [`docs/internal/handover.md`](docs/internal/handover.md), [`docs/internal/post-0.5.0-backlog.md`](docs/internal/post-0.5.0-backlog.md) — session handover + tracked backlog
+- [`docs/internal/releasing.md`](docs/internal/releasing.md) — maintainer release procedure
 
 ## Commands
 
@@ -114,7 +116,7 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 2. Add tool function inside `register_tools(mcp)` in the module's `tools.py`
 3. Use `ctx.lifespan_context["http"]` for JSON APIs, `ctx.lifespan_context["xml_http"]` for XML
 4. Return JSON string (not dict). Use `model.model_dump_json(indent=2)` or `json.dumps()`
-5. **Write the tool description in the 4-part pattern**: USE WHEN... / what it returns / AFTER calling, call X if Y / authoritative-source clause. See [`docs/chatgpt-workflow-encoding.md`](docs/chatgpt-workflow-encoding.md). The description is the ONLY workflow-teaching layer ChatGPT users see.
+5. **Write the tool description in the 4-part pattern**: USE WHEN... / what it returns / AFTER calling, call X if Y / authoritative-source clause. See [`docs/internal/chatgpt-workflow-encoding.md`](docs/internal/chatgpt-workflow-encoding.md). The description is the ONLY workflow-teaching layer ChatGPT users see.
 6. Wrap all external calls in try/except routed through the structured envelope (status: ok|empty|auth_required|upstream_validation|upstream_timeout|upstream_unavailable|not_found|unknown_error). Empty/error envelopes carry `next_steps` or `detail` so the agent doesn't fall back to confabulation (Obs 183).
 7. **External XML must go through `src/xml_safe.py:parse_xml`** — never call `lxml.etree.fromstring` directly. defusedxml prevents XXE / billion-laughs / external-DTD attacks.
 8. Set `annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}` on all tools (openWorldHint=False for pure-regex tools like citations_parse)

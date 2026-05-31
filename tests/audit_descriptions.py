@@ -1,4 +1,4 @@
-"""Regenerate ``docs/audit-tool-descriptions.md`` from the live gateway surface.
+"""Regenerate ``docs/internal/audit-tool-descriptions.md`` from the live gateway surface.
 
 Walks every tool exposed by ``src.gateway.gateway``, groups by namespace
 prefix, and emits a per-tool block with word count, parameter list, and
@@ -27,7 +27,7 @@ from fastmcp import Client
 from src.gateway import gateway
 
 WORD_LIMIT = 150
-DOC_PATH = Path(__file__).resolve().parents[1] / "docs" / "audit-tool-descriptions.md"
+DOC_PATH = Path(__file__).resolve().parents[1] / "docs" / "internal" / "audit-tool-descriptions.md"
 
 FRAMEWORK_TOOLS = {"get_prompt", "list_prompts", "list_resources", "read_resource"}
 
@@ -94,7 +94,7 @@ def build_markdown(tools: list) -> str:
         "",
         "Regenerated from `Client(gateway).list_tools()` via `tests/audit_descriptions.py`.",
         "",
-        "Per `docs/chatgpt-workflow-encoding.md`: descriptions stay ≤150 words.",
+        "Per `docs/internal/chatgpt-workflow-encoding.md`: descriptions stay ≤150 words.",
         "Word counts shown next to each tool name.",
         "",
         "Per Obs 217: any per-module counts here are this-audit-only — do not propagate.",
