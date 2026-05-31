@@ -24,10 +24,11 @@ Per the May 2026 dogfeed audit, four MCP-speaking client ecosystems are in scope
 
 Public docs ship in `docs/` (`api-reference.md`, `lawyer-guide.md`, `tool-reference.md`). Internal working notes live in `docs/internal/` — **gitignored, local-only, not in the public repo**:
 
-- [`docs/internal/v1.1-hardening-plan.md`](docs/internal/v1.1-hardening-plan.md) — the hardening branch's scope (XML safety, fastmcp.json, description authority, annotations, audit-script port, deploy procedure)
 - [`docs/internal/chatgpt-workflow-encoding.md`](docs/internal/chatgpt-workflow-encoding.md) — how to encode workflow knowledge in tool descriptions when skills aren't reachable; 4-part pattern + 4 worked examples
 - [`docs/internal/handover.md`](docs/internal/handover.md), [`docs/internal/post-0.5.0-backlog.md`](docs/internal/post-0.5.0-backlog.md) — session handover + tracked backlog
 - [`docs/internal/releasing.md`](docs/internal/releasing.md) — maintainer release procedure
+
+Completed implementation records — shipped plans and their dogfeed screenshots — move to `docs/internal/archive/` (e.g. `v1.1-hardening-plan.md`, shipped as 0.5.0). They're history, not active work, so they stay out of this index.
 
 ## Commands
 
