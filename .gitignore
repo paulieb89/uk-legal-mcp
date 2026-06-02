@@ -12,6 +12,8 @@ build/
 .pytest_cache/
 .hypothesis/
 
+.claude/
+
 .env
 .env.*
 
