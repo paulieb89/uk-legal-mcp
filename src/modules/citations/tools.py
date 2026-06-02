@@ -226,12 +226,19 @@ def register_tools(mcp: FastMCP) -> None:
         name="resolve",
         annotations={"title": "Resolve Single OSCOLA Citation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     )
-    async def citations_resolve(params: CitationsResolveInput) -> ParsedCitation:
+    async def citations_resolve(params: CitationsResolveInput, ctx: Context) -> ParsedCitation:
         """USE THIS TOOL BEFORE constructing an OSCOLA citation string from known fields, OR when you have a citation and want to confirm it points at a real document.
 
         Parses + resolves a single citation (neutral citation, SI, legislation
         section, retained EU law) and returns the parsed fields plus a
         resolved_url. Raises ValueError if nothing recognisable is found.
+
+        For neutral citations, performs a live HTTP HEAD check against TNA Find
+        Case Law to confirm the judgment exists. If TNA returns non-200,
+        confidence is set to 0.0 — the citation parsed successfully but the
+        document does not exist at the constructed URL. DO NOT format or quote
+        a citation with confidence 0.0 as verified; surface the failure and ask
+        the user for the source URL or better identifying details.
 
         Formatting a citation from "known" fields (year, court, number) without
         prior resolution is the most common citation-fabrication route — the
@@ -244,6 +251,7 @@ def register_tools(mcp: FastMCP) -> None:
 
         Args:
             params: CitationsResolveInput.
+            ctx: FastMCP context (injected).
         """
         patterns = _compile_patterns()
         confident, ambiguous = _extract_all_citations(params.citation.strip(), patterns)
@@ -253,7 +261,20 @@ def register_tools(mcp: FastMCP) -> None:
                 f"No recognised OSCOLA citation found in '{params.citation}'. "
                 f"Supported: [YYYY] COURT N, [YYYY] N SERIES PAGE, s.N Act YYYY, SI YYYY/N, Regulation (EU) YYYY/N"
             )
-        return all_found[0]
+        parsed = all_found[0]
+
+        # Live existence check for neutral citations — a URL being constructable
+        # is not the same as the judgment existing at that URL.
+        if parsed.resolved_url and parsed.type == CitationType.NEUTRAL:
+            client: httpx.AsyncClient = ctx.lifespan_context["http"]
+            try:
+                resp = await client.head(parsed.resolved_url)
+                if resp.status_code != 200:
+                    parsed = parsed.model_copy(update={"confidence": 0.0})
+            except Exception:
+                parsed = parsed.model_copy(update={"confidence": 0.0})
+
+        return parsed
 
     @mcp.tool(
         name="network",

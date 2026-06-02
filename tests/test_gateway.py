@@ -130,6 +130,21 @@ class TestCitationTools:
         assert not result.is_error, f"Tool error: {result.data}"
         assert result.data is not None
 
+    @pytest.mark.asyncio
+    async def test_citations_resolve_fake_citation_not_verified(self, client: Client):
+        """Fabricated neutral citation must return confidence 0.0, not verified."""
+        result = await client.call_tool(
+            "citations_resolve",
+            {"params": {"citation": "[2022] EWCA Civ 9999"}},
+        )
+        assert not result.is_error, f"Tool error: {result.data}"
+        assert result.data is not None
+        assert result.data.confidence == 0.0, (
+            f"Expected confidence 0.0 for non-existent citation, got {result.data.confidence}"
+        )
+        # resolved_url is preserved so the caller can see what was attempted
+        assert result.data.resolved_url is not None
+
 
 # ---------------------------------------------------------------------------
 # Custom HTTP routes (tested via ASGI test client)
