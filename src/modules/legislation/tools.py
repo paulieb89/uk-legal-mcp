@@ -28,6 +28,8 @@ ATOM_NS = {
 }
 
 _ID_RE = re.compile(r"/id/([a-z]+)/(\d{4})/(\d+)$")
+# Pre-1963 Acts use regnal year IDs: /id/ukpga/Eliz2/5-6/31
+_REGNAL_ID_RE = re.compile(r"/id/([a-z]+)/[A-Za-z].+/(\d+)$")
 
 # Welsh Acts (asc) and Welsh SIs (wsi) use <title type="xhtml"> with bilingual
 # <span xml:lang="en|cy"> children. All other UK legislation types use plain text.
@@ -65,6 +67,12 @@ class LegislationSearchInput(BaseModel):
         "and getting it wrong will zero out the result set. Better workflow: query without `year`, then read the "
         "year from the returned results."
     ), ge=1800, le=2100)
+    limit: int = Field(
+        20,
+        description="Maximum results to return (1–50). Passed to the upstream results-count param.",
+        ge=1,
+        le=50,
+    )
     fulltext: bool = Field(
         False,
         description=(
@@ -460,7 +468,7 @@ def register_tools(mcp: FastMCP) -> None:
         path = f"/{params.type}" if params.type else "/search"
         # Title search by default — best ranking for "find me Act X". `fulltext`
         # opens up content search across every Act/SI, useful for concept queries.
-        qp: dict = {"results-count": 20}
+        qp: dict = {"results-count": params.limit}
         qp["text" if params.fulltext else "title"] = params.query
         if params.year:
             qp["year"] = params.year
@@ -480,6 +488,10 @@ def register_tools(mcp: FastMCP) -> None:
             m = _ID_RE.search(entry_id)
             if m:
                 leg_type, yr, num = m.group(1), int(m.group(2)), int(m.group(3))
+            elif m2 := _REGNAL_ID_RE.search(entry_id):
+                leg_type, num = m2.group(1), int(m2.group(2))
+                yr_m = re.search(r"\b(\d{4})\b", title)
+                yr = int(yr_m.group(1)) if yr_m else 0
             else:
                 leg_type, yr, num = "unknown", 0, 0
 

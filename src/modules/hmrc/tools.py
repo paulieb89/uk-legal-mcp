@@ -97,6 +97,12 @@ class HMRCGuidanceSearchInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     query: str = Field(..., description="Search query for HMRC guidance, e.g. 'VAT digital services', 'R&D tax relief SME'", min_length=3, max_length=300)
+    limit: int = Field(
+        10,
+        description="Maximum guidance results to return (1–25). Passed to the GOV.UK search count param.",
+        ge=1,
+        le=25,
+    )
 
 
 def register_tools(mcp: FastMCP) -> None:
@@ -194,7 +200,7 @@ def register_tools(mcp: FastMCP) -> None:
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         resp = await client.get(
             GOVUK_SEARCH_BASE,
-            params={"q": params.query, "filter_organisations": "hm-revenue-customs", "fields[]": ["title", "description", "link", "public_timestamp"], "count": 10},
+            params={"q": params.query, "filter_organisations": "hm-revenue-customs", "fields[]": ["title", "description", "link", "public_timestamp"], "count": params.limit},
         )
         resp.raise_for_status()
         results: list[HMRCGuidanceResult] = []
