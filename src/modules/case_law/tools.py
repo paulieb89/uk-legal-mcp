@@ -55,9 +55,19 @@ class CaseLawSearchInput(BaseModel):
         "ignored by upstream. Filtering happens client-side at best."
     ))
     page: int = Field(1, description="Result page number (1-indexed)", ge=1, le=50)
+    limit: int = Field(
+        10,
+        description=(
+            "Maximum results to return (1–50). TNA returns up to 50 per request; "
+            "this slices client-side. Default 10 for a tight shortlist. "
+            "Set higher for breadth (e.g. 50 to scan the full result set)."
+        ),
+        ge=1,
+        le=50,
+    )
 
 
-def _parse_atom_feed(xml_bytes: bytes) -> JudgmentSearchResult:
+def _parse_atom_feed(xml_bytes: bytes, limit: int = 10) -> JudgmentSearchResult:
     """Parse TNA Atom feed into JudgmentSearchResult.
 
     Two TNA contract changes this parser now adopts:
@@ -90,7 +100,9 @@ def _parse_atom_feed(xml_bytes: bytes) -> JudgmentSearchResult:
         start = int(start_el.text) if start_el is not None else 1
         current_page = max(1, (start - 1) // per_page + 1) if per_page else 1
         total_pages = (total + per_page - 1) // per_page if per_page else None
-        entries = root.findall("atom:entry", ns)
+        all_entries = root.findall("atom:entry", ns)
+        entries = all_entries[:limit]
+        has_more = len(all_entries) > limit
         summaries = []
         for entry in entries:
             title_el = entry.find("atom:title", ns)
@@ -146,7 +158,7 @@ def _parse_atom_feed(xml_bytes: bytes) -> JudgmentSearchResult:
             ))
         return JudgmentSearchResult(
             results=summaries, page=current_page,
-            has_more=(start + len(entries) - 1) < total, total_pages=total_pages,
+            has_more=has_more, total_pages=total_pages,
         )
     except Exception:
         return JudgmentSearchResult(results=[], page=1, has_more=False, total_pages=None)
@@ -190,7 +202,7 @@ def register_tools(mcp: FastMCP) -> None:
         if params.to_date: qp["to"] = params.to_date.isoformat()
         resp = await client.get(f"{TNA_BASE}/atom.xml", params=qp)
         resp.raise_for_status()
-        return _parse_atom_feed(resp.content)
+        return _parse_atom_feed(resp.content, limit=params.limit)
 
     @mcp.tool(
         name="grep_judgment",
