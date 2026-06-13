@@ -88,7 +88,7 @@ def _parse_lords_summary(item: dict) -> DivisionSummary:
         ayes=ayes,
         noes=noes,
         passed=ayes > noes,
-        is_government_win=item.get("isGovernmentContent", item.get("IsGovernmentContent")),
+        is_government_win=item.get("isGovernmentWin", item.get("IsGovernmentWin")),
     )
 
 

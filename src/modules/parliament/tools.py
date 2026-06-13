@@ -903,7 +903,7 @@ def register_tools(mcp: FastMCP) -> None:
             created = item.get("registrationDate") or item.get("publishedDate")
             category_obj = item.get("category", {})
             category_name = category_obj.get("name", "Unknown") if isinstance(category_obj, dict) else str(category_obj)
-            desc = item.get("summary", item.get("interest", ""))
+            desc = item.get("summary", "")
             if len(desc) > params.max_description_chars:
                 desc = desc[: params.max_description_chars] + " …[truncated]"
             interests.append(Interest(
@@ -958,7 +958,7 @@ def register_tools(mcp: FastMCP) -> None:
 
             created = attrs.get("created_at")
             gov_resp = attrs.get("government_response_at")
-            debate = attrs.get("debate_date") or attrs.get("scheduled_debate_date")
+            debate = attrs.get("scheduled_debate_date")
 
             petitions.append(PetitionSummary(
                 id=int(petition_id) if petition_id else 0,

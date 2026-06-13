@@ -29,6 +29,26 @@ ATOM_NS = {
 
 _ID_RE = re.compile(r"/id/([a-z]+)/(\d{4})/(\d+)$")
 
+# Welsh Acts (asc) and Welsh SIs (wsi) use <title type="xhtml"> with bilingual
+# <span xml:lang="en|cy"> children. All other UK legislation types use plain text.
+_XHTML_NS = "http://www.w3.org/1999/xhtml"
+_XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
+
+
+def _entry_title(entry) -> str:
+    title_el = entry.find("a:title", namespaces=ATOM_NS)
+    if title_el is None:
+        return "Unknown"
+    if title_el.get("type") == "xhtml":
+        for span in title_el.findall(f"{{{_XHTML_NS}}}span"):
+            if span.get(_XML_LANG, "") == "en" and span.text:
+                return span.text
+        for span in title_el.findall(f"{{{_XHTML_NS}}}span"):
+            if span.text:
+                return span.text
+        return "Unknown"
+    return title_el.text or "Unknown"
+
 
 class LegislationSearchInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -453,7 +473,7 @@ def register_tools(mcp: FastMCP) -> None:
 
         results = []
         for entry in root.findall(".//a:entry", namespaces=ATOM_NS):
-            title = entry.findtext("a:title", namespaces=ATOM_NS) or "Unknown"
+            title = _entry_title(entry)
             entry_id = entry.findtext("a:id", namespaces=ATOM_NS) or ""
 
             m = _ID_RE.search(entry_id)

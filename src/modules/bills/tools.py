@@ -95,7 +95,7 @@ def _parse_bill_summary(item: dict) -> BillSummary:
     current_stage_raw = item.get("currentStage")
     current_stage = None
     if isinstance(current_stage_raw, dict):
-        stage_name = current_stage_raw.get("stageName") or current_stage_raw.get("description")
+        stage_name = current_stage_raw.get("description") or current_stage_raw.get("stageName")
         current_stage = stage_name
 
     return BillSummary(

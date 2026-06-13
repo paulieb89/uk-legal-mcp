@@ -119,7 +119,12 @@ class LegislationSection(BaseModel):
         0,
         description="Original plain-text length in characters before any truncation",
     )
-    in_force: bool | None = Field(None, description="Whether this section is currently in force; None if unknown")
+    in_force: bool | None = Field(None, description=(
+        "False if the section is explicitly marked repealed in CLML. "
+        "True only when an InForce element is present in the section body (rare). "
+        "Null for most sections — the data.xml endpoint does not carry a per-section "
+        "current in-force boolean; null does not mean repealed."
+    ))
     extent: list[str] = Field(
         default_factory=list,
         description="Territorial extent: list of 'England', 'Wales', 'Scotland', 'Northern Ireland'. Empty list means unknown — do not assume full UK extent.",
