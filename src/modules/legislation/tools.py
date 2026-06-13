@@ -40,10 +40,11 @@ def _entry_title(entry) -> str:
     if title_el is None:
         return "Unknown"
     if title_el.get("type") == "xhtml":
-        for span in title_el.findall(f"{{{_XHTML_NS}}}span"):
+        # Spans are wrapped in <div xmlns="...xhtml">, so search recursively.
+        for span in title_el.findall(f".//{{{_XHTML_NS}}}span"):
             if span.get(_XML_LANG, "") == "en" and span.text:
                 return span.text
-        for span in title_el.findall(f"{{{_XHTML_NS}}}span"):
+        for span in title_el.findall(f".//{{{_XHTML_NS}}}span"):
             if span.text:
                 return span.text
         return "Unknown"
