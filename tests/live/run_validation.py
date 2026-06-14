@@ -197,7 +197,7 @@ async def _validate_citations_parse(client: Client, report: ValidationReport) ->
         "See Donoghue v Stevenson [1932] AC 562; R (Miller) v PM [2019] UKSC 41; "
         "s.47 Companies Act 2006; SI 2018/1232; Regulation (EU) 2016/679 art.6."
     )
-    result = await client.call_tool(tool, {"params": {"text": text}})
+    result = await client.call_tool(tool, {"text": text})
     if result.is_error:
         report.fail(tool, "tool_error", str(_tool_payload(result)))
         return
@@ -235,7 +235,7 @@ async def _validate_citations_parse(client: Client, report: ValidationReport) ->
 
 async def _validate_case_law_search(client: Client, report: ValidationReport) -> str | None:
     tool = "case_law_search"
-    result = await client.call_tool(tool, {"params": {"query": "negligence duty of care", "page": 1}})
+    result = await client.call_tool(tool, {"query": "negligence duty of care", "page": 1})
     if result.is_error:
         report.fail(tool, "tool_error", str(_tool_payload(result)))
         return None
@@ -305,7 +305,7 @@ async def _validate_citation_resolve(client: Client, report: ValidationReport) -
         ("[2018] UKSC 4",  "uksc/2018/4"),
     ]
     for raw, expected_slug in cases:
-        result = await client.call_tool(tool, {"params": {"citation": raw}})
+        result = await client.call_tool(tool, {"citation": raw})
         if result.is_error:
             report.fail(tool, "tool_error", f"{raw!r}: {_tool_payload(result)}")
             continue
@@ -328,7 +328,7 @@ async def _validate_citation_resolve(client: Client, report: ValidationReport) -
 
 async def _validate_legislation_search(client: Client, report: ValidationReport) -> None:
     tool = "legislation_search"
-    result = await client.call_tool(tool, {"params": {"query": "Housing Act"}})
+    result = await client.call_tool(tool, {"query": "Housing Act"})
     if result.is_error:
         report.fail(tool, "tool_error", str(_tool_payload(result)))
         return
@@ -367,7 +367,7 @@ async def _validate_hmrc_vat(client: Client, report: ValidationReport) -> None:
         ("domestic energy", 5),
     ]
     for query, expected_rate in specific_cases:
-        result = await client.call_tool(tool, {"params": {"commodity_code": query}})
+        result = await client.call_tool(tool, {"commodity_code": query})
         if result.is_error:
             report.fail(tool, "tool_error", f"{query!r}: {_tool_payload(result)}")
             continue

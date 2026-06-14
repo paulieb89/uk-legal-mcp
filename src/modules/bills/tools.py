@@ -6,11 +6,11 @@ Upstream API (public, no auth):
 
 import json
 from datetime import date
-from typing import Literal
+from typing import Annotated, Literal
 
 import httpx
 from fastmcp import FastMCP, Context
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from ...deps import format_http_error
 from .models import BillDetail, BillSearchResult, BillSponsor, BillStage, BillSummary
@@ -27,60 +27,6 @@ STAGE_ID_MAP: dict[str, list[int]] = {
     "thirdreading": [10, 5],
     "royalassent": [11],
 }
-
-
-class BillSearchInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    query: str = Field(..., description=(
-        "Search term for bill titles and descriptions, "
-        "e.g. 'online safety' or 'financial services'."
-    ), min_length=1, max_length=500)
-    session: int | None = Field(None, description=(
-        "Numeric parliamentary session ID (e.g. 40 = 2024-25, 39 = 2023-24). "
-        "NOT a year string like '2025'. If you only know the year, omit this "
-        "and filter the results instead. Omit to search all sessions."
-    ), ge=1)
-    house: Literal["Commons", "Lords", "All"] | None = Field(None, description="Filter by originating house. Omit for all houses.")
-    stage: Literal["firstreading", "secondreading", "committee", "report", "thirdreading", "royalassent"] | None = Field(
-        None, description="Filter by current legislative stage."
-    )
-    offset: int = Field(
-        0,
-        ge=0,
-        le=2000,
-        description=(
-            "Number of results to skip before this page. Default 0 for the "
-            "first page. Re-call with offset=offset+returned while has_more "
-            "is true to paginate."
-        ),
-    )
-    limit: int = Field(
-        20,
-        ge=1,
-        le=100,
-        description=(
-            "Maximum bills to return in this call. Default 20 keeps "
-            "responses focused; raise up to 100 for bulk exports."
-        ),
-    )
-
-
-class BillDetailInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    bill_id: int = Field(..., description="Bill ID from bills_search_bills results.", ge=1)
-    max_summary_chars: int = Field(
-        5000,
-        ge=500,
-        le=50000,
-        description=(
-            "Maximum characters of the bill summary text to return. Default "
-            "5,000 (~1,250 tokens) covers most bills. Raise for substantive "
-            "government bills (Finance Act, Levelling-up) whose summary runs "
-            "longer. Check summary_truncated in the response to see if it was cut."
-        ),
-    )
 
 
 def _parse_house(house_val) -> str | None:
@@ -184,7 +130,15 @@ def register_tools(mcp: FastMCP) -> None:
         name="search_bills",
         annotations={"title": "Search Parliamentary Bills", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def bills_search_bills(params: BillSearchInput, ctx: Context) -> BillSearchResult:
+    async def bills_search_bills(
+        query: Annotated[str, Field(description="Search term for bill titles and descriptions, e.g. 'online safety' or 'financial services'.", min_length=1, max_length=500)],
+        session: Annotated[int | None, Field(description="Numeric parliamentary session ID (e.g. 40 = 2024-25, 39 = 2023-24). NOT a year string like '2025'. If you only know the year, omit this and filter the results instead. Omit to search all sessions.", ge=1)] = None,
+        house: Annotated[Literal["Commons", "Lords", "All"] | None, Field(description="Filter by originating house. Omit for all houses.")] = None,
+        stage: Annotated[Literal["firstreading", "secondreading", "committee", "report", "thirdreading", "royalassent"] | None, Field(description="Filter by current legislative stage.")] = None,
+        offset: Annotated[int, Field(description="Number of results to skip before this page. Default 0 for the first page. Re-call with offset=offset+returned while has_more is true to paginate.", ge=0, le=2000)] = 0,
+        limit: Annotated[int, Field(description="Maximum bills to return in this call. Default 20 keeps responses focused; raise up to 100 for bulk exports.", ge=1, le=100)] = 20,
+        ctx: Context = None,
+    ) -> BillSearchResult:
         """USE THIS TOOL WHEN searching UK parliamentary bills by keyword, session, house, or legislative stage.
 
         Returns a paginated page of bill summaries (title, current stage, whether
@@ -192,22 +146,19 @@ def register_tools(mcp: FastMCP) -> None:
         full detail (sponsors, long title, Royal Assent date).
 
         Authoritative source for UK parliamentary bill status.
-
-        Args:
-            params: BillSearchInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {
-            "SearchTerm": params.query,
-            "Take": params.limit,
-            "Skip": params.offset,
+            "SearchTerm": query,
+            "Take": limit,
+            "Skip": offset,
         }
-        if params.session is not None:
-            qp["Session"] = params.session
-        if params.house and params.house != "All":
-            qp["CurrentHouse"] = HOUSE_MAP.get(params.house)
-        if params.stage:
-            qp["BillStage"] = STAGE_ID_MAP[params.stage]
+        if session is not None:
+            qp["Session"] = session
+        if house and house != "All":
+            qp["CurrentHouse"] = HOUSE_MAP.get(house)
+        if stage:
+            qp["BillStage"] = STAGE_ID_MAP[stage]
 
         resp = await client.get(f"{BILLS_BASE}/Bills", params=qp)
         resp.raise_for_status()
@@ -218,15 +169,15 @@ def register_tools(mcp: FastMCP) -> None:
         if not isinstance(total, int):
             total = None
         has_more = (
-            (params.offset + len(bills)) < total
+            (offset + len(bills)) < total
             if total is not None
-            else len(bills) == params.limit
+            else len(bills) == limit
         )
 
         return BillSearchResult(
-            query=params.query,
-            offset=params.offset,
-            limit=params.limit,
+            query=query,
+            offset=offset,
+            limit=limit,
             returned=len(bills),
             total=total,
             has_more=has_more,
@@ -237,7 +188,11 @@ def register_tools(mcp: FastMCP) -> None:
         name="get_bill",
         annotations={"title": "Get Bill Detail", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def bills_get_bill(params: BillDetailInput, ctx: Context) -> BillDetail:
+    async def bills_get_bill(
+        bill_id: Annotated[int, Field(description="Bill ID from bills_search_bills results.", ge=1)],
+        max_summary_chars: Annotated[int, Field(description="Maximum characters of the bill summary text to return. Default 5,000 (~1,250 tokens) covers most bills. Raise for substantive government bills (Finance Act, Levelling-up) whose summary runs longer. Check summary_truncated in the response to see if it was cut.", ge=500, le=50000)] = 5000,
+        ctx: Context = None,
+    ) -> BillDetail:
         """USE THIS TOOL WHEN you have a bill_id (from bills_search_bills) and want the full detail.
 
         Returns sponsors, current stage, long title, summary, and Royal Assent
@@ -247,11 +202,8 @@ def register_tools(mcp: FastMCP) -> None:
         AFTER calling, use parliament_search_hansard(query=bill_short_title) to
         find the bill's parliamentary debates, or bills_search_bills with a
         related keyword for adjacent bills.
-
-        Args:
-            params: BillDetailInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
-        resp = await client.get(f"{BILLS_BASE}/Bills/{params.bill_id}")
+        resp = await client.get(f"{BILLS_BASE}/Bills/{bill_id}")
         resp.raise_for_status()
-        return _parse_bill_detail(resp.json(), params.max_summary_chars)
+        return _parse_bill_detail(resp.json(), max_summary_chars)

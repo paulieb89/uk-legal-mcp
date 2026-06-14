@@ -7,11 +7,11 @@ Upstream APIs (public, no auth):
 
 import json
 from datetime import date
-from typing import Literal
+from typing import Annotated, Literal
 
 import httpx
 from fastmcp import FastMCP, Context
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from ...deps import format_http_error
 from .models import DivisionDetail, DivisionSummary, DivisionsSearchResult, Voter
@@ -20,36 +20,6 @@ COMMONS_VOTES_BASE = "https://commonsvotes-api.parliament.uk"
 LORDS_VOTES_BASE = "https://lordsvotes-api.parliament.uk"
 
 MAX_VOTERS_PER_SIDE = 100
-
-
-class DivisionSearchInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    query: str | None = Field(None, description=(
-        "Search term for division titles, e.g. 'Rwanda' or 'Online Safety Bill'. "
-        "Omit to browse recent divisions."
-    ), max_length=500)
-    house: Literal["Commons", "Lords"] = Field("Commons", description="Which house to search.")
-    from_date: date | None = Field(None, description="Start date (YYYY-MM-DD).")
-    to_date: date | None = Field(None, description="End date (YYYY-MM-DD).")
-    member_id: int | None = Field(None, description=(
-        "Filter to divisions where this member voted. "
-        "Get the member ID from parliament_find_member."
-    ), ge=1)
-    offset: int = Field(0, ge=0, le=2000, description=(
-        "Number of divisions to skip before this page. Default 0. "
-        "Re-call with offset=offset+returned while has_more is true."
-    ))
-    limit: int = Field(25, ge=1, le=100, description=(
-        "Maximum divisions to return. Default 25 (Commons API max-per-page)."
-    ))
-
-
-class DivisionDetailInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    division_id: int = Field(..., description="Division ID from votes_search_divisions results.", ge=1)
-    house: Literal["Commons", "Lords"] = Field("Commons", description="Which house this division belongs to.")
 
 
 def _search_url(house: str) -> str:
@@ -109,7 +79,16 @@ def register_tools(mcp: FastMCP) -> None:
         name="search_divisions",
         annotations={"title": "Search Parliamentary Divisions", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def votes_search_divisions(params: DivisionSearchInput, ctx: Context) -> DivisionsSearchResult:
+    async def votes_search_divisions(
+        query: Annotated[str | None, Field(description="Search term for division titles, e.g. 'Rwanda' or 'Online Safety Bill'. Omit to browse recent divisions.", max_length=500)] = None,
+        house: Annotated[Literal["Commons", "Lords"], Field(description="Which house to search.")] = "Commons",
+        from_date: Annotated[date | None, Field(description="Start date (YYYY-MM-DD).")] = None,
+        to_date: Annotated[date | None, Field(description="End date (YYYY-MM-DD).")] = None,
+        member_id: Annotated[int | None, Field(description="Filter to divisions where this member voted. Get the member ID from parliament_find_member.", ge=1)] = None,
+        offset: Annotated[int, Field(description="Number of divisions to skip before this page. Default 0. Re-call with offset=offset+returned while has_more is true.", ge=0, le=2000)] = 0,
+        limit: Annotated[int, Field(description="Maximum divisions to return. Default 25 (Commons API max-per-page).", ge=1, le=100)] = 25,
+        ctx: Context = None,
+    ) -> DivisionsSearchResult:
         """USE THIS TOOL WHEN searching Commons or Lords formal votes by topic, date, or member.
 
         Returns division summaries (title, date, vote counts, pass/fail). AFTER
@@ -117,25 +96,22 @@ def register_tools(mcp: FastMCP) -> None:
         member-by-member voter lists.
 
         Authoritative source for UK parliamentary vote records.
-
-        Args:
-            params: DivisionSearchInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
-        url = _search_url(params.house)
+        url = _search_url(house)
         qp: dict = {
-            "queryParameters.take": params.limit,
-            "queryParameters.skip": params.offset,
+            "queryParameters.take": limit,
+            "queryParameters.skip": offset,
         }
 
-        if params.query:
-            qp["queryParameters.searchTerm"] = params.query
-        if params.from_date:
-            qp["queryParameters.startDate"] = params.from_date.isoformat()
-        if params.to_date:
-            qp["queryParameters.endDate"] = params.to_date.isoformat()
-        if params.member_id:
-            qp["queryParameters.memberId"] = params.member_id
+        if query:
+            qp["queryParameters.searchTerm"] = query
+        if from_date:
+            qp["queryParameters.startDate"] = from_date.isoformat()
+        if to_date:
+            qp["queryParameters.endDate"] = to_date.isoformat()
+        if member_id:
+            qp["queryParameters.memberId"] = member_id
 
         resp = await client.get(url, params=qp)
         resp.raise_for_status()
@@ -143,18 +119,18 @@ def register_tools(mcp: FastMCP) -> None:
 
         items = data if isinstance(data, list) else data.get("results", data.get("items", []))
 
-        if params.house == "Lords":
+        if house == "Lords":
             divisions = [_parse_lords_summary(item) for item in items]
         else:
             divisions = [_parse_commons_summary(item) for item in items]
 
         return DivisionsSearchResult(
-            query=params.query,
-            house=params.house,
-            offset=params.offset,
-            limit=params.limit,
+            query=query,
+            house=house,
+            offset=offset,
+            limit=limit,
             total=len(divisions),
-            has_more=len(divisions) == params.limit,
+            has_more=len(divisions) == limit,
             divisions=divisions,
         )
 
@@ -162,25 +138,26 @@ def register_tools(mcp: FastMCP) -> None:
         name="get_division",
         annotations={"title": "Get Division Detail", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def votes_get_division(params: DivisionDetailInput, ctx: Context) -> DivisionDetail:
+    async def votes_get_division(
+        division_id: Annotated[int, Field(description="Division ID from votes_search_divisions results.", ge=1)],
+        house: Annotated[Literal["Commons", "Lords"], Field(description="Which house this division belongs to.")] = "Commons",
+        ctx: Context = None,
+    ) -> DivisionDetail:
         """USE THIS TOOL WHEN you have a division_id + house and want the full member-by-member voting record.
 
         Voter lists are truncated to 100 per side to fit response limits; total
         voter counts are always accurate regardless of truncation. Chain from
         votes_search_divisions or parliament_get_debate_divisions (which
         cross-resolves Hansard division refs into votes-API division_ids).
-
-        Args:
-            params: DivisionDetailInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
-        url = _detail_url(params.house, params.division_id)
+        url = _detail_url(house, division_id)
 
         resp = await client.get(url)
         resp.raise_for_status()
         data = resp.json()
 
-        if params.house == "Lords":
+        if house == "Lords":
             title = data.get("title", data.get("Title", "Unknown"))
             div_date = date.fromisoformat(data.get("date", data.get("Date", "1970-01-01"))[:10])
             aye_list = data.get("contents", data.get("Contents", []))
@@ -199,10 +176,10 @@ def register_tools(mcp: FastMCP) -> None:
         truncated = len(all_ayes) > MAX_VOTERS_PER_SIDE or len(all_noes) > MAX_VOTERS_PER_SIDE
 
         return DivisionDetail(
-            id=params.division_id,
+            id=division_id,
             title=title,
             date=div_date,
-            house=params.house,
+            house=house,
             ayes_count=len(all_ayes),
             noes_count=len(all_noes),
             passed=len(all_ayes) > len(all_noes),

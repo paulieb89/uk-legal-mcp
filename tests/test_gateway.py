@@ -116,7 +116,7 @@ class TestCitationTools:
     async def test_citations_parse(self, client: Client):
         result = await client.call_tool(
             "citations_parse",
-            {"params": {"text": "The court applied Donoghue v Stevenson [1932] AC 562 and s.2 Occupiers' Liability Act 1957", "disambiguate": False}},
+            {"text": "The court applied Donoghue v Stevenson [1932] AC 562 and s.2 Occupiers' Liability Act 1957", "disambiguate": False},
         )
         assert not result.is_error, f"Tool error: {result.data}"
         assert result.data is not None
@@ -125,7 +125,7 @@ class TestCitationTools:
     async def test_citations_resolve(self, client: Client):
         result = await client.call_tool(
             "citations_resolve",
-            {"params": {"citation": "[2024] UKSC 12"}},
+            {"citation": "[2024] UKSC 12"},
         )
         assert not result.is_error, f"Tool error: {result.data}"
         assert result.data is not None
@@ -135,7 +135,7 @@ class TestCitationTools:
         """Fabricated neutral citation must return confidence 0.0, not verified."""
         result = await client.call_tool(
             "citations_resolve",
-            {"params": {"citation": "[2022] EWCA Civ 9999"}},
+            {"citation": "[2022] EWCA Civ 9999"},
         )
         assert not result.is_error, f"Tool error: {result.data}"
         assert result.data is not None

@@ -95,11 +95,10 @@ def _find_first(obj: Any, key: str) -> Any:
 
 
 async def _call(client: Client, tool: str, params: dict) -> tuple[dict, Any]:
-    args = {"params": params}
     t0 = time.perf_counter()
-    result = await client.call_tool(tool, args)
+    result = await client.call_tool(tool, params)
     elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
-    _write_fixture(tool, args, result)
+    _write_fixture(tool, params, result)
     text = _llm_text(result)
     metrics = {
         "tool": tool,
@@ -121,11 +120,9 @@ async def main() -> None:
         rows.append(m)
         uri = _find_first(payload, "uri")
         if uri:
-            m, _ = await _call(client, "case_law_get_judgment", {"uri": uri, "max_chars": 50000})
+            m, _ = await _call(client, "judgment_get_index", {"slug": uri})
             rows.append(m)
-        m, _ = await _call(
-            client, "case_law_get_judgment", {"uri": "uksc/2019/41", "max_chars": 50000}
-        )
+        m, _ = await _call(client, "judgment_get_index", {"slug": "uksc/2019/41"})
         rows.append(m)
 
         # ---------------- legislation ----------------

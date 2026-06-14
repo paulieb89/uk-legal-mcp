@@ -9,13 +9,14 @@ Rate limit: legislation.gov.uk 3,000 req / 5 min per IP.
 import json
 import re
 from datetime import date
+from typing import Annotated
 
 import httpx
 from fastmcp import FastMCP, Context
 from lxml import etree, html
 
 from ...xml_safe import parse_xml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from ...deps import LegislationUpstreamError, format_http_error
 from .models import LegislationResult, LegislationSearchResult, LegislationSection, LegislationTOC
@@ -51,85 +52,6 @@ def _entry_title(entry) -> str:
                 return span.text
         return "Unknown"
     return title_el.text or "Unknown"
-
-
-class LegislationSearchInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    query: str = Field(..., description="Search query, e.g. 'Housing Act 1988' or 'data protection personal data'", min_length=1, max_length=500)
-    type: str | None = Field(None, description=(
-        "Filter by type: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). "
-        "Exact-match — omit if you don't already know whether you're looking for an Act vs an SI."
-    ))
-    year: int | None = Field(None, description=(
-        "Filter by year of enactment (exact-match — a single integer, not a range). "
-        "Omit unless you already know the Act's year. Speculating a year (e.g. 'this is recent so it must be 2026') "
-        "and getting it wrong will zero out the result set. Better workflow: query without `year`, then read the "
-        "year from the returned results."
-    ), ge=1800, le=2100)
-    limit: int = Field(
-        20,
-        description="Maximum results to return (1–50). Passed to the upstream results-count param.",
-        ge=1,
-        le=50,
-    )
-    fulltext: bool = Field(
-        False,
-        description=(
-            "Default false → searches Act/SI titles only (best for finding a named Act, "
-            "e.g. 'Housing Act 1988' returns ukpga/1988/50 first). Set true to search "
-            "the full text of every Act/SI for the query (returns SIs and regulations "
-            "that cite the term — e.g. 'rental deposits' would return many implementing "
-            "instruments)."
-        ),
-    )
-
-
-class LegislationGetSectionInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    type: str = Field(..., description="Legislation type code: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). Use the value from legislation_search results.", min_length=2, max_length=10)
-    year: int = Field(..., description="Year of enactment", ge=1800, le=2100)
-    number: int = Field(..., description="Chapter or SI number", ge=1)
-    section: str = Field(..., description="Section number, e.g. '47' or '12A'. Use the numeric part only — not 'section-47'. Schedules are not currently supported.", min_length=1, max_length=50)
-    max_chars: int = Field(
-        10000,
-        ge=500,
-        le=200000,
-        description=(
-            "Maximum characters of section content to return. Default 10,000 "
-            "(~2,500 tokens) covers almost every section. Raise to 50,000+ "
-            "only for unusually long Finance Act definition sections. "
-            "Check content_truncated in the response to see if it was cut."
-        ),
-    )
-
-
-class LegislationGetTocInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    type: str = Field(..., description="Legislation type code: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). Use the value from legislation_search results.", min_length=2, max_length=10)
-    year: int = Field(..., description="Year of enactment", ge=1800, le=2100)
-    number: int = Field(..., description="Chapter or SI number", ge=1)
-    offset: int = Field(
-        0,
-        ge=0,
-        description=(
-            "Number of items to skip from the flattened TOC. Use with "
-            "limit to page through very large statutes like the Companies "
-            "Act 2006 (1300+ items)."
-        ),
-    )
-    limit: int = Field(
-        200,
-        ge=1,
-        le=1000,
-        description=(
-            "Maximum items to return in this call (default 200, max 1000). "
-            "Raise only when you need a larger slice in one response. "
-            "Check has_more and total_items to know if further pages exist."
-        ),
-    )
 
 
 def _normalise_section_id(section: str) -> str:
@@ -445,7 +367,15 @@ def register_tools(mcp: FastMCP) -> None:
         name="search",
         annotations={"title": "Search UK Legislation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def legislation_search(params: LegislationSearchInput, ctx: Context) -> LegislationSearchResult:
+    async def legislation_search(
+        query: Annotated[str, Field(description="Search query, e.g. 'Housing Act 1988' or 'data protection personal data'", min_length=1, max_length=500)],
+        type: Annotated[str | None, Field(description="Filter by type: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). Exact-match — omit if you don't already know whether you're looking for an Act vs an SI.")] = None,
+        year: Annotated[int | None, Field(description="Filter by year of enactment (exact-match — a single integer, not a range). Omit unless you already know the Act's year. Speculating a year (e.g. 'this is recent so it must be 2026') and getting it wrong will zero out the result set. Better workflow: query without `year`, then read the year from the returned results.", ge=1800, le=2100)] = None,
+        limit: Annotated[int, Field(description="Maximum results to return (1–50). Passed to the upstream results-count param.", ge=1, le=50)] = 20,
+        fulltext: Annotated[bool, Field(description="Default false → searches Act/SI titles only (best for finding a named Act, e.g. 'Housing Act 1988' returns ukpga/1988/50 first). Set true to search the full text of every Act/SI for the query (returns SIs and regulations that cite the term — e.g. 'rental deposits' would return many implementing instruments).")] = False,
+        *,
+        ctx: Context,
+    ) -> LegislationSearchResult:
         """USE THIS TOOL WHEN searching UK Acts and Statutory Instruments by title, phrase, or full-text.
 
         Returns ranked results: title, type, year, number, legislation.gov.uk URL,
@@ -460,18 +390,15 @@ def register_tools(mcp: FastMCP) -> None:
 
         Authoritative source for UK primary and secondary legislation
         (legislation.gov.uk).
-
-        Args:
-            params: LegislationSearchInput.
         """
         client = ctx.lifespan_context["legislation_http"]
-        path = f"/{params.type}" if params.type else "/search"
+        path = f"/{type}" if type else "/search"
         # Title search by default — best ranking for "find me Act X". `fulltext`
         # opens up content search across every Act/SI, useful for concept queries.
-        qp: dict = {"results-count": params.limit}
-        qp["text" if params.fulltext else "title"] = params.query
-        if params.year:
-            qp["year"] = params.year
+        qp: dict = {"results-count": limit}
+        qp["text" if fulltext else "title"] = query
+        if year:
+            qp["year"] = year
 
         resp = await client.get(f"{LEGISLATION_BASE}{path}", params=qp)
         resp.raise_for_status()
@@ -511,7 +438,15 @@ def register_tools(mcp: FastMCP) -> None:
         name="get_section",
         annotations={"title": "Get Legislation Section", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def legislation_get_section(params: LegislationGetSectionInput, ctx: Context) -> LegislationSection:
+    async def legislation_get_section(
+        type: Annotated[str, Field(description="Legislation type code: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). Use the value from legislation_search results.", min_length=2, max_length=10)],
+        year: Annotated[int, Field(description="Year of enactment", ge=1800, le=2100)],
+        number: Annotated[int, Field(description="Chapter or SI number", ge=1)],
+        section: Annotated[str, Field(description="Section number, e.g. '47' or '12A'. Use the numeric part only — not 'section-47'. Schedules are not currently supported.", min_length=1, max_length=50)],
+        max_chars: Annotated[int, Field(description="Maximum characters of section content to return. Default 10,000 (~2,500 tokens) covers almost every section. Raise to 50,000+ only for unusually long Finance Act definition sections. Check content_truncated in the response to see if it was cut.", ge=500, le=200000)] = 10000,
+        *,
+        ctx: Context,
+    ) -> LegislationSection:
         """USE THIS TOOL WHEN you have a known Act / SI and want the parsed text of a specific section, with extent and in-force metadata.
 
         Returns full section text, territorial extent, in-force status, and
@@ -526,28 +461,33 @@ def register_tools(mcp: FastMCP) -> None:
         Alternative: call read_resource(uri="legislation://{type}/{year}/{number}/
         section/{section}") for raw CLML XML; use this tool when you want the
         parsed structured response instead.
-
-        Args:
-            params: LegislationGetSectionInput.
         """
         client = ctx.lifespan_context["legislation_http"]
-        section = _normalise_section_id(params.section)
-        url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/section/{section}/data.xml"
+        section = _normalise_section_id(section)
+        url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}/data.xml"
         try:
             resp = await client.get(url)
             resp.raise_for_status()
-            return _parse_clml_section(resp.text, section, params.max_chars)
+            return _parse_clml_section(resp.text, section, max_chars)
         except LegislationUpstreamError as exc:
-            html_url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/section/{section}"
+            html_url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}"
             html_resp = await client.get_html(html_url)
             html_resp.raise_for_status()
-            return _parse_html_section(html_resp.text, section, params.max_chars, str(exc))
+            return _parse_html_section(html_resp.text, section, max_chars, str(exc))
 
     @mcp.tool(
         name="get_toc",
         annotations={"title": "Get Legislation Table of Contents", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def legislation_get_toc(params: LegislationGetTocInput, ctx: Context) -> LegislationTOC:
+    async def legislation_get_toc(
+        type: Annotated[str, Field(description="Legislation type code: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). Use the value from legislation_search results.", min_length=2, max_length=10)],
+        year: Annotated[int, Field(description="Year of enactment", ge=1800, le=2100)],
+        number: Annotated[int, Field(description="Chapter or SI number", ge=1)],
+        offset: Annotated[int, Field(description="Number of items to skip from the flattened TOC. Use with limit to page through very large statutes like the Companies Act 2006 (1300+ items).", ge=0)] = 0,
+        limit: Annotated[int, Field(description="Maximum items to return in this call (default 200, max 1000). Raise only when you need a larger slice in one response. Check has_more and total_items to know if further pages exist.", ge=1, le=1000)] = 200,
+        *,
+        ctx: Context,
+    ) -> LegislationTOC:
         """USE THIS TOOL WHEN you have a known Act / SI and want the structural table of contents (parts, chapters, sections, schedules).
 
         Returns structural elements with XML id and title, e.g. 'section-47:
@@ -561,27 +501,24 @@ def register_tools(mcp: FastMCP) -> None:
         toc") for the full TOC as a newline-separated `id: title` string (no
         pagination). Use this tool when you need the structured response with
         offset / limit / has_more for stepping through large statutes.
-
-        Args:
-            params: LegislationGetTocInput.
         """
         client = ctx.lifespan_context["legislation_http"]
-        url = f"{LEGISLATION_BASE}/{params.type}/{params.year}/{params.number}/data.xml"
+        url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/data.xml"
         resp = await client.get(url)
         resp.raise_for_status()
 
         all_items = _parse_toc_xml(resp.text)
         total_items = len(all_items)
-        page = all_items[params.offset : params.offset + params.limit]
+        page = all_items[offset : offset + limit]
 
         return LegislationTOC(
-            type=params.type,
-            year=params.year,
-            number=params.number,
-            offset=params.offset,
-            limit=params.limit,
+            type=type,
+            year=year,
+            number=number,
+            offset=offset,
+            limit=limit,
             returned=len(page),
             total_items=total_items,
-            has_more=(params.offset + len(page)) < total_items,
+            has_more=(offset + len(page)) < total_items,
             items=page,
         )

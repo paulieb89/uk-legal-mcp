@@ -38,7 +38,7 @@ async def test_unfiltered_returns_all_contributions():
     async with Client(gateway) as client:
         result = await client.call_tool(
             "parliament_get_debate_contributions",
-            {"params": {"debate_ext_id": RRA_LORDS_DEBATE_EXT}},
+            {"debate_ext_id": RRA_LORDS_DEBATE_EXT},
         )
 
     assert result.data.total >= 30, (
@@ -69,10 +69,10 @@ async def test_member_id_filter_finds_pannick():
     async with Client(gateway) as client:
         result = await client.call_tool(
             "parliament_get_debate_contributions",
-            {"params": {
+            {
                 "debate_ext_id": RRA_LORDS_DEBATE_EXT,
                 "member_id": PANNICK_MEMBER_ID,
-            }},
+            },
         )
 
     assert result.data.total >= 1, (

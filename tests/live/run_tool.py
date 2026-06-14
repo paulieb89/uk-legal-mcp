@@ -12,7 +12,7 @@ context-budget planning.
 Usage:
     python -m tests.live.run_tool                                 # defaults
     python -m tests.live.run_tool --query "judicial review"
-    python -m tests.live.run_tool --tool case_law_search --args '{"params": {"query": "X"}}'
+    python -m tests.live.run_tool --tool case_law_search --args '{"query": "X"}'
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def main() -> None:
     if ns.args:
         tool_args = json.loads(ns.args)
     else:
-        tool_args = {"params": {"query": ns.query, "page": ns.page}}
+        tool_args = {"query": ns.query, "page": ns.page}
 
     metrics = asyncio.run(run(ns.tool, tool_args))
     print(json.dumps(metrics, indent=2))

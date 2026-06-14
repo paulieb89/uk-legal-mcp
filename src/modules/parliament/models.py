@@ -242,42 +242,6 @@ class DivisionMatchLite(BaseModel):
     ))
 
 
-class GetDebateDivisionsInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    debate_ext_id: str = Field(..., description=(
-        "Debate GUID (DebateSectionExtId). Chain from parliament_search_hansard "
-        "contribution.debate_ext_id, top_debates[].debate_ext_id, or "
-        "parliament_policy_position_summary top_debates[].debate_ext_id."
-    ), min_length=8)
-
-
-class GetDebateContributionsInput(BaseModel):
-    """Input for the debate-drill-in primitive.
-
-    Pair with any tool that surfaces debate_ext_id (parliament_search_hansard's
-    top_debates, parliament_lookup_by_column matches, parliament_get_debate_divisions)
-    to retrieve the contributions inside that debate. Optional member_id filter
-    returns only that member's contributions — the canonical path when the
-    member spoke in a debate but didn't say your topic phrase verbatim and so
-    isn't returned by text-body-search tools.
-    """
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    debate_ext_id: str = Field(..., description=(
-        "Debate GUID (DebateSectionExtId). Chain from parliament_search_hansard "
-        "top_debates[].debate_ext_id, parliament_lookup_by_column matches[].debate_ext_id, "
-        "or any tool that surfaces a debate identifier."
-    ), min_length=8)
-    member_id: int | None = Field(None, description=(
-        "Optional integer Members API ID. When given, only that member's "
-        "contributions in this debate are returned — regardless of which words "
-        "they used. Resolves via parliament_find_member. When omitted, every "
-        "contribution in the debate is returned (typical debate: 100-200 items)."
-    ), ge=1)
-
-
 class DebateDivisions(BaseModel):
     """Divisions held within a specific debate.
 
@@ -297,24 +261,6 @@ class DebateDivisions(BaseModel):
             "divisions occurred. Each element's `id` chains to votes_get_division."
         ),
     )
-
-
-class LookupByColumnInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    column_number: str = Field(..., description=(
-        "Hansard column number from an OSCOLA footnote, e.g. '200' for "
-        "'HL Deb 14 Oct 2025, vol 849, col 200'. String (not integer) to "
-        "accommodate column suffixes like '1162W' for written answers."
-    ), min_length=1, max_length=20)
-    volume_number: int = Field(..., description=(
-        "Hansard volume number (the 'vol 849' part of an OSCOLA citation). "
-        "Required — the endpoint only resolves citations when given the volume; "
-        "sitting date is NOT a substitute (verified live 2026-05-29)."
-    ), gt=0)
-    house: Literal["Commons", "Lords", "both"] = Field("both", description=(
-        "Restrict to one House. Default 'both' searches across both Houses."
-    ))
 
 
 class ColumnLookupResult(BaseModel):

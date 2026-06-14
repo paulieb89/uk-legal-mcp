@@ -43,7 +43,7 @@ async def test_legislation_search_default_finds_named_act():
     async with Client(gateway) as client:
         result = await client.call_tool(
             "legislation_search",
-            {"params": {"query": "Housing Act 1988"}},
+            {"query": "Housing Act 1988"},
         )
     top3 = [(r.type, r.year, r.number) for r in result.data.results[:3]]
     assert ("ukpga", 1988, 50) in top3, f"Top 3 was {top3}"

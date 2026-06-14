@@ -8,10 +8,11 @@ This is the primary differentiator of uk-legal-mcp.
 import json
 import re
 import time
+from typing import Annotated
 
 import httpx
 from fastmcp import FastMCP, Context
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from ...deps import format_http_error
 from .models import CitationNetwork, CitationParseResult, CitationType, ParsedCitation
@@ -24,57 +25,6 @@ from .patterns import (
     resolve_legislation,
     TNA_BASE,
 )
-
-
-class CitationsParseInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    text: str = Field(
-        ...,
-        description=(
-            "Free text containing OSCOLA citations to extract. Supported: "
-            "neutral citations ([2024] UKSC 12), law reports ([2024] 1 WLR 100), "
-            "legislation sections (s.47 Companies Act 2006), SIs (SI 2018/1234), "
-            "retained EU law (Regulation (EU) 2016/679). Max 50,000 chars."
-        ),
-        min_length=1,
-        max_length=50_000,
-    )
-    disambiguate: bool = Field(
-        False,
-        description=(
-            "Default False — pure-regex parsing, no model in the loop. If True, "
-            "ambiguous citations (e.g. bare EWHC without a division) are sent to the "
-            "connected client's own LLM, via MCP sampling, to resolve the division. "
-            "Opt in only when you want best-effort division resolution and accept "
-            "that a model shapes the result."
-        ),
-    )
-
-
-class CitationsResolveInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    citation: str = Field(
-        ...,
-        description="A single OSCOLA citation to parse and resolve. E.g. '[2024] UKSC 12', 'SI 2018/1234', 's.47 Companies Act 2006'",
-        min_length=3,
-        max_length=500,
-    )
-
-
-class CitationsNetworkInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    case_uri: str = Field(
-        ...,
-        description=(
-            "TNA judgment URI slug, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450'. "
-            "Use the 'uri' field from case_law_search results — not the full URL. "
-            "Do not include the 'https://caselaw.nationalarchives.gov.uk/' prefix."
-        ),
-        min_length=5,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +132,28 @@ def register_tools(mcp: FastMCP) -> None:
         name="parse",
         annotations={"title": "Parse OSCOLA Citations", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
     )
-    async def citations_parse(params: CitationsParseInput, ctx: Context) -> CitationParseResult:
+    async def citations_parse(
+        text: Annotated[str, Field(
+            description=(
+                "Free text containing OSCOLA citations to extract. Supported: "
+                "neutral citations ([2024] UKSC 12), law reports ([2024] 1 WLR 100), "
+                "legislation sections (s.47 Companies Act 2006), SIs (SI 2018/1234), "
+                "retained EU law (Regulation (EU) 2016/679). Max 50,000 chars."
+            ),
+            min_length=1,
+            max_length=50_000,
+        )],
+        ctx: Context,
+        disambiguate: Annotated[bool, Field(
+            description=(
+                "Default False — pure-regex parsing, no model in the loop. If True, "
+                "ambiguous citations (e.g. bare EWHC without a division) are sent to the "
+                "connected client's own LLM, via MCP sampling, to resolve the division. "
+                "Opt in only when you want best-effort division resolution and accept "
+                "that a model shapes the result."
+            ),
+        )] = False,
+    ) -> CitationParseResult:
         """USE THIS TOOL WHEN you have free text (a memo, an email, a clause) and want every OSCOLA-style citation it contains extracted and classified.
 
         Identifies: neutral citations ([2024] UKSC 12), law reports ([2024] 1 WLR
@@ -199,26 +170,23 @@ def register_tools(mcp: FastMCP) -> None:
         points at a real document before quoting or formatting it — the parser
         recognises the SHAPE of a citation but does not confirm the document
         exists.
-
-        Args:
-            params: CitationsParseInput.
         """
         t0 = time.monotonic()
         patterns = _compile_patterns()
-        confident, ambiguous = _extract_all_citations(params.text, patterns)
+        confident, ambiguous_list = _extract_all_citations(text, patterns)
 
-        if params.disambiguate and ambiguous:
+        if disambiguate and ambiguous_list:
             still_ambiguous = []
-            for c in ambiguous:
+            for c in ambiguous_list:
                 result = await _disambiguate_citation(ctx, c)
                 (confident if result.confidence >= 0.7 else still_ambiguous).append(result)
-            ambiguous = still_ambiguous
+            ambiguous_list = still_ambiguous
 
         duration_ms = int((time.monotonic() - t0) * 1000)
         return CitationParseResult(
             citations=confident,
-            ambiguous=ambiguous,
-            text_length=len(params.text),
+            ambiguous=ambiguous_list,
+            text_length=len(text),
             parse_duration_ms=duration_ms,
         )
 
@@ -226,7 +194,14 @@ def register_tools(mcp: FastMCP) -> None:
         name="resolve",
         annotations={"title": "Resolve Single OSCOLA Citation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     )
-    async def citations_resolve(params: CitationsResolveInput, ctx: Context) -> ParsedCitation:
+    async def citations_resolve(
+        citation: Annotated[str, Field(
+            description="A single OSCOLA citation to parse and resolve. E.g. '[2024] UKSC 12', 'SI 2018/1234', 's.47 Companies Act 2006'",
+            min_length=3,
+            max_length=500,
+        )],
+        ctx: Context,
+    ) -> ParsedCitation:
         """USE THIS TOOL BEFORE constructing an OSCOLA citation string from known fields, OR when you have a citation and want to confirm it points at a real document.
 
         Parses + resolves a single citation (neutral citation, SI, legislation
@@ -248,17 +223,13 @@ def register_tools(mcp: FastMCP) -> None:
         ask the user for the source URL or better identifying details.
 
         Authoritative source for UK legal-citation resolution.
-
-        Args:
-            params: CitationsResolveInput.
-            ctx: FastMCP context (injected).
         """
         patterns = _compile_patterns()
-        confident, ambiguous = _extract_all_citations(params.citation.strip(), patterns)
+        confident, ambiguous = _extract_all_citations(citation.strip(), patterns)
         all_found = confident + ambiguous
         if not all_found:
             raise ValueError(
-                f"No recognised OSCOLA citation found in '{params.citation}'. "
+                f"No recognised OSCOLA citation found in '{citation}'. "
                 f"Supported: [YYYY] COURT N, [YYYY] N SERIES PAGE, s.N Act YYYY, SI YYYY/N, Regulation (EU) YYYY/N"
             )
         parsed = all_found[0]
@@ -280,7 +251,17 @@ def register_tools(mcp: FastMCP) -> None:
         name="network",
         annotations={"title": "Get Case Citation Network", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def citations_network(params: CitationsNetworkInput, ctx: Context) -> CitationNetwork:
+    async def citations_network(
+        case_uri: Annotated[str, Field(
+            description=(
+                "TNA judgment URI slug, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450'. "
+                "Use the 'uri' field from case_law_search results — not the full URL. "
+                "Do not include the 'https://caselaw.nationalarchives.gov.uk/' prefix."
+            ),
+            min_length=5,
+        )],
+        ctx: Context,
+    ) -> CitationNetwork:
         """USE THIS TOOL WHEN you have a judgment slug and want to map every citation it makes — cases cited, legislation referenced, SIs, retained EU law.
 
         Fetches the judgment XML from TNA and parses all OSCOLA citations
@@ -290,15 +271,12 @@ def register_tools(mcp: FastMCP) -> None:
 
         Useful for authority-network analysis (what did this judgment rely on?)
         and for surfacing the legislative landscape a case sits inside.
-
-        Args:
-            params: CitationsNetworkInput with case_uri (TNA slug, e.g. 'uksc/2024/12').
         """
         # xml_http has the right Accept headers (atom+xml, application/xml)
         # for data.xml endpoints. The JSON `http` client was previously used
         # here and caused content-negotiation issues on some URLs.
         client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
-        uri = params.case_uri.lstrip("/")
+        uri = case_uri.lstrip("/")
         resp = await client.get(f"{TNA_BASE}/{uri}/data.xml")
         resp.raise_for_status()
 

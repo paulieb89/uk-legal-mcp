@@ -28,7 +28,7 @@ async def test_lookup_by_column_populates_real_contribution_count():
     async with Client(gateway) as client:
         result = await client.call_tool(
             "parliament_lookup_by_column",
-            {"params": {"column_number": "200", "volume_number": 849, "house": "Lords"}},
+            {"column_number": "200", "volume_number": 849, "house": "Lords"},
         )
 
     assert result.data.total_results >= 1, "Expected at least one match for col 200"

@@ -8,10 +8,11 @@ Wire format: JSON
 import json
 import os
 from datetime import date
+from typing import Annotated
 
 import httpx
 from fastmcp import FastMCP, Context
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from ...deps import format_http_error
 from .models import HMRCGuidanceResult, HMRCGuidanceSearchResult, MTDStatus, VATRate
@@ -77,41 +78,15 @@ def _lookup_vat(commodity_code: str) -> VATRate:
     )
 
 
-class HMRCVATRateInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    commodity_code: str = Field(
-        ...,
-        description="Commodity code or plain-English description. E.g. 'food', 'domestic fuel', 'software', 'financial services', 'new build residential'",
-        min_length=2, max_length=200,
-    )
-
-
-class HMRCMTDStatusInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    vrn: str = Field(..., description="VAT Registration Number: 9 digits, e.g. '123456789'. GB prefix accepted and stripped automatically.", min_length=9, max_length=12)
-
-
-class HMRCGuidanceSearchInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    query: str = Field(..., description="Search query for HMRC guidance, e.g. 'VAT digital services', 'R&D tax relief SME'", min_length=3, max_length=300)
-    limit: int = Field(
-        10,
-        description="Maximum guidance results to return (1–25). Passed to the GOV.UK search count param.",
-        ge=1,
-        le=25,
-    )
-
-
 def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="get_vat_rate",
         annotations={"title": "Get VAT Rate for Commodity", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     )
-    async def hmrc_get_vat_rate(params: HMRCVATRateInput) -> VATRate:
+    async def hmrc_get_vat_rate(
+        commodity_code: Annotated[str, Field(description="Commodity code or plain-English description. E.g. 'food', 'domestic fuel', 'software', 'financial services', 'new build residential'", min_length=2, max_length=200)],
+    ) -> VATRate:
         """USE THIS TOOL WHEN you have a UK commodity or service description and want its VAT rate category.
 
         Returns the rate (standard 20%, reduced 5%, zero 0%, exempt), effective
@@ -120,17 +95,17 @@ def register_tools(mcp: FastMCP) -> None:
         IMPORTANT: Uses a static lookup table current as of 22 Nov 2023 (Autumn
         Statement). Rates may have changed in subsequent Budgets — for
         time-sensitive advice, verify against GOV.UK via hmrc_search_guidance.
-
-        Args:
-            params: HMRCVATRateInput.
         """
-        return _lookup_vat(params.commodity_code)
+        return _lookup_vat(commodity_code)
 
     @mcp.tool(
         name="check_mtd_status",
         annotations={"title": "Check MTD VAT Status", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def hmrc_check_mtd_status(params: HMRCMTDStatusInput, ctx: Context) -> MTDStatus:
+    async def hmrc_check_mtd_status(
+        vrn: Annotated[str, Field(description="VAT Registration Number: 9 digits, e.g. '123456789'. GB prefix accepted and stripped automatically.", min_length=9, max_length=12)],
+        ctx: Context,
+    ) -> MTDStatus:
         """USE THIS TOOL WHEN you have a 9-digit VAT Registration Number and need that business's Making Tax Digital VAT mandate status.
 
         Returns whether the business is mandated for MTD, effective date, and
@@ -140,9 +115,6 @@ def register_tools(mcp: FastMCP) -> None:
         'https://api.service.hmrc.gov.uk' for production. Requires
         HMRC_CLIENT_ID + HMRC_CLIENT_SECRET environment variables (OAuth 2.0).
         Raises if credentials are not configured — do not infer status.
-
-        Args:
-            params: HMRCMTDStatusInput.
         """
         client_id = os.getenv("HMRC_CLIENT_ID")
         client_secret = os.getenv("HMRC_CLIENT_SECRET")
@@ -160,7 +132,7 @@ def register_tools(mcp: FastMCP) -> None:
         )
         token_resp.raise_for_status()
         access_token = token_resp.json().get("access_token")
-        vrn = params.vrn.strip().lstrip("GB").lstrip("gb")
+        vrn = vrn.strip().lstrip("GB").lstrip("gb")
         resp = await client.get(
             f"{HMRC_API_BASE}/organisations/vat/{vrn}/obligations",
             headers={"Authorization": f"Bearer {access_token}"},
@@ -185,7 +157,11 @@ def register_tools(mcp: FastMCP) -> None:
         name="search_guidance",
         annotations={"title": "Search HMRC Guidance", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def hmrc_search_guidance(params: HMRCGuidanceSearchInput, ctx: Context) -> HMRCGuidanceSearchResult:
+    async def hmrc_search_guidance(
+        query: Annotated[str, Field(description="Search query for HMRC guidance, e.g. 'VAT digital services', 'R&D tax relief SME'", min_length=3, max_length=300)],
+        ctx: Context,
+        limit: Annotated[int, Field(description="Maximum guidance results to return (1–25). Passed to the GOV.UK search count param.", ge=1, le=25)] = 10,
+    ) -> HMRCGuidanceSearchResult:
         """USE THIS TOOL WHEN searching GOV.UK for HMRC tax guidance on a topic (VAT, income tax, corporation tax, etc.).
 
         Returns matching guidance titles, URLs, summaries, and last-updated dates.
@@ -193,14 +169,11 @@ def register_tools(mcp: FastMCP) -> None:
 
         Authoritative source for current HMRC tax guidance. Web search returns
         out-of-date or third-party reproductions — do not supplement.
-
-        Args:
-            params: HMRCGuidanceSearchInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         resp = await client.get(
             GOVUK_SEARCH_BASE,
-            params={"q": params.query, "filter_organisations": "hm-revenue-customs", "fields[]": ["title", "description", "link", "public_timestamp"], "count": params.limit},
+            params={"q": query, "filter_organisations": "hm-revenue-customs", "fields[]": ["title", "description", "link", "public_timestamp"], "count": limit},
         )
         resp.raise_for_status()
         results: list[HMRCGuidanceResult] = []
@@ -219,7 +192,7 @@ def register_tools(mcp: FastMCP) -> None:
                 updated=updated,
             ))
         return HMRCGuidanceSearchResult(
-            query=params.query,
+            query=query,
             total=len(results),
             results=results,
         )

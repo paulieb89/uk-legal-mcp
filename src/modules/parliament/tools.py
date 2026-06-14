@@ -10,11 +10,11 @@ Upstream APIs (all public, no auth required):
 import asyncio
 import re
 from datetime import date
-from typing import Literal
+from typing import Annotated, Literal
 
 import httpx
 from fastmcp import FastMCP, Context
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from collections import Counter
 
@@ -25,12 +25,9 @@ from .models import (
     DebateDivisions,
     DivisionMatchLite,
     FacetCount,
-    GetDebateContributionsInput,
-    GetDebateDivisionsInput,
     HansardContribution,
     HansardSearchResult,
     Interest,
-    LookupByColumnInput,
     MemberDebatesResult,
     MemberInterestsPage,
     MemberResult,
@@ -62,174 +59,6 @@ INTEREST_CATEGORIES: dict[str, int] = {
     "family_employed": 10,
     "family_lobbying": 11,
 }
-
-class HansardSearchInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    query: str = Field(..., description=(
-        "Phrase to find in Hansard contribution text bodies. Hansard searches the "
-        "words members actually said in their speeches — NOT debate titles, topic "
-        "metadata, or written headlines. Pass tokens that would appear in someone's "
-        "speech: distinctive arguments ('disproportionate sanction'), statutory "
-        "references ('section 21'), or specific phrases. Bill titles (e.g. 'Renters' "
-        "Rights Bill') often DON'T match because members refer to 'the Bill' or "
-        "'this legislation' in their speeches. Tokenised matching: 'housing benefit "
-        "fraud' will match contributions saying 'fraud in housing benefit claims'. "
-        "For 'all contributions in a specific debate' regardless of words used, "
-        "drill via top_debates[].debate_ext_id into parliament_get_debate_contributions."
-    ), min_length=1, max_length=500)
-    from_date: date | None = Field(None, description="Start date (YYYY-MM-DD)")
-    to_date: date | None = Field(None, description="End date (YYYY-MM-DD)")
-    house: Literal["Commons", "Lords", "both"] = Field("both", description=(
-        "Restrict to one House. Default 'both' returns Commons + Lords contributions."
-    ))
-    member_id: int | None = Field(None, description=(
-        "Filter to contributions by a single member. Pass the integer Members "
-        "API ID (resolve a name via parliament_find_member). The prior `member` "
-        "field accepted a name string but Hansard's /search.json silently "
-        "ignored it — the spec requires `memberId`."
-    ), ge=1)
-    text_mode: Literal["preview", "full"] = Field("preview", description=(
-        "'preview' returns the upstream ~250-char snippet (fast, low context cost). "
-        "'full' returns ContributionTextFull (still capped at 3000 chars). "
-        "For full contribution text without the cap, read the resource "
-        "hansard://debate/{debate_ext_id}/contribution/{contribution_ext_id}."
-    ))
-    contribution_type: Literal["Spoken", "Written", "Corrections"] = Field("Spoken", description=(
-        "Which Hansard section to paginate. 'Spoken' = chamber + Westminster Hall debates "
-        "(the default; what a lawyer usually means). 'Written' = written answers and "
-        "statements. 'Corrections' = published corrections to the record. The corpus envelope "
-        "(total_debates, total_divisions, etc.) is independent of this and always populated."
-    ))
-    offset: int = Field(0, ge=0, le=5000, description=(
-        "Skip this many contributions before the page. Default 0. Re-call with "
-        "offset=offset+returned to paginate; has_more flags whether more remain."
-    ))
-    limit: int = Field(20, ge=1, le=100, description=(
-        "Max contributions per call (1–100). Default 20. Paginate further with "
-        "offset; total corpus size is in total_corpus on the response."
-    ))
-
-
-class PolicyPositionSummaryInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    topic: str = Field(..., description=(
-        "Phrase to find in Hansard contribution text bodies for the facet aggregation. "
-        "Same semantics as parliament_search_hansard.query: tokens that appear in "
-        "members' actual speeches, not bill titles or topic metadata. The aggregator "
-        "sweeps top_debates[] returned by /search/Debates.json — those debates are "
-        "matched on the phrase appearing in titles or contribution text, so passing a "
-        "Bill title (e.g. 'Renters' Rights Bill') usually works for THIS tool even "
-        "though it wouldn't for member-level text search, because debate-level matching "
-        "uses metadata in addition to body text."
-    ), min_length=2, max_length=200)
-    from_date: date | None = Field(None, description="Start date (YYYY-MM-DD)")
-    to_date: date | None = Field(None, description="End date (YYYY-MM-DD)")
-    house: Literal["Commons", "Lords", "both"] = Field("both", description="Restrict to one House. Default 'both'.")
-    max_debates_scanned: int = Field(200, ge=50, le=2000, description=(
-        "Hard cap on debates sampled from /search/Debates.json to compute "
-        "facets. Default 200 issues ≤4 upstream calls (take=50 each). Raise "
-        "to 2000 (≤40 calls) for an exhaustive sweep on a heavily-debated "
-        "topic. Hansard rate limit: 1000 req/5min."
-    ))
-
-
-class FindMemberInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    name: str = Field(..., description="Name or partial name, e.g. 'Starmer', 'Baroness Hale'", min_length=2, max_length=200)
-
-
-class MemberDebatesInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    member_id: int = Field(..., description="Parliament Members API integer ID. Obtain from parliament_find_member.", ge=1)
-    topic: str | None = Field(None, description=(
-        "Optional phrase to find in THIS member's contribution text bodies. "
-        "Hansard searches the words the member actually said, NOT the topic or "
-        "title of the debate. Pass tokens this member would have spoken — "
-        "distinctive arguments ('disproportionate sanction'), statutory references "
-        "('section 21'), or motion numbers ('Motion C1') — not the bill's name "
-        "(members rarely say e.g. 'Renters' Rights Bill' verbatim in their speeches). "
-        "If you want 'every contribution this member made in a specific debate' "
-        "regardless of words used, find the debate_ext_id then use "
-        "parliament_get_debate_contributions(debate_ext_id, member_id=...)."
-    ))
-    offset: int = Field(0, ge=0, le=2000, description=(
-        "Number of contributions to skip before this page. Default 0. "
-        "Re-call with offset=offset+returned while has_more is true."
-    ))
-    limit: int = Field(20, ge=1, le=100, description=(
-        "Maximum contributions to return. Default 20."
-    ))
-
-
-class PetitionSearchInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    query: str = Field(..., description=(
-        "Search term for petition titles, e.g. 'ban trophy hunting' or 'NHS funding'."
-    ), min_length=2, max_length=300)
-    state: Literal["open", "closed", "all"] = Field("all", description="Filter by petition state.")
-    offset: int = Field(0, ge=0, le=2000, description=(
-        "Number of petitions to skip before this page. Default 0. "
-        "Re-call with offset=offset+returned while has_more is true."
-    ))
-    limit: int = Field(20, ge=1, le=100, description=(
-        "Maximum petitions to return. Default 20."
-    ))
-
-
-class MemberInterestsInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    member_id: int = Field(..., description=(
-        "Parliament Members API integer ID. Get from parliament_find_member."
-    ), ge=1)
-    category: Literal[
-        "employment", "employment_adhoc", "employment_ongoing",
-        "donations", "gifts_uk", "overseas_visits", "gifts_overseas",
-        "land", "shareholdings", "miscellaneous", "family_employed", "family_lobbying",
-    ] | None = Field(None, description=(
-        "Filter by interest category. Common categories: "
-        "'donations' (donations and support), 'gifts_uk' (gifts/hospitality from UK), "
-        "'employment' (employment and earnings), 'land' (land and property), "
-        "'shareholdings', 'overseas_visits'. Omit for all categories."
-    ))
-    offset: int = Field(
-        0,
-        ge=0,
-        le=500,
-        description=(
-            "Number of interests to skip before this page. Default 0 for "
-            "the first page. To paginate prolific members (100+ interests), "
-            "re-call with offset=offset+returned while the previous response "
-            "had has_more=true."
-        ),
-    )
-    limit: int = Field(
-        20,
-        ge=1,
-        le=20,
-        description=(
-            "Max interests per call. Hard-capped at 20 by the upstream "
-            "interests-api.parliament.uk (verified live 2026-05-29: "
-            "Take=100 still returns 20). For prolific members, paginate via "
-            "offset; total size is in totalResults on the response."
-        ),
-    )
-    max_description_chars: int = Field(
-        500,
-        ge=50,
-        le=5000,
-        description=(
-            "Per-entry cap on the free-text description field. Default 500 "
-            "prevents context blow-up on members with lengthy donation or "
-            "directorship narratives. Raise to 2000+ only for forensic "
-            "provenance work."
-        ),
-    )
 
 
 def _strip_html(text: str) -> str:
@@ -564,7 +393,18 @@ def register_tools(mcp: FastMCP) -> None:
         name="search_hansard",
         annotations={"title": "Search Hansard Debates", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def parliament_search_hansard(params: HansardSearchInput, ctx: Context) -> HansardSearchResult:
+    async def parliament_search_hansard(
+        query: Annotated[str, Field(description="Phrase to find in Hansard contribution text bodies. Hansard searches the words members actually said in their speeches — NOT debate titles, topic metadata, or written headlines. Pass tokens that would appear in someone's speech: distinctive arguments ('disproportionate sanction'), statutory references ('section 21'), or specific phrases. Bill titles (e.g. 'Renters\\'s Rights Bill') often DON'T match because members refer to 'the Bill' or 'this legislation' in their speeches. Tokenised matching: 'housing benefit fraud' will match contributions saying 'fraud in housing benefit claims'. For 'all contributions in a specific debate' regardless of words used, drill via top_debates[].debate_ext_id into parliament_get_debate_contributions.", min_length=1, max_length=500)],
+        ctx: Context,
+        from_date: Annotated[date | None, Field(description="Start date (YYYY-MM-DD)")] = None,
+        to_date: Annotated[date | None, Field(description="End date (YYYY-MM-DD)")] = None,
+        house: Annotated[Literal["Commons", "Lords", "both"], Field(description="Restrict to one House. Default 'both' returns Commons + Lords contributions.")] = "both",
+        member_id: Annotated[int | None, Field(description="Filter to contributions by a single member. Pass the integer Members API ID (resolve a name via parliament_find_member). The prior `member` field accepted a name string but Hansard's /search.json silently ignored it — the spec requires `memberId`.", ge=1)] = None,
+        text_mode: Annotated[Literal["preview", "full"], Field(description="'preview' returns the upstream ~250-char snippet (fast, low context cost). 'full' returns ContributionTextFull (still capped at 3000 chars). For full contribution text without the cap, read the resource hansard://debate/{debate_ext_id}/contribution/{contribution_ext_id}.")] = "preview",
+        contribution_type: Annotated[Literal["Spoken", "Written", "Corrections"], Field(description="Which Hansard section to paginate. 'Spoken' = chamber + Westminster Hall debates (the default; what a lawyer usually means). 'Written' = written answers and statements. 'Corrections' = published corrections to the record. The corpus envelope (total_debates, total_divisions, etc.) is independent of this and always populated.")] = "Spoken",
+        offset: Annotated[int, Field(description="Skip this many contributions before the page. Default 0. Re-call with offset=offset+returned to paginate; has_more flags whether more remain.", ge=0, le=5000)] = 0,
+        limit: Annotated[int, Field(description="Max contributions per call (1–100). Default 20. Paginate further with offset; total corpus size is in total_corpus on the response.", ge=1, le=100)] = 20,
+    ) -> HansardSearchResult:
         """USE THIS TOOL WHEN searching Hansard by topic, bill title, or text phrase.
 
         Returns contributions with citation-grade metadata: member_id, attributed_to,
@@ -584,24 +424,21 @@ def register_tools(mcp: FastMCP) -> None:
 
         Authoritative source for UK parliamentary debates — do not supplement
         with web search or training-data recall.
-
-        Args:
-            params: HansardSearchInput.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {
-            "searchTerm": params.query,
-            "take": params.limit,
-            "skip": params.offset,
+            "searchTerm": query,
+            "take": limit,
+            "skip": offset,
         }
-        if params.from_date:
-            qp["startDate"] = params.from_date.isoformat()
-        if params.to_date:
-            qp["endDate"] = params.to_date.isoformat()
-        if params.house != "both":
-            qp["house"] = params.house
-        if params.member_id:
-            qp["memberId"] = params.member_id
+        if from_date:
+            qp["startDate"] = from_date.isoformat()
+        if to_date:
+            qp["endDate"] = to_date.isoformat()
+        if house != "both":
+            qp["house"] = house
+        if member_id:
+            qp["memberId"] = member_id
 
         # Fire both upstream calls in parallel:
         #   1. /search/contributions/{type}.json — paginated contributions (real take/skip)
@@ -612,7 +449,7 @@ def register_tools(mcp: FastMCP) -> None:
         # Envelope query: same filters minus take/skip (envelope doesn't paginate anyway).
         envelope_qp = {k: v for k, v in qp.items() if k not in ("take", "skip")}
         contribs_task = client.get(
-            f"{HANSARD_API}/search/contributions/{params.contribution_type}.json",
+            f"{HANSARD_API}/search/contributions/{contribution_type}.json",
             params=qp,
         )
         envelope_task = client.get(f"{HANSARD_API}/search.json", params=envelope_qp)
@@ -626,21 +463,21 @@ def register_tools(mcp: FastMCP) -> None:
         # shape as /search.json's Contributions[]); reshape it for the existing parser.
         contributions = _parse_hansard_contributions(
             {"Contributions": contribs_payload.get("Results") or []},
-            text_mode=params.text_mode,
+            text_mode=text_mode,
         )
         # Use the dedicated endpoint's total when available — it's authoritative for the
         # contribution category we paginated; fall back to /search.json's TotalContributions.
         total_corpus = contribs_payload.get("TotalResultCount") or payload.get("TotalContributions")
         party_breakdown, house_breakdown, date_range = _compute_search_facets(contributions)
         return HansardSearchResult(
-            query=params.query,
-            from_date=params.from_date,
-            to_date=params.to_date,
-            house=params.house,
-            member_id=params.member_id,
-            text_mode=params.text_mode,
-            offset=params.offset,
-            limit=params.limit,
+            query=query,
+            from_date=from_date,
+            to_date=to_date,
+            house=house,
+            member_id=member_id,
+            text_mode=text_mode,
+            offset=offset,
+            limit=limit,
             total=len(contributions),
             total_corpus=total_corpus,
             total_debates=payload.get("TotalDebates"),
@@ -656,7 +493,7 @@ def register_tools(mcp: FastMCP) -> None:
             party_breakdown=party_breakdown,
             house_breakdown=house_breakdown,
             date_range=date_range,
-            has_more=len(contributions) == params.limit,
+            has_more=len(contributions) == limit,
             contributions=contributions,
         )
 
@@ -664,7 +501,14 @@ def register_tools(mcp: FastMCP) -> None:
         name="policy_position_summary",
         annotations={"title": "Hansard Policy Position Summary (deterministic facets)", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def parliament_policy_position_summary(params: PolicyPositionSummaryInput, ctx: Context) -> PolicyPositionSummary:
+    async def parliament_policy_position_summary(
+        topic: Annotated[str, Field(description="Phrase to find in Hansard contribution text bodies for the facet aggregation. Same semantics as parliament_search_hansard.query: tokens that appear in members' actual speeches, not bill titles or topic metadata. The aggregator sweeps top_debates[] returned by /search/Debates.json — those debates are matched on the phrase appearing in titles or contribution text, so passing a Bill title (e.g. 'Renters\\' Rights Bill') usually works for THIS tool even though it wouldn't for member-level text search, because debate-level matching uses metadata in addition to body text.", min_length=2, max_length=200)],
+        ctx: Context,
+        from_date: Annotated[date | None, Field(description="Start date (YYYY-MM-DD)")] = None,
+        to_date: Annotated[date | None, Field(description="End date (YYYY-MM-DD)")] = None,
+        house: Annotated[Literal["Commons", "Lords", "both"], Field(description="Restrict to one House. Default 'both'.")] = "both",
+        max_debates_scanned: Annotated[int, Field(description="Hard cap on debates sampled from /search/Debates.json to compute facets. Default 200 issues ≤4 upstream calls (take=50 each). Raise to 2000 (≤40 calls) for an exhaustive sweep on a heavily-debated topic. Hansard rate limit: 1000 req/5min.", ge=50, le=2000)] = 200,
+    ) -> PolicyPositionSummary:
         """USE THIS TOOL WHEN you want debate-level corpus signals on a topic — by_house, by_year, by_section breakdowns — without reading every contribution.
 
         Aggregates Hansard debate-level signals on a topic. Pure counts — no LLM,
@@ -685,20 +529,17 @@ def register_tools(mcp: FastMCP) -> None:
         index, or call parliament_member_debates for one named member.
 
         This is the authoritative source for UK Hansard corpus-level signals.
-
-        Args:
-            params: PolicyPositionSummaryInput with topic, optional date range, house, max_debates_scanned.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
 
         # Pull corpus-wide envelope counts from /search.json (one call).
-        envelope_qp: dict = {"searchTerm": params.topic}
-        if params.from_date:
-            envelope_qp["startDate"] = params.from_date.isoformat()
-        if params.to_date:
-            envelope_qp["endDate"] = params.to_date.isoformat()
-        if params.house != "both":
-            envelope_qp["house"] = params.house
+        envelope_qp: dict = {"searchTerm": topic}
+        if from_date:
+            envelope_qp["startDate"] = from_date.isoformat()
+        if to_date:
+            envelope_qp["endDate"] = to_date.isoformat()
+        if house != "both":
+            envelope_qp["house"] = house
         envelope_resp = await client.get(f"{HANSARD_API}/search.json", params=envelope_qp)
         envelope_resp.raise_for_status()
         envelope = envelope_resp.json()
@@ -707,7 +548,7 @@ def register_tools(mcp: FastMCP) -> None:
         all_debates: list[dict] = []
         page_size = 50
         skip = 0
-        target = params.max_debates_scanned
+        target = max_debates_scanned
 
         while skip < target:
             take = min(page_size, target - skip)
@@ -742,9 +583,9 @@ def register_tools(mcp: FastMCP) -> None:
             except ValueError:
                 continue
             house_raw = d.get("House") or "Commons"
-            house = house_raw if house_raw in ("Commons", "Lords") else "Commons"
-            section = d.get("DebateSection") or house
-            house_counter[house] += 1
+            house_val = house_raw if house_raw in ("Commons", "Lords") else "Commons"
+            section = d.get("DebateSection") or house_val
+            house_counter[house_val] += 1
             section_counter[section] += 1
             year_counter[sitting_date.year] += 1
             ym_counter[sitting_date.strftime("%Y-%m")] += 1
@@ -755,17 +596,17 @@ def register_tools(mcp: FastMCP) -> None:
                     debate_ext_id=ext_id,
                     debate_title=(d.get("Title") or section or "Unknown").strip(),
                     date=sitting_date,
-                    house=house,
+                    house=house_val,
                     relevance_rank=int(d.get("Rank") or 0),
                 ))
 
         recent_12 = sorted(ym_counter.items(), reverse=True)[:12]
 
         return PolicyPositionSummary(
-            topic=params.topic,
-            from_date=params.from_date,
-            to_date=params.to_date,
-            house=params.house,
+            topic=topic,
+            from_date=from_date,
+            to_date=to_date,
+            house=house,
             total_contributions=int(envelope.get("TotalContributions") or 0),
             total_debates=int(envelope.get("TotalDebates") or 0),
             total_written_statements=int(envelope.get("TotalWrittenStatements") or 0),
@@ -785,7 +626,10 @@ def register_tools(mcp: FastMCP) -> None:
         name="find_member",
         annotations={"title": "Find Member of Parliament", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def parliament_find_member(params: FindMemberInput, ctx: Context) -> MemberSearchResult:
+    async def parliament_find_member(
+        name: Annotated[str, Field(description="Name or partial name, e.g. 'Starmer', 'Baroness Hale'", min_length=2, max_length=200)],
+        ctx: Context,
+    ) -> MemberSearchResult:
         """USE THIS TOOL WHEN you have a member's name and need their integer member_id.
 
         Returns all members matching the name query, each with the integer `id`,
@@ -797,12 +641,9 @@ def register_tools(mcp: FastMCP) -> None:
         parliament_member_interests. Name → ID first; ID-based filtering second.
         Skipping this step and text-searching by name returns unrelated results
         (see parliament_search_hansard's anti-bypass note for the Pannick case).
-
-        Args:
-            params: FindMemberInput with the name (full or partial).
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
-        resp = await client.get(f"{MEMBERS_BASE}/Members/Search", params={"Name": params.name})
+        resp = await client.get(f"{MEMBERS_BASE}/Members/Search", params={"Name": name})
         resp.raise_for_status()
 
         members: list[MemberResult] = []
@@ -818,13 +659,19 @@ def register_tools(mcp: FastMCP) -> None:
                 is_current=v.get("latestHouseMembership", {}).get("membershipStatus", {}).get("statusIsActive", False),
             ))
 
-        return MemberSearchResult(query=params.name, total=len(members), members=members)
+        return MemberSearchResult(query=name, total=len(members), members=members)
 
     @mcp.tool(
         name="member_debates",
         annotations={"title": "Get Member Debates", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def parliament_member_debates(params: MemberDebatesInput, ctx: Context) -> MemberDebatesResult:
+    async def parliament_member_debates(
+        member_id: Annotated[int, Field(description="Parliament Members API integer ID. Obtain from parliament_find_member.", ge=1)],
+        ctx: Context,
+        topic: Annotated[str | None, Field(description="Optional phrase to find in THIS member's contribution text bodies. Hansard searches the words the member actually said, NOT the topic or title of the debate. Pass tokens this member would have spoken — distinctive arguments ('disproportionate sanction'), statutory references ('section 21'), or motion numbers ('Motion C1') — not the bill's name (members rarely say e.g. 'Renters\\' Rights Bill' verbatim in their speeches). If you want 'every contribution this member made in a specific debate' regardless of words used, find the debate_ext_id then use parliament_get_debate_contributions(debate_ext_id, member_id=...).")] = None,
+        offset: Annotated[int, Field(description="Number of contributions to skip before this page. Default 0. Re-call with offset=offset+returned while has_more is true.", ge=0, le=2000)] = 0,
+        limit: Annotated[int, Field(description="Maximum contributions to return. Default 20.", ge=1, le=100)] = 20,
+    ) -> MemberDebatesResult:
         """USE THIS TOOL WHEN you have a member_id and want contributions where THAT member used a specific topic phrase verbatim (text-body search).
 
         CALL parliament_find_member(name) FIRST to obtain the integer member_id.
@@ -837,28 +684,25 @@ def register_tools(mcp: FastMCP) -> None:
         member_id=...) instead.
 
         Each contribution's text field is capped at 3000 characters.
-
-        Args:
-            params: MemberDebatesInput with member_id and optional topic filter.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {
-            "memberId": params.member_id,
-            "take": params.limit,
-            "skip": params.offset,
+            "memberId": member_id,
+            "take": limit,
+            "skip": offset,
         }
-        if params.topic:
-            qp["searchTerm"] = params.topic
+        if topic:
+            qp["searchTerm"] = topic
         resp = await client.get(f"{HANSARD_API}/search.json", params=qp)
         resp.raise_for_status()
         contributions = _parse_hansard_contributions(resp.json())
         return MemberDebatesResult(
-            member_id=params.member_id,
-            topic=params.topic,
-            offset=params.offset,
-            limit=params.limit,
+            member_id=member_id,
+            topic=topic,
+            offset=offset,
+            limit=limit,
             total=len(contributions),
-            has_more=len(contributions) == params.limit,
+            has_more=len(contributions) == limit,
             contributions=contributions,
         )
 
@@ -866,7 +710,14 @@ def register_tools(mcp: FastMCP) -> None:
         name="member_interests",
         annotations={"title": "Get Member Financial Interests", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def parliament_member_interests(params: MemberInterestsInput, ctx: Context) -> MemberInterestsPage:
+    async def parliament_member_interests(
+        member_id: Annotated[int, Field(description="Parliament Members API integer ID. Get from parliament_find_member.", ge=1)],
+        ctx: Context,
+        category: Annotated[Literal["employment", "employment_adhoc", "employment_ongoing", "donations", "gifts_uk", "overseas_visits", "gifts_overseas", "land", "shareholdings", "miscellaneous", "family_employed", "family_lobbying"] | None, Field(description="Filter by interest category. Common categories: 'donations' (donations and support), 'gifts_uk' (gifts/hospitality from UK), 'employment' (employment and earnings), 'land' (land and property), 'shareholdings', 'overseas_visits'. Omit for all categories.")] = None,
+        offset: Annotated[int, Field(description="Number of interests to skip before this page. Default 0 for the first page. To paginate prolific members (100+ interests), re-call with offset=offset+returned while the previous response had has_more=true.", ge=0, le=500)] = 0,
+        limit: Annotated[int, Field(description="Max interests per call. Hard-capped at 20 by the upstream interests-api.parliament.uk (verified live 2026-05-29: Take=100 still returns 20). For prolific members, paginate via offset; total size is in totalResults on the response.", ge=1, le=20)] = 20,
+        max_description_chars: Annotated[int, Field(description="Per-entry cap on the free-text description field. Default 500 prevents context blow-up on members with lengthy donation or directorship narratives. Raise to 2000+ only for forensic provenance work.", ge=50, le=5000)] = 500,
+    ) -> MemberInterestsPage:
         """USE THIS TOOL WHEN you have a member_id and need their registered financial interests (donations, directorships, land, gifts).
 
         CALL parliament_find_member(name) FIRST to obtain the integer member_id.
@@ -879,19 +730,15 @@ def register_tools(mcp: FastMCP) -> None:
 
         This is the authoritative source for UK MP and peer financial-interest
         declarations (via the Members API). Web search returns stale snapshots.
-
-        Args:
-            params: member_id, optional category filter, pagination (offset/limit),
-                and max_description_chars content cap.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {
-            "MemberId": params.member_id,
-            "Skip": params.offset,
-            "Take": params.limit,
+            "MemberId": member_id,
+            "Skip": offset,
+            "Take": limit,
         }
-        if params.category:
-            qp["CategoryId"] = INTEREST_CATEGORIES.get(params.category)
+        if category:
+            qp["CategoryId"] = INTEREST_CATEGORIES.get(category)
 
         resp = await client.get(f"{INTERESTS_BASE}/Interests", params=qp)
         resp.raise_for_status()
@@ -904,8 +751,8 @@ def register_tools(mcp: FastMCP) -> None:
             category_obj = item.get("category", {})
             category_name = category_obj.get("name", "Unknown") if isinstance(category_obj, dict) else str(category_obj)
             desc = item.get("summary", "")
-            if len(desc) > params.max_description_chars:
-                desc = desc[: params.max_description_chars] + " …[truncated]"
+            if len(desc) > max_description_chars:
+                desc = desc[: max_description_chars] + " …[truncated]"
             interests.append(Interest(
                 category=category_name,
                 description=desc,
@@ -914,12 +761,12 @@ def register_tools(mcp: FastMCP) -> None:
             ))
 
         return MemberInterestsPage(
-            member_id=params.member_id,
-            category=params.category,
-            offset=params.offset,
-            limit=params.limit,
+            member_id=member_id,
+            category=category,
+            offset=offset,
+            limit=limit,
             returned=len(interests),
-            has_more=len(items) == params.limit,  # full page → there may be more
+            has_more=len(items) == limit,  # full page → there may be more
             interests=interests,
         )
 
@@ -927,7 +774,13 @@ def register_tools(mcp: FastMCP) -> None:
         name="search_petitions",
         annotations={"title": "Search UK Parliament Petitions", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def parliament_search_petitions(params: PetitionSearchInput, ctx: Context) -> PetitionSearchResult:
+    async def parliament_search_petitions(
+        query: Annotated[str, Field(description="Search term for petition titles, e.g. 'ban trophy hunting' or 'NHS funding'.", min_length=2, max_length=300)],
+        ctx: Context,
+        state: Annotated[Literal["open", "closed", "all"], Field(description="Filter by petition state.")] = "all",
+        offset: Annotated[int, Field(description="Number of petitions to skip before this page. Default 0. Re-call with offset=offset+returned while has_more is true.", ge=0, le=2000)] = 0,
+        limit: Annotated[int, Field(description="Maximum petitions to return. Default 20.", ge=1, le=100)] = 20,
+    ) -> PetitionSearchResult:
         """USE THIS TOOL WHEN searching UK Parliament petitions by keyword or topic.
 
         Returns petition title, state, signature count, and dates for government
@@ -936,16 +789,13 @@ def register_tools(mcp: FastMCP) -> None:
 
         This is the authoritative source for UK Parliament petitions
         (petition.parliament.uk).
-
-        Args:
-            params: PetitionSearchInput with query and optional state filter.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         # petition.parliament.uk uses 1-indexed `page` and a `count` param (page size).
-        page_num = (params.offset // params.limit) + 1
-        qp: dict = {"q": params.query, "count": params.limit, "page": page_num}
-        if params.state != "all":
-            qp["state"] = params.state
+        page_num = (offset // limit) + 1
+        qp: dict = {"q": query, "count": limit, "page": page_num}
+        if state != "all":
+            qp["state"] = state
 
         resp = await client.get(f"{PETITIONS_BASE}/petitions.json", params=qp)
         resp.raise_for_status()
@@ -971,12 +821,12 @@ def register_tools(mcp: FastMCP) -> None:
                 url=f"https://petition.parliament.uk/petitions/{petition_id}",
             ))
         return PetitionSearchResult(
-            query=params.query,
-            state=params.state,
-            offset=params.offset,
-            limit=params.limit,
+            query=query,
+            state=state,
+            offset=offset,
+            limit=limit,
             total=len(petitions),
-            has_more=len(petitions) == params.limit,
+            has_more=len(petitions) == limit,
             petitions=petitions,
         )
 
@@ -984,7 +834,10 @@ def register_tools(mcp: FastMCP) -> None:
         name="get_debate_divisions",
         annotations={"title": "Get Divisions Held In A Debate", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def parliament_get_debate_divisions(params: GetDebateDivisionsInput, ctx: Context) -> DebateDivisions:
+    async def parliament_get_debate_divisions(
+        debate_ext_id: Annotated[str, Field(description="Debate GUID (DebateSectionExtId). Chain from parliament_search_hansard contribution.debate_ext_id, top_debates[].debate_ext_id, or parliament_policy_position_summary top_debates[].debate_ext_id.", min_length=8)],
+        ctx: Context,
+    ) -> DebateDivisions:
         """USE THIS TOOL WHEN you have a debate_ext_id and want the divisions (formal votes) held within it.
 
         Most debates contain no divisions — Business of the House sittings,
@@ -1002,16 +855,11 @@ def register_tools(mcp: FastMCP) -> None:
         Votes-API divisionId=3392). The cross-resolve runs once per (date, house)
         group — typically one extra HTTP per debate. `votes_id` is None when the
         cross-resolve found no match.
-
-        Args:
-            params: GetDebateDivisionsInput with the debate_ext_id GUID
-                (chain from parliament_search_hansard contribution.debate_ext_id
-                or top_debates[].debate_ext_id).
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         try:
             resp = await client.get(
-                f"{HANSARD_API}/debates/divisions/{params.debate_ext_id}.json"
+                f"{HANSARD_API}/debates/divisions/{debate_ext_id}.json"
             )
             resp.raise_for_status()
         except httpx.HTTPError as e:
@@ -1033,7 +881,7 @@ def register_tools(mcp: FastMCP) -> None:
         await _populate_votes_ids(client, divisions)
 
         return DebateDivisions(
-            debate_ext_id=params.debate_ext_id,
+            debate_ext_id=debate_ext_id,
             divisions=divisions,
         )
 
@@ -1042,7 +890,9 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Get Contributions In A Debate", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def parliament_get_debate_contributions(
-        params: GetDebateContributionsInput, ctx: Context
+        debate_ext_id: Annotated[str, Field(description="Debate GUID (DebateSectionExtId). Chain from parliament_search_hansard top_debates[].debate_ext_id, parliament_lookup_by_column matches[].debate_ext_id, or any tool that surfaces a debate identifier.", min_length=8)],
+        ctx: Context,
+        member_id: Annotated[int | None, Field(description="Optional integer Members API ID. When given, only that member's contributions in this debate are returned — regardless of which words they used. Resolves via parliament_find_member. When omitted, every contribution in the debate is returned (typical debate: 100-200 items).", ge=1)] = None,
     ) -> MemberDebatesResult:
         """USE THIS TOOL WHEN you have a debate_ext_id and want verbatim contributions, optionally filtered to one member.
 
@@ -1062,15 +912,11 @@ def register_tools(mcp: FastMCP) -> None:
         If the wire returns no contributions for a member you expect to have
         spoken, report the empty result honestly — do NOT reconstruct quotes
         from training data. Authoritative source for member contributions.
-
-        Args:
-            params: GetDebateContributionsInput with debate_ext_id (required) and
-                optional member_id filter.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         try:
             resp = await client.get(
-                f"{HANSARD_API}/debates/Debate/{params.debate_ext_id}.json"
+                f"{HANSARD_API}/debates/Debate/{debate_ext_id}.json"
             )
             resp.raise_for_status()
         except httpx.HTTPError as e:
@@ -1090,14 +936,14 @@ def register_tools(mcp: FastMCP) -> None:
                 continue
             if not _item_is_contribution(item):
                 continue
-            if params.member_id is not None and item.get("MemberId") != params.member_id:
+            if member_id is not None and item.get("MemberId") != member_id:
                 continue
             parsed = _parse_debate_item_as_contribution(item, overview, column_assignment, idx)
             if parsed is not None:
                 contributions.append(parsed)
 
         return MemberDebatesResult(
-            member_id=params.member_id if params.member_id is not None else 0,
+            member_id=member_id if member_id is not None else 0,
             topic=None,
             offset=0,
             limit=len(contributions),
@@ -1110,7 +956,12 @@ def register_tools(mcp: FastMCP) -> None:
         name="lookup_by_column",
         annotations={"title": "Resolve A Hansard Column Citation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
-    async def parliament_lookup_by_column(params: LookupByColumnInput, ctx: Context) -> ColumnLookupResult:
+    async def parliament_lookup_by_column(
+        column_number: Annotated[str, Field(description="Hansard column number from an OSCOLA footnote, e.g. '200' for 'HL Deb 14 Oct 2025, vol 849, col 200'. String (not integer) to accommodate column suffixes like '1162W' for written answers.", min_length=1, max_length=20)],
+        volume_number: Annotated[int, Field(description="Hansard volume number (the 'vol 849' part of an OSCOLA citation). Required — the endpoint only resolves citations when given the volume; sitting date is NOT a substitute (verified live 2026-05-29).", gt=0)],
+        ctx: Context,
+        house: Annotated[Literal["Commons", "Lords", "both"], Field(description="Restrict to one House. Default 'both' searches across both Houses.")] = "both",
+    ) -> ColumnLookupResult:
         """USE THIS TOOL WHEN you have an OSCOLA-style Hansard citation (column + volume + house) and need the debate.
 
         Example input: 'HL Deb 14 Oct 2025, vol 849, col 200'. AFTER calling, read
@@ -1130,17 +981,14 @@ def register_tools(mcp: FastMCP) -> None:
         It does NOT mean the citation is fabricated — surface the failure.
 
         Authoritative source for OSCOLA Hansard column resolution.
-
-        Args:
-            params: LookupByColumnInput with column_number, volume_number, house.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {
-            "columnNumber": params.column_number,
-            "volumeNumber": params.volume_number,
+            "columnNumber": column_number,
+            "volumeNumber": volume_number,
         }
-        if params.house != "both":
-            qp["house"] = params.house
+        if house != "both":
+            qp["house"] = house
 
         try:
             resp = await client.get(
@@ -1203,9 +1051,9 @@ def register_tools(mcp: FastMCP) -> None:
                 continue
 
         return ColumnLookupResult(
-            column_number=params.column_number,
-            volume_number=params.volume_number,
-            house=params.house,
+            column_number=column_number,
+            volume_number=volume_number,
+            house=house,
             total_results=_safe_int(payload.get("TotalResultCount"), len(matches)),
             matches=matches,
         )

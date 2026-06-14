@@ -160,7 +160,7 @@ async def test_grep_judgment_tool_returns_hits_live():
     async with Client(gateway) as c:
         result = await c.call_tool(
             "case_law_grep_judgment",
-            {"params": {"slug": "uksc/2024/12", "pattern": "appellant", "max_hits": 5}},
+            {"slug": "uksc/2024/12", "pattern": "appellant", "max_hits": 5},
         )
     payload = result.data
     assert payload.slug == "uksc/2024/12"
@@ -179,7 +179,7 @@ async def test_typical_workflow_under_7k_tokens():
         header = await c.read_resource("judgment://uksc/2024/12/header")
         grep = await c.call_tool(
             "case_law_grep_judgment",
-            {"params": {"slug": "uksc/2024/12", "pattern": "regulations", "max_hits": 5}},
+            {"slug": "uksc/2024/12", "pattern": "regulations", "max_hits": 5},
         )
         # Read first 2 hit paragraphs
         para_texts = []

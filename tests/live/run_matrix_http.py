@@ -101,12 +101,12 @@ async def _call(client: Client, tool: str, args: dict) -> dict:
 # the numbers. Tool names here use bridge namespace prefixes.
 SCENARIOS: list[tuple[str, dict]] = [
     # --- legal (uk-legal-mcp) — match uk-legal-mcp/run_matrix.py scenarios ---
-    ("legal_case_law_search", {"params": {"query": "negligence duty of care"}}),
-    ("legal_legislation_search", {"params": {"query": "data protection"}}),
-    ("legal_parliament_search_hansard", {"params": {"query": "climate change net zero"}}),
-    ("legal_parliament_find_member", {"params": {"name": "Starmer"}}),
-    ("legal_bills_search_bills", {"params": {"query": "data protection"}}),
-    ("legal_committees_search_committees", {"params": {"query": "treasury"}}),
+    ("legal_case_law_search", {"query": "negligence duty of care"}),
+    ("legal_legislation_search", {"query": "data protection"}),
+    ("legal_parliament_search_hansard", {"query": "climate change net zero"}),
+    ("legal_parliament_find_member", {"name": "Starmer"}),
+    ("legal_bills_search_bills", {"query": "data protection"}),
+    ("legal_committees_search_committees", {"query": "treasury"}),
 
     # --- due-diligence (uk-due-diligence-mcp) — flat args, json mode ---
     ("duediligence_company_search", {"query": "tesco", "response_format": "json"}),
