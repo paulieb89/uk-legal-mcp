@@ -42,7 +42,8 @@ def register_tools(mcp: FastMCP) -> None:
         house: Annotated[Literal["Commons", "Lords", "Joint"] | None, Field(description="Filter by house.")] = None,
         active_only: Annotated[bool, Field(description="If true, only return currently active committees.")] = True,
         limit: Annotated[int, Field(description="Maximum committees to return. Default 100 comfortably covers all currently-active UK select committees. Raise only for historical sweeps.", ge=1, le=500)] = 100,
-        ctx: Context = None,
+        *,
+        ctx: Context,
     ) -> CommitteeSearchResult:
         """USE THIS TOOL WHEN searching or listing UK parliamentary select committees by name, house, or active status.
 
@@ -94,7 +95,8 @@ def register_tools(mcp: FastMCP) -> None:
     )
     async def committees_get_committee(
         committee_id: Annotated[int, Field(description="Committee ID from committees_search_committees results.", ge=1)],
-        ctx: Context = None,
+        *,
+        ctx: Context,
     ) -> CommitteeDetail:
         """USE THIS TOOL WHEN you have a committee_id and want the metadata + current membership.
 
@@ -155,7 +157,8 @@ def register_tools(mcp: FastMCP) -> None:
         offset: Annotated[int, Field(description="Number of evidence items to skip before this page. Default 0. Re-call with offset=offset+returned while has_more is true.", ge=0, le=2000)] = 0,
         limit: Annotated[int, Field(description="Maximum evidence items to return. Default 20. When evidence_type='both' the limit is split across oral and written (roughly half each).", ge=1, le=100)] = 20,
         max_title_chars: Annotated[int, Field(description="Per-item cap on the free-text title field. Default 300 prevents context blow-up from verbose inquiry titles. Raise to 1000+ only when you need the full title text.", ge=50, le=2000)] = 300,
-        ctx: Context = None,
+        *,
+        ctx: Context,
     ) -> CommitteeEvidencePage:
         """USE THIS TOOL WHEN you have a committee_id and want the oral and written evidence submitted to it.
 

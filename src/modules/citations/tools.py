@@ -192,7 +192,7 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="resolve",
-        annotations={"title": "Resolve Single OSCOLA Citation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+        annotations={"title": "Resolve Single OSCOLA Citation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def citations_resolve(
         citation: Annotated[str, Field(

@@ -87,7 +87,8 @@ def register_tools(mcp: FastMCP) -> None:
         member_id: Annotated[int | None, Field(description="Filter to divisions where this member voted. Get the member ID from parliament_find_member.", ge=1)] = None,
         offset: Annotated[int, Field(description="Number of divisions to skip before this page. Default 0. Re-call with offset=offset+returned while has_more is true.", ge=0, le=2000)] = 0,
         limit: Annotated[int, Field(description="Maximum divisions to return. Default 25 (Commons API max-per-page).", ge=1, le=100)] = 25,
-        ctx: Context = None,
+        *,
+        ctx: Context,
     ) -> DivisionsSearchResult:
         """USE THIS TOOL WHEN searching Commons or Lords formal votes by topic, date, or member.
 
@@ -141,7 +142,8 @@ def register_tools(mcp: FastMCP) -> None:
     async def votes_get_division(
         division_id: Annotated[int, Field(description="Division ID from votes_search_divisions results.", ge=1)],
         house: Annotated[Literal["Commons", "Lords"], Field(description="Which house this division belongs to.")] = "Commons",
-        ctx: Context = None,
+        *,
+        ctx: Context,
     ) -> DivisionDetail:
         """USE THIS TOOL WHEN you have a division_id + house and want the full member-by-member voting record.
 

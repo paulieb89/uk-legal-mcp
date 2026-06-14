@@ -137,7 +137,8 @@ def register_tools(mcp: FastMCP) -> None:
         stage: Annotated[Literal["firstreading", "secondreading", "committee", "report", "thirdreading", "royalassent"] | None, Field(description="Filter by current legislative stage.")] = None,
         offset: Annotated[int, Field(description="Number of results to skip before this page. Default 0 for the first page. Re-call with offset=offset+returned while has_more is true to paginate.", ge=0, le=2000)] = 0,
         limit: Annotated[int, Field(description="Maximum bills to return in this call. Default 20 keeps responses focused; raise up to 100 for bulk exports.", ge=1, le=100)] = 20,
-        ctx: Context = None,
+        *,
+        ctx: Context,
     ) -> BillSearchResult:
         """USE THIS TOOL WHEN searching UK parliamentary bills by keyword, session, house, or legislative stage.
 
@@ -191,7 +192,8 @@ def register_tools(mcp: FastMCP) -> None:
     async def bills_get_bill(
         bill_id: Annotated[int, Field(description="Bill ID from bills_search_bills results.", ge=1)],
         max_summary_chars: Annotated[int, Field(description="Maximum characters of the bill summary text to return. Default 5,000 (~1,250 tokens) covers most bills. Raise for substantive government bills (Finance Act, Levelling-up) whose summary runs longer. Check summary_truncated in the response to see if it was cut.", ge=500, le=50000)] = 5000,
-        ctx: Context = None,
+        *,
+        ctx: Context,
     ) -> BillDetail:
         """USE THIS TOOL WHEN you have a bill_id (from bills_search_bills) and want the full detail.
 
