@@ -2,7 +2,7 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
-## [Unreleased]
+## [0.6.0] — 2026-06-15
 
 ### Added
 
