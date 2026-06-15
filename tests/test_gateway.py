@@ -111,6 +111,83 @@ class TestResources:
 # ---------------------------------------------------------------------------
 
 
+class TestFormatOscolaTools:
+    @pytest.mark.asyncio
+    async def test_format_neutral_uksc(self, client: Client):
+        result = await client.call_tool(
+            "citations_format_oscola",
+            {"citation_type": "neutral", "confidence": 1.0, "resolved_url": "https://caselaw.nationalarchives.gov.uk/uksc/2024/12", "year": 2024, "court": "UKSC", "number": 12},
+        )
+        assert not result.is_error
+        assert result.data["status"] == "ok"
+        assert result.data["oscola"] == "[2024] UKSC 12"
+
+    @pytest.mark.asyncio
+    async def test_format_neutral_ewca_civ(self, client: Client):
+        result = await client.call_tool(
+            "citations_format_oscola",
+            {"citation_type": "neutral", "confidence": 1.0, "resolved_url": "https://caselaw.nationalarchives.gov.uk/ewca/civ/2023/450", "year": 2023, "court": "EWCA CIV", "number": 450},
+        )
+        assert not result.is_error
+        assert result.data["oscola"] == "[2023] EWCA Civ 450"
+
+    @pytest.mark.asyncio
+    async def test_format_law_report_with_volume(self, client: Client):
+        result = await client.call_tool(
+            "citations_format_oscola",
+            {"citation_type": "law_report", "confidence": 0.9, "year": 2024, "report_series": "WLR", "volume": 1, "page": 100},
+        )
+        assert not result.is_error
+        assert result.data["oscola"] == "[2024] 1 WLR 100"
+
+    @pytest.mark.asyncio
+    async def test_format_law_report_without_volume(self, client: Client):
+        result = await client.call_tool(
+            "citations_format_oscola",
+            {"citation_type": "law_report", "confidence": 0.9, "year": 1932, "report_series": "AC", "page": 562},
+        )
+        assert not result.is_error
+        assert result.data["oscola"] == "[1932] AC 562"
+
+    @pytest.mark.asyncio
+    async def test_format_legislation(self, client: Client):
+        result = await client.call_tool(
+            "citations_format_oscola",
+            {"citation_type": "legislation", "confidence": 0.95, "section": "47", "legislation_title": "Companies Act 2006"},
+        )
+        assert not result.is_error
+        assert result.data["oscola"] == "s.47 Companies Act 2006"
+
+    @pytest.mark.asyncio
+    async def test_format_si(self, client: Client):
+        result = await client.call_tool(
+            "citations_format_oscola",
+            {"citation_type": "si", "confidence": 1.0, "si_year": 2018, "si_number": 1234},
+        )
+        assert not result.is_error
+        assert result.data["oscola"] == "SI 2018/1234"
+
+    @pytest.mark.asyncio
+    async def test_refuses_confidence_zero(self, client: Client):
+        result = await client.call_tool(
+            "citations_format_oscola",
+            {"citation_type": "neutral", "confidence": 0.0, "resolved_url": "https://caselaw.nationalarchives.gov.uk/ewca/civ/2022/9999", "year": 2022, "court": "EWCA CIV", "number": 9999},
+        )
+        assert not result.is_error
+        assert result.data["status"] == "upstream_validation"
+        assert "confidence 0.0" in result.data["detail"]
+
+    @pytest.mark.asyncio
+    async def test_refuses_neutral_without_resolved_url(self, client: Client):
+        result = await client.call_tool(
+            "citations_format_oscola",
+            {"citation_type": "neutral", "confidence": 0.5, "resolved_url": None, "year": 2024, "court": "EWHC", "number": 100},
+        )
+        assert not result.is_error
+        assert result.data["status"] == "upstream_validation"
+        assert "resolved_url" in result.data["detail"]
+
+
 class TestCitationTools:
     @pytest.mark.asyncio
     async def test_citations_parse(self, client: Client):

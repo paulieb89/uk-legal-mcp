@@ -8,7 +8,7 @@ This is the primary differentiator of uk-legal-mcp.
 import json
 import re
 import time
-from typing import Annotated
+from typing import Annotated, Literal
 
 import httpx
 from fastmcp import FastMCP, Context
@@ -25,6 +25,56 @@ from .patterns import (
     resolve_legislation,
     TNA_BASE,
 )
+
+
+# ---------------------------------------------------------------------------
+# OSCOLA formatting helpers
+# ---------------------------------------------------------------------------
+
+_COURT_DISPLAY: dict[str, str] = {
+    "UKSC": "UKSC", "UKPC": "UKPC",
+    "EWCA CIV": "EWCA Civ", "EWCA CRIM": "EWCA Crim",
+    "EWHC": "EWHC",
+    "EWHC (KB)": "EWHC (KB)", "EWHC (CH)": "EWHC (Ch)",
+    "EWHC (COMM)": "EWHC (Comm)", "EWHC (FAM)": "EWHC (Fam)",
+    "EWHC (PAT)": "EWHC (Pat)", "EWHC (IPEC)": "EWHC (IPEC)",
+    "EWHC (ADMIN)": "EWHC (Admin)", "EWHC (TCC)": "EWHC (TCC)",
+    "EWHC (COSTS)": "EWHC (Costs)",
+    "UKUT": "UKUT",
+    "UKUT (IAC)": "UKUT (IAC)", "UKUT (TCC)": "UKUT (TCC)",
+    "UKUT (AAC)": "UKUT (AAC)", "UKUT (LC)": "UKUT (LC)",
+    "EAT": "EAT",
+    "UKFTT (TC)": "UKFTT (TC)", "UKFTT (GRC)": "UKFTT (GRC)",
+}
+
+
+def _build_oscola(
+    citation_type: str,
+    year: int | None,
+    court: str | None,
+    number: int | None,
+    report_series: str | None,
+    volume: int | None,
+    page: int | None,
+    legislation_title: str | None,
+    section: str | None,
+    si_year: int | None,
+    si_number: int | None,
+    raw: str | None,
+) -> str:
+    if citation_type == "neutral":
+        display = _COURT_DISPLAY.get(court or "", court or "")
+        return f"[{year}] {display} {number}"
+    if citation_type == "law_report":
+        if volume:
+            return f"[{year}] {volume} {report_series} {page}"
+        return f"[{year}] {report_series} {page}"
+    if citation_type == "legislation":
+        return f"s.{section} {legislation_title}"
+    if citation_type == "si":
+        return f"SI {si_year}/{si_number}"
+    # eu_retained and unknown — raw text is the authoritative form
+    return raw or ""
 
 
 # ---------------------------------------------------------------------------
@@ -303,3 +353,113 @@ def register_tools(mcp: FastMCP) -> None:
             **buckets,
             total_citations=sum(len(v) for v in buckets.values()),
         )
+
+    @mcp.tool(
+        name="format_oscola",
+        annotations={"title": "Format OSCOLA Citation String", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    )
+    async def citations_format_oscola(
+        citation_type: Annotated[
+            Literal["neutral", "law_report", "legislation", "si", "eu_retained"],
+            Field(description="'type' field from citations_resolve result."),
+        ],
+        confidence: Annotated[
+            float,
+            Field(
+                description=(
+                    "'confidence' from citations_resolve. Refuses to format if 0.0 — "
+                    "that means TNA confirmed the document does not exist. Pass only "
+                    "the value citations_resolve returned; do not guess."
+                ),
+                ge=0.0,
+                le=1.0,
+            ),
+        ],
+        resolved_url: Annotated[
+            str | None,
+            Field(description="'resolved_url' from citations_resolve. Must be non-null for neutral citations."),
+        ] = None,
+        year: Annotated[int | None, Field(description="'year' from citations_resolve.")] = None,
+        court: Annotated[str | None, Field(description="'court' from citations_resolve, e.g. 'UKSC', 'EWCA CIV', 'EWHC (KB)'.")] = None,
+        number: Annotated[int | None, Field(description="'number' from citations_resolve (judgment number within the year).")] = None,
+        report_series: Annotated[str | None, Field(description="'report_series' from citations_resolve, e.g. 'WLR', 'AC', 'QB'.")] = None,
+        volume: Annotated[int | None, Field(description="'volume' from citations_resolve (law report volume, if any).")] = None,
+        page: Annotated[int | None, Field(description="'page' from citations_resolve (starting page in the law report).")] = None,
+        legislation_title: Annotated[str | None, Field(description="'legislation_title' from citations_resolve, e.g. 'Companies Act 2006'.")] = None,
+        section: Annotated[str | None, Field(description="'section' from citations_resolve, e.g. '47', '12', '20A'.")] = None,
+        si_year: Annotated[int | None, Field(description="'si_year' from citations_resolve.")] = None,
+        si_number: Annotated[int | None, Field(description="'si_number' from citations_resolve.")] = None,
+        raw: Annotated[str | None, Field(description="'raw' from citations_resolve. Used as-is for EU retained law — the original text preserves the Regulation/Directive distinction.")] = None,
+    ) -> dict:
+        """USE THIS TOOL AFTER citations_resolve to produce the correctly formatted OSCOLA citation string.
+
+        Pass the parsed fields returned by citations_resolve directly into this
+        tool. Formats per OSCOLA 4th edition rules for each citation type.
+
+        Refuses (status: upstream_validation) if confidence is 0.0 — TNA confirmed
+        the document does not exist — or if a neutral citation has no resolved_url
+        (ambiguous court code, e.g. bare EWHC without a division). In either case,
+        do NOT manufacture a citation; surface the failure and ask the user for
+        the source URL or better identifying details.
+
+        DO NOT construct the input fields yourself. The structured input must come
+        from citations_resolve — guessing fields is the primary citation-fabrication
+        route and this tool is the guard against it.
+
+        Authoritative OSCOLA formatting for UK legal citations (no network call).
+        """
+        if confidence == 0.0:
+            return {
+                "status": "upstream_validation",
+                "detail": (
+                    "Cannot format: citations_resolve returned confidence 0.0 — "
+                    "TNA confirmed this judgment does not exist at the resolved URL. "
+                    "Do not manufacture a citation. Ask the user for the source URL "
+                    "or better identifying details."
+                ),
+                "is_retryable": False,
+            }
+
+        if citation_type == "neutral" and resolved_url is None:
+            return {
+                "status": "upstream_validation",
+                "detail": (
+                    "Cannot format: neutral citation has no resolved_url — the court "
+                    "code is ambiguous or unsupported (e.g. bare EWHC without a "
+                    "division). Call citations_resolve with disambiguate=True or ask "
+                    "the user for the full citation including the division."
+                ),
+                "is_retryable": False,
+            }
+
+        try:
+            if citation_type == "neutral" and not all([year, court, number]):
+                raise ValueError("Neutral citation requires year, court, and number.")
+            if citation_type == "law_report" and not all([year, report_series, page]):
+                raise ValueError("Law report citation requires year, report_series, and page.")
+            if citation_type == "legislation" and not all([section, legislation_title]):
+                raise ValueError("Legislation citation requires section and legislation_title.")
+            if citation_type == "si" and not all([si_year, si_number]):
+                raise ValueError("SI citation requires si_year and si_number.")
+            if citation_type == "eu_retained" and not raw:
+                raise ValueError("EU retained law citation requires the raw field.")
+
+            oscola = _build_oscola(
+                citation_type, year, court, number,
+                report_series, volume, page,
+                legislation_title, section,
+                si_year, si_number, raw,
+            )
+        except ValueError as exc:
+            return {
+                "status": "upstream_validation",
+                "detail": str(exc),
+                "is_retryable": False,
+            }
+
+        return {
+            "status": "ok",
+            "oscola": oscola,
+            "citation_type": citation_type,
+            "resolved_url": resolved_url,
+        }
