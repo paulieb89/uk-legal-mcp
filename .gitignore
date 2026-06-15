@@ -25,3 +25,11 @@ references/
 
 # Internal working notes — never committed. Public docs live directly in docs/.
 docs/internal/
+
+# Eval/session artefacts
+*.html
+*.png
+writing-mcp-tools-review.html
+eval-review-top.png
+*-workspace/
+.playwright-mcp/

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "uk-legal-mcp"
-version = "0.5.1"
+version = "0.6.0"
 description = "UK legal research MCP server — case law, legislation, parliament, bills, votes, committees, citations, HMRC"
 readme = "README.md"
 license = "MIT"
@@ -79,7 +79,7 @@ dev = [
 ]
 
 [tool.bumpversion]
-current_version = "0.5.1"
+current_version = "0.6.0"
 commit = false
 tag = false
 allow_dirty = true

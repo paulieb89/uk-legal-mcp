@@ -2,9 +2,37 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
-## [Unreleased] — 0.5.1 (patch)
+## [Unreleased]
 
-Patch on top of 0.5.0. No new tools, no API changes. Two findings from an external review + four backlog items. Verified on a throwaway staging deploy (`uk-legal-mcp-staging.fly.dev`, since destroyed) via ChatGPT dogfeed and via Claude Code as a native client; production not yet updated.
+### Added
+
+- **`citations_format_oscola` tool** — converts a resolved citation (output of `citations_resolve`) into a correctly-formatted OSCOLA 4th edition citation string. Handles neutral citations, law reports (with/without volume), legislation section references, and SIs. Refuses if `confidence == 0.0` or a neutral citation has no `resolved_url`. Offline/regex only; `openWorldHint=False`.
+- **`limit` parameter on `case_law_search`** — default 10, max 50. Prevents context blow-up on broad searches and lets callers tune depth.
+- **Limit parameters on `legislation_search` and HMRC module** — matching the case_law pattern.
+- **Gateway integration test suite** (`tests/test_gateway.py`) — in-process FastMCP client tests covering server identity, tool listing, schema validity, companion tool registration, resource templates, offline citation execution, and custom HTTP routes (`/health`, `/metrics`, `/.well-known/*`). No live API calls.
+
+### Changed
+
+- **FastMCP v3 inline `Annotated` params** — all tool inputs migrated from Pydantic `BaseModel` to `Annotated[T, Field(...)]` inline parameters, matching the FastMCP v3 canonical pattern.
+
+### Fixed
+
+- **`ctx` keyword-only pattern** — 7 tool functions across `bills`, `committees`, and `votes` were using `ctx: Context = None` default; corrected to `*, ctx: Context` keyword-only injection.
+- **`citations_resolve` `openWorldHint`** — was `False`; corrected to `True` (the tool performs a live HTTP HEAD request against TNA to verify judgment existence).
+- **Six field-mapping bugs in parliament module** — found by live wire-probing; fixes include Hansard `Overview.Source` enum, debate `ContentHtml` mapping, division ID cross-resolution, member API field names, and petition date fields.
+- **Fake neutral citation detection** — `citations_resolve` HEAD check now returns `confidence=0.0` for citations that parse correctly but resolve to a 404, preventing fabricated neutral citations from slipping through as verified.
+- **Welsh Atom title span wrapper** — `legislation_search` recursive findall for span elements under a div wrapper in Welsh-language Atom entries.
+- **Regnal year IDs in `legislation_search`** — corrected ID extraction for Acts using regnal-year identifiers (e.g. `ukpga/Geo6/...`).
+
+### Chore
+
+- Removed `TODO.md` and `AGENTS.md` from the repository (contained personal session notes and account details not suitable for a public repo).
+- Updated `.gitignore` to cover eval artefacts, `.claude/`, and internal doc trees.
+- CI release actions bumped to Node 24.
+
+## [0.5.1] — 2026-05-30
+
+Patch on top of 0.5.0. No new tools, no API changes. Two findings from an external review + four backlog items. Verified on a throwaway staging deploy (since destroyed) via ChatGPT dogfeed and via Claude Code as a native client.
 
 ### Changed
 
@@ -22,9 +50,9 @@ Patch on top of 0.5.0. No new tools, no API changes. Two findings from an extern
 - **`list_resources` empty on ChatGPT (backlog v1.2-11) — diagnosed, kept.** Server is healthy (emits the full 3635-char catalog, `200 OK`, `status=ok`); ChatGPT receives ~1 token because its MCP client cannot consume `ResourcesAsTools`' double-encoded `{result:"<json>"}` shape. **Claude Code (native+tool client) consumes the identical output perfectly** and relies on the bridge as the only surface that discovers the 8 resource templates (native `resources/list` returns static resources only). **Decision: keep the bridges** — they are load-bearing for native-tool clients (Claude Code, Codex); ChatGPT's limitation is non-blocking (it succeeds via the named twin tools). Optional additive follow-up (0.6.0): a clean named catalog tool for ChatGPT discovery.
 - **Staging dogfeed (ChatGPT, 5 unprimed prompts, 2026-05-30):** Miller OSCOLA, Lord Hope / Hereditary Peers Bill (6 contributions), Smith v HMRC (`[2026] UKFTT 00663 (TC)`), Pet Abduction, Online Safety Act both-sides — all produced correct, cited, honestly-hedged answers. `/metrics` showed every domain tool `status=ok`, zero errors.
 
-## [Unreleased] — 0.5.0 (post-hardening)
+## [0.5.0] — 2026-05-30
 
-Released to production at `uk-legal-mcp.fly.dev` on 2026-05-30. No git tag yet (deferred pending production dogfeed soak).
+Released to production at `uk-legal-mcp.fly.dev` on 2026-05-30.
 
 ### Added
 
