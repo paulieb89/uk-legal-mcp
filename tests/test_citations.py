@@ -5,7 +5,17 @@ The citations module is fully self-contained (no external API),
 making it the most thoroughly unit-testable module in the server.
 """
 
+import asyncio
+import json
+
+import httpx
 import pytest
+import pytest_asyncio
+from fastmcp import Client
+from fastmcp.exceptions import ToolError
+from unittest.mock import AsyncMock, MagicMock
+
+from src.gateway import gateway
 from src.modules.citations.patterns import (
     _compile_patterns,
     court_is_ambiguous,
@@ -14,7 +24,7 @@ from src.modules.citations.patterns import (
     AMBIGUOUS_COURTS,
 )
 from src.modules.citations.models import CitationType
-from src.modules.citations.tools import _extract_all_citations
+from src.modules.citations.tools import _extract_all_citations, _tna_head_check
 
 
 # ---------------------------------------------------------------------------
@@ -244,3 +254,112 @@ def test_no_duplicate_spans_in_mixed_text():
     # Raw citation strings should be unique (no overlapping matches)
     raws = [c.raw for c in all_citations]
     assert len(raws) == len(set(raws)), f"Duplicate citations found: {raws}"
+
+
+# ---------------------------------------------------------------------------
+# TNA HEAD check helper — unit tests (mocked HTTP, no network)
+# ---------------------------------------------------------------------------
+
+TNA_URL = "https://caselaw.nationalarchives.gov.uk/uksc/2024/12"
+
+
+def _mock_resp(status_code: int) -> MagicMock:
+    r = MagicMock()
+    r.status_code = status_code
+    return r
+
+
+def _mock_client(*, response=None, raises=None) -> MagicMock:
+    client = MagicMock()
+    if raises is not None:
+        client.head = AsyncMock(side_effect=raises)
+    else:
+        client.head = AsyncMock(return_value=response)
+    return client
+
+
+@pytest.fixture(autouse=True)
+def _no_sleep(monkeypatch):
+    """Patch asyncio.sleep so retry tests don't add real delay."""
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+
+
+class TestTnaHeadCheck:
+    @pytest.mark.asyncio
+    async def test_200_returns_none(self):
+        """TNA present — helper returns None (caller leaves confidence unchanged)."""
+        client = _mock_client(response=_mock_resp(200))
+        assert await _tna_head_check(client, TNA_URL) is None
+
+    @pytest.mark.asyncio
+    async def test_200_uses_short_timeout(self):
+        """Per-request timeout must be 3.0s — pins the latency fix."""
+        client = _mock_client(response=_mock_resp(200))
+        await _tna_head_check(client, TNA_URL)
+        client.head.assert_awaited_once_with(TNA_URL, timeout=3.0)
+
+    @pytest.mark.asyncio
+    async def test_non_200_returns_zero(self):
+        """TNA confirmed absent (non-200) — helper returns 0.0."""
+        client = _mock_client(response=_mock_resp(404))
+        assert await _tna_head_check(client, TNA_URL) == 0.0
+
+    @pytest.mark.asyncio
+    async def test_transport_error_raises_tool_error_after_retry(self):
+        """Transport failure on both attempts — raises ToolError (masking-safe), retried once."""
+        client = _mock_client(raises=httpx.ConnectError("refused"))
+        with pytest.raises(ToolError) as exc_info:
+            await _tna_head_check(client, TNA_URL)
+        assert client.head.await_count == 2  # initial + 1 retry
+        payload = json.loads(str(exc_info.value))
+        assert payload["error_category"] == "transient"
+        assert payload["is_retryable"] is True
+
+    @pytest.mark.asyncio
+    async def test_transport_error_never_returns_zero(self):
+        """Transport failure must raise, never return 0.0 — conflation guard."""
+        client = _mock_client(raises=httpx.TimeoutException("timeout"))
+        with pytest.raises(ToolError):
+            await _tna_head_check(client, TNA_URL)
+
+    @pytest.mark.asyncio
+    async def test_recovers_on_second_attempt(self):
+        """First attempt fails, second succeeds — returns None (citation present)."""
+        client = _mock_client()
+        client.head = AsyncMock(side_effect=[httpx.ConnectError("blip"), _mock_resp(200)])
+        assert await _tna_head_check(client, TNA_URL) is None
+        assert client.head.await_count == 2
+
+
+# ---------------------------------------------------------------------------
+# format_oscola guard — integration test (in-process FastMCP client, no network)
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture
+async def gw_client():
+    async with Client(gateway) as c:
+        yield c
+
+
+class TestFormatOscolaGuard:
+    @pytest.mark.asyncio
+    async def test_confidence_zero_is_refused(self, gw_client: Client):
+        """Confirmed-absent (confidence 0.0) must always produce upstream_validation.
+
+        This is the anti-fabrication guard. After the _tna_head_check fix,
+        confidence 0.0 exclusively means TNA reached + non-200 — the refusal
+        message is accurate and the guard must remain intact.
+        """
+        result = await gw_client.call_tool(
+            "citations_format_oscola",
+            {
+                "citation_type": "neutral",
+                "confidence": 0.0,
+                "resolved_url": "https://caselaw.nationalarchives.gov.uk/uksc/2099/999",
+                "year": 2099,
+                "court": "UKSC",
+                "number": 999,
+            },
+        )
+        assert result.data["status"] == "upstream_validation"
+        assert result.data["is_retryable"] is False

@@ -5,6 +5,7 @@ Fully self-contained: no external API. Pure Python regex + optional LLM sampling
 This is the primary differentiator of uk-legal-mcp.
 """
 
+import asyncio
 import json
 import re
 import time
@@ -12,6 +13,7 @@ from typing import Annotated, Literal
 
 import httpx
 from fastmcp import FastMCP, Context
+from fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from ...deps import format_http_error
@@ -173,6 +175,36 @@ async def _disambiguate_citation(ctx: Context, citation: ParsedCitation) -> Pars
 
 
 # ---------------------------------------------------------------------------
+# TNA existence check helper
+# ---------------------------------------------------------------------------
+
+async def _tna_head_check(client: httpx.AsyncClient, url: str) -> float | None:
+    """Verify a neutral citation against TNA Find Case Law.
+
+    Returns 0.0 if TNA was reached and confirmed the document absent (non-200).
+    Returns None if TNA confirmed it present (200) — caller leaves confidence unchanged.
+    Raises ToolError with error_category/is_retryable/message on transport failure
+    after one retry (~6.5s worst case with 3s per-request timeout).
+    Non-transport exceptions propagate fail-loud.
+    """
+    last_exc: httpx.TransportError | None = None
+    for attempt in range(2):
+        try:
+            resp = await client.head(url, timeout=3.0)
+            return 0.0 if resp.status_code != 200 else None
+        except httpx.TransportError as exc:
+            last_exc = exc
+            if attempt == 0:
+                await asyncio.sleep(0.5)
+    assert last_exc is not None
+    raise ToolError(json.dumps({
+        "error_category": "transient",
+        "is_retryable": True,
+        "message": format_http_error(last_exc),
+    })) from last_exc
+
+
+# ---------------------------------------------------------------------------
 # Tool registration
 # ---------------------------------------------------------------------------
 
@@ -265,6 +297,12 @@ def register_tools(mcp: FastMCP) -> None:
         a citation with confidence 0.0 as verified; surface the failure and ask
         the user for the source URL or better identifying details.
 
+        If the TNA HEAD check fails due to a network error (timeout, connection
+        failure, protocol error), raises ToolError with JSON content
+        {"error_category": "transient", "is_retryable": true, "message": "..."}.
+        One retry is attempted before raising. The citation parsed successfully —
+        retry this call or proceed without TNA verification.
+
         Formatting a citation from "known" fields (year, court, number) without
         prior resolution is the most common citation-fabrication route — the
         formatter accepts whatever you give it and produces plausible-looking
@@ -288,12 +326,9 @@ def register_tools(mcp: FastMCP) -> None:
         # is not the same as the judgment existing at that URL.
         if parsed.resolved_url and parsed.type == CitationType.NEUTRAL:
             client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            try:
-                resp = await client.head(parsed.resolved_url)
-                if resp.status_code != 200:
-                    parsed = parsed.model_copy(update={"confidence": 0.0})
-            except Exception:
-                parsed = parsed.model_copy(update={"confidence": 0.0})
+            new_confidence = await _tna_head_check(client, parsed.resolved_url)
+            if new_confidence is not None:
+                parsed = parsed.model_copy(update={"confidence": new_confidence})
 
         return parsed
 
