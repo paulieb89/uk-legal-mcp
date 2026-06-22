@@ -16,7 +16,6 @@ from fastmcp import FastMCP, Context
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
-from ...deps import format_http_error
 from .models import CitationNetwork, CitationParseResult, CitationType, ParsedCitation
 from .patterns import (
     _compile_patterns,
@@ -187,21 +186,18 @@ async def _tna_head_check(client: httpx.AsyncClient, url: str) -> float | None:
     after one retry (~6.5s worst case with 3s per-request timeout).
     Non-transport exceptions propagate fail-loud.
     """
-    last_exc: httpx.TransportError | None = None
     for attempt in range(2):
         try:
             resp = await client.head(url, timeout=3.0)
             return 0.0 if resp.status_code != 200 else None
         except httpx.TransportError as exc:
-            last_exc = exc
-            if attempt == 0:
-                await asyncio.sleep(0.5)
-    assert last_exc is not None
-    raise ToolError(json.dumps({
-        "error_category": "transient",
-        "is_retryable": True,
-        "message": format_http_error(last_exc),
-    })) from last_exc
+            if attempt == 1:
+                raise ToolError(json.dumps({
+                    "error_category": "transient",
+                    "is_retryable": True,
+                    "message": f"TNA verification failed after retry ({type(exc).__name__}).",
+                })) from exc
+            await asyncio.sleep(0.5)
 
 
 # ---------------------------------------------------------------------------
