@@ -8,6 +8,7 @@ integrity, and offline tool execution without hitting any live APIs.
 import pytest
 import pytest_asyncio
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 
 from src.gateway import gateway, _PROJECT_VERSION
 
@@ -221,6 +222,35 @@ class TestCitationTools:
         )
         # resolved_url is preserved so the caller can see what was attempted
         assert result.data.resolved_url is not None
+
+
+# ---------------------------------------------------------------------------
+# HMRC tools (offline — no live API)
+# ---------------------------------------------------------------------------
+
+
+class TestHmrcTools:
+    @pytest.mark.asyncio
+    async def test_check_mtd_status_missing_credentials_raises_tool_error(
+        self, client: Client, monkeypatch
+    ):
+        """ToolError (not RuntimeError) must be raised when HMRC credentials are absent.
+
+        RuntimeError causes FastMCP to double-wrap the message as
+        "Internal error: Error calling tool '<name>': <original>".
+        ToolError surfaces the original message directly (no inner
+        "Error calling tool" re-wrap). Assert the clean form.
+        """
+        monkeypatch.delenv("HMRC_CLIENT_ID", raising=False)
+        monkeypatch.delenv("HMRC_CLIENT_SECRET", raising=False)
+        with pytest.raises(ToolError) as exc_info:
+            await client.call_tool("hmrc_check_mtd_status", {"vrn": "123456789"})
+        msg = str(exc_info.value)
+        assert "HMRC OAuth credentials not configured" in msg
+        assert "Error calling tool" not in msg, (
+            "RuntimeError was raised instead of ToolError — message contains double-wrap "
+            f"'Error calling tool ...:'. Got: {msg!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

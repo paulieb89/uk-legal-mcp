@@ -12,6 +12,7 @@ from typing import Annotated
 
 import httpx
 from fastmcp import FastMCP, Context
+from fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from ...deps import format_http_error
@@ -119,7 +120,7 @@ def register_tools(mcp: FastMCP) -> None:
         client_id = os.getenv("HMRC_CLIENT_ID")
         client_secret = os.getenv("HMRC_CLIENT_SECRET")
         if not client_id or not client_secret:
-            raise RuntimeError(
+            raise ToolError(
                 "HMRC OAuth credentials not configured. "
                 "Set HMRC_CLIENT_ID and HMRC_CLIENT_SECRET. "
                 "Register at https://developer.service.hmrc.gov.uk"
