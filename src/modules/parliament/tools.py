@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 
 import httpx
 from fastmcp import FastMCP, Context
+from fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from collections import Counter
@@ -865,7 +866,7 @@ def register_tools(mcp: FastMCP) -> None:
         except httpx.HTTPError as e:
             # Surface the error; an empty array is the normal "no divisions" case,
             # whereas an HTTP error means we couldn't reach upstream.
-            raise RuntimeError(format_http_error(e)) from e
+            raise ToolError(format_http_error(e)) from e
 
         items = resp.json()
         if not isinstance(items, list):
@@ -920,7 +921,7 @@ def register_tools(mcp: FastMCP) -> None:
             )
             resp.raise_for_status()
         except httpx.HTTPError as e:
-            raise RuntimeError(format_http_error(e)) from e
+            raise ToolError(format_http_error(e)) from e
 
         payload = resp.json() if resp.content else {}
         overview = payload.get("Overview") or {}
@@ -997,7 +998,7 @@ def register_tools(mcp: FastMCP) -> None:
             )
             resp.raise_for_status()
         except httpx.HTTPError as e:
-            raise RuntimeError(format_http_error(e)) from e
+            raise ToolError(format_http_error(e)) from e
 
         payload = resp.json() if resp.content else {}
         results = payload.get("Results") or []

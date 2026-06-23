@@ -27,8 +27,8 @@ so the envelope is most useful for:
      suitable for metric labels
   3. future tool-side adoption if v1 ever moves to dict-returning tools
 
-`format_http_error()` in `deps.py` retains its string return for back-compat
-with existing `raise RuntimeError(format_http_error(e))` callsites.
+`format_http_error()` in `deps.py` returns a string consumed by
+`raise ToolError(format_http_error(e))` callsites.
 """
 
 from __future__ import annotations
