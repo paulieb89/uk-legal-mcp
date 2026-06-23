@@ -145,6 +145,43 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 - The "not listening on expected address" warning during rolling deploy is transient — the machine reaches good state immediately after.
 - Secrets are set via `fly secrets set` and persist across deploys.
 
+## Agent layer (.claude/)
+
+The `.claude/` directory is the local agent configuration. It is committed to the repo.
+
+### Start of every session
+Run `/audit` before any implementation work. It runs the compile check, non-live test suite,
+description conformance audit, and parliament param/response audits. If any check is FAIL, fix it first.
+
+### Rules (path-scoped, loaded on demand)
+`.claude/rules/` files activate when Claude edits files matching their `paths:` glob.
+They are NOT loaded unless the relevant files are in scope — they don't bloat every prompt.
+
+| Rule file          | Activates on                              | Covers                                          |
+|--------------------|-------------------------------------------|-------------------------------------------------|
+| `error-handling.md`| `src/**/*.py`                             | Envelope statuses, ToolError, httpx hierarchy   |
+| `tools.md`         | `src/modules/**/*.py`                     | 4-part description, input models, annotations   |
+| `citations.md`     | `src/modules/citations/**`                | OSCOLA forms, resolve→format order, open issue  |
+| `parliament.md`    | `src/modules/parliament/**`               | API endpoint, hard caps, Swagger honesty        |
+| `gateway.md`       | `src/gateway.py`, `src/deps.py`           | Lifespan, client selection, middleware order    |
+
+### Commands
+| Command    | Purpose                                                         |
+|------------|----------------------------------------------------------------|
+| `/audit`   | Full conformance check — run before starting work              |
+| `/probe`   | Live smoke probe against the deployed server (or local gateway)|
+| `/new-tool`| Guided tool authoring checklist for a new tool                 |
+| `/bug`     | Incident → test → invariant flywheel for fixing bugs           |
+
+### Hooks (deterministic, not prompt-guidance)
+`.claude/hooks/post_edit_check.py` fires on every Write/Edit/MultiEdit:
+1. `py_compile` on the changed file — syntax errors surface immediately
+2. `uv run pytest -m "not live" -q` if the file is in `src/` or `tests/`
+
+`.claude/hooks/session_start.py` fires at session start — prints orientation reminder.
+
+Hooks are exit-0 feedback hooks (not blockers) — failures appear in Claude's context for self-correction.
+
 ## Style
 
 - No comments on obvious code. No docstrings on internal helpers unless the logic is non-obvious.

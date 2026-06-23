@@ -1,0 +1,46 @@
+{
+  "_note": "Copy to settings.json and run: sed -i 's|$PROJECT_ROOT|'\"$(pwd)\"'|g' .claude/settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest*)",
+      "Bash(uv run python*)",
+      "Bash(python -m pytest*)",
+      "Bash(python -m py_compile*)",
+      "Bash(python3 -m py_compile*)",
+      "Bash(fly deploy*)",
+      "Bash(fly logs*)",
+      "Bash(fly status*)",
+      "Bash(fly secrets*)",
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push*)"
+    ],
+    "deny": []
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$PROJECT_ROOT/.claude/hooks/post_edit_check.py"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$PROJECT_ROOT/.claude/hooks/session_start.py"
+          }
+        ]
+      }
+    ]
+  }
+}

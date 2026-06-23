@@ -12,7 +12,7 @@ build/
 .pytest_cache/
 .hypothesis/
 
-.claude/
+.claude/settings.local.json
 
 .env
 .env.*
