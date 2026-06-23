@@ -280,31 +280,22 @@ def register_tools(mcp: FastMCP) -> None:
         )],
         ctx: Context,
     ) -> ParsedCitation:
-        """USE THIS TOOL BEFORE constructing an OSCOLA citation string from known fields, OR when you have a citation and want to confirm it points at a real document.
+        """USE THIS TOOL BEFORE constructing an OSCOLA citation string from known fields, OR to confirm a citation points at a real document.
 
         Parses + resolves a single citation (neutral citation, SI, legislation
-        section, retained EU law) and returns the parsed fields plus a
-        resolved_url. Raises ValueError if nothing recognisable is found.
+        section, retained EU law) and returns parsed fields plus resolved_url.
+        For neutral citations, performs a live TNA HEAD check — non-200 sets
+        confidence to 0.0 (document absent). Do NOT format or quote a
+        confidence-0.0 citation.
 
-        For neutral citations, performs a live HTTP HEAD check against TNA Find
-        Case Law to confirm the judgment exists. If TNA returns non-200,
-        confidence is set to 0.0 — the citation parsed successfully but the
-        document does not exist at the constructed URL. DO NOT format or quote
-        a citation with confidence 0.0 as verified; surface the failure and ask
-        the user for the source URL or better identifying details.
+        If the TNA HEAD check fails (timeout, connection error), raises ToolError
+        with {"error_category": "transient", "is_retryable": true}. One retry is
+        attempted — retry this call or proceed without TNA verification.
 
-        If the TNA HEAD check fails due to a network error (timeout, connection
-        failure, protocol error), raises ToolError with JSON content
-        {"error_category": "transient", "is_retryable": true, "message": "..."}.
-        One retry is attempted before raising. The citation parsed successfully —
-        retry this call or proceed without TNA verification.
-
-        Formatting a citation from "known" fields (year, court, number) without
-        prior resolution is the most common citation-fabrication route — the
-        formatter accepts whatever you give it and produces plausible-looking
-        output for invented inputs. If this tool raises or returns no
-        resolved_url, do NOT manufacture a citation — surface the failure and
-        ask the user for the source URL or better identifying details.
+        Formatting a citation from "known" fields without prior resolution is the
+        most common fabrication route. If this tool raises or returns no
+        resolved_url, do NOT manufacture a citation — surface the failure and ask
+        the user for the source URL.
 
         Authoritative source for UK legal-citation resolution.
         """
