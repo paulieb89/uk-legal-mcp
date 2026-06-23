@@ -157,7 +157,7 @@ class TopDebate(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    debate_id: int = Field(..., description="Internal Hansard debate ID (DebateSectionId)")
+    debate_id: int = Field(..., description="Internal Hansard debate ID.")
     debate_ext_id: str = Field(..., description="Debate GUID. Use as {debate_ext_id} in hansard://debate/{debate_ext_id}/header.")
     debate_title: str = Field(..., description="Debate title")
     date: Date = Field(..., description="Sitting date of the debate")

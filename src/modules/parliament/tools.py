@@ -1022,22 +1022,25 @@ def register_tools(mcp: FastMCP) -> None:
                 # "what counts as a contribution").
                 contribution_count: int | None = None
                 source_code: int | None = None
+                debate_id: int = 0
                 try:
                     debate_resp = await client.get(f"{HANSARD_API}/debates/Debate/{ext_id}.json")
                     debate_resp.raise_for_status()
                     debate_payload = debate_resp.json() if debate_resp.content else {}
                     debate_items = debate_payload.get("Items") or []
                     contribution_count = sum(1 for i in debate_items if _item_is_contribution(i))
-                    # The payload's Overview.Source gives the citation's publication
-                    # state for free — surface it so the lawyer sees finality without
-                    # a second fetch of hansard://debate/{ext}/header.
-                    source_code = (debate_payload.get("Overview") or {}).get("Source")
+                    overview = debate_payload.get("Overview") or {}
+                    # Overview.Source and Overview.Id are declared DebateOverview fields.
+                    # DebateSectionId is absent from SearchDebateItem (the column-search
+                    # response type), so we source the integer ID here instead.
+                    source_code = overview.get("Source")
+                    debate_id = _safe_int(overview.get("Id"), 0)
                 except httpx.HTTPError:
-                    # Leave count/source as None rather than fabricate values.
+                    # Leave count/source/id as defaults rather than fabricate values.
                     pass
 
                 matches.append(TopDebate(
-                    debate_id=_safe_int(item.get("DebateSectionId"), 0),
+                    debate_id=debate_id,
                     debate_ext_id=ext_id,
                     debate_title=(item.get("Title") or item.get("DebateSection") or "Unknown").strip(),
                     date=sitting_date,
