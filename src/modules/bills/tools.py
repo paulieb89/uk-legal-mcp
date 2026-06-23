@@ -12,7 +12,7 @@ import httpx
 from fastmcp import FastMCP, Context
 from pydantic import Field
 
-from ...deps import format_http_error
+from ...deps import format_http_error, raise_http_tool_error
 from .models import BillDetail, BillSearchResult, BillSponsor, BillStage, BillSummary
 
 BILLS_BASE = "https://bills-api.parliament.uk/api/v1"
@@ -161,8 +161,11 @@ def register_tools(mcp: FastMCP) -> None:
         if stage:
             qp["BillStage"] = STAGE_ID_MAP[stage]
 
-        resp = await client.get(f"{BILLS_BASE}/Bills", params=qp)
-        resp.raise_for_status()
+        try:
+            resp = await client.get(f"{BILLS_BASE}/Bills", params=qp)
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise_http_tool_error(e, attempted=f"bills_search_bills(query={query!r})")
         data = resp.json()
 
         bills = [_parse_bill_summary(item) for item in data.get("items", [])]
@@ -206,6 +209,9 @@ def register_tools(mcp: FastMCP) -> None:
         related keyword for adjacent bills.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
-        resp = await client.get(f"{BILLS_BASE}/Bills/{bill_id}")
-        resp.raise_for_status()
+        try:
+            resp = await client.get(f"{BILLS_BASE}/Bills/{bill_id}")
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise_http_tool_error(e, attempted=f"bills_get_bill(bill_id={bill_id})")
         return _parse_bill_detail(resp.json(), max_summary_chars)

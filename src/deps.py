@@ -23,11 +23,14 @@ Usage in tools:
 """
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
+from typing import Literal
 
 import httpx
 from curl_cffi.requests import AsyncSession as CurlAsyncSession
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 
 # ---------------------------------------------------------------------------
 # Shared headers
@@ -217,3 +220,65 @@ def format_http_error(e: Exception) -> str:
     if isinstance(e, httpx.ConnectError):
         return "Error: Could not connect to upstream API. Check network or try again."
     return f"Error: Unexpected error — {type(e).__name__}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Structured ToolError helpers
+# ---------------------------------------------------------------------------
+
+_ErrCategory = Literal["transient", "not_found", "auth_required", "configuration", "unknown"]
+
+
+def raise_tool_error(
+    category: _ErrCategory,
+    *,
+    is_retryable: bool,
+    attempted: str,
+    description: str,
+) -> None:
+    """Raise ToolError with a machine-readable JSON payload.
+
+    Payload fields:
+      error_category — one of: transient, not_found, auth_required, configuration, unknown
+      is_retryable   — True if the caller should retry without changing inputs
+      attempted      — the tool call that failed, e.g. "case_law_search(query='...')"
+      description    — human-readable detail (may include status codes / URLs)
+    """
+    raise ToolError(json.dumps({
+        "error_category": category,
+        "is_retryable": is_retryable,
+        "attempted": attempted,
+        "description": description,
+    }))
+
+
+def raise_http_tool_error(exc: Exception, *, attempted: str) -> None:
+    """Convert any upstream exception into a structured ToolError.
+
+    Handles httpx errors, LegislationUpstreamError, and generic exceptions
+    (including curl_cffi errors from the legislation client).
+    """
+    if isinstance(exc, LegislationUpstreamError):
+        raise_tool_error("transient", is_retryable=True, attempted=attempted,
+                         description=str(exc))
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status == 404:
+            raise_tool_error("not_found", is_retryable=False, attempted=attempted,
+                             description=f"Resource not found (404). Check the identifier is correct. URL: {exc.request.url}")
+        if status == 403:
+            raise_tool_error("auth_required", is_retryable=False, attempted=attempted,
+                             description=f"Access denied (403). URL: {exc.request.url}")
+        if status in (429, 503):
+            raise_tool_error("transient", is_retryable=True, attempted=attempted,
+                             description=f"Upstream returned {status} — retry after a short delay. URL: {exc.request.url}")
+        raise_tool_error("unknown", is_retryable=False, attempted=attempted,
+                         description=f"Upstream returned {status}. URL: {exc.request.url}")
+    if isinstance(exc, httpx.TimeoutException):
+        raise_tool_error("transient", is_retryable=True, attempted=attempted,
+                         description="Request timed out (30s) — upstream may be slow, retry is safe.")
+    if isinstance(exc, httpx.ConnectError):
+        raise_tool_error("transient", is_retryable=True, attempted=attempted,
+                         description="Could not connect to upstream API — network error, retry is safe.")
+    raise_tool_error("unknown", is_retryable=False, attempted=attempted,
+                     description=f"Unexpected error: {type(exc).__name__}: {exc}")

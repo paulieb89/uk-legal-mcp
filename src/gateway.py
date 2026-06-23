@@ -144,6 +144,7 @@ gateway = FastMCP(
     name="uk-legal-mcp",
     version=_PROJECT_VERSION,
     website_url="https://github.com/paulieb89/uk-legal-mcp",
+    mask_error_details=True,
     lifespan=http_lifespan,
     instructions=(
         "USE THIS SERVER for any UK legal research question — case law, statutes/SIs, "

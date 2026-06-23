@@ -13,7 +13,7 @@ import httpx
 from fastmcp import FastMCP, Context
 from pydantic import Field
 
-from ...deps import format_http_error
+from ...deps import format_http_error, raise_http_tool_error
 from .models import DivisionDetail, DivisionSummary, DivisionsSearchResult, Voter
 
 COMMONS_VOTES_BASE = "https://commonsvotes-api.parliament.uk"
@@ -114,8 +114,11 @@ def register_tools(mcp: FastMCP) -> None:
         if member_id:
             qp["queryParameters.memberId"] = member_id
 
-        resp = await client.get(url, params=qp)
-        resp.raise_for_status()
+        try:
+            resp = await client.get(url, params=qp)
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise_http_tool_error(e, attempted=f"votes_search_divisions(query={query!r}, house={house!r})")
         data = resp.json()
 
         items = data if isinstance(data, list) else data.get("results", data.get("items", []))
@@ -155,8 +158,11 @@ def register_tools(mcp: FastMCP) -> None:
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         url = _detail_url(house, division_id)
 
-        resp = await client.get(url)
-        resp.raise_for_status()
+        try:
+            resp = await client.get(url)
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise_http_tool_error(e, attempted=f"votes_get_division(division_id={division_id}, house={house!r})")
         data = resp.json()
 
         if house == "Lords":

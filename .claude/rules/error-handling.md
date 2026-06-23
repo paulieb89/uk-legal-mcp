@@ -23,13 +23,52 @@ to the agent (it appears successful at the MCP level).
 Use `from fastmcp.exceptions import ToolError` and raise `ToolError(...)`.
 `RuntimeError` bypasses FastMCP's structured error handling.
 
-## httpx exception hierarchy (catch in this order)
-1. `httpx.TimeoutException` → upstream_timeout
-2. `httpx.ConnectError`     → upstream_unavailable
-3. `httpx.HTTPStatusError`  → mapped by status code via `classify_error()`
-4. Generic `Exception`      → unknown_error
+## Canonical error pattern for new tools
 
-`classify_error()` in `src/envelope.py` already handles all of these. Use it.
+Use `raise_http_tool_error` from `src.deps` — never prose `raise ToolError(...)`:
+
+```python
+from ...deps import raise_http_tool_error
+
+try:
+    resp = await client.get(...)
+    resp.raise_for_status()
+except httpx.HTTPError as e:
+    raise_http_tool_error(e, attempted=f"tool_name(key_param={value!r})")
+```
+
+For legislation tools (curl_cffi client), catch `Exception` instead of `httpx.HTTPError`:
+```python
+except Exception as exc:
+    raise_http_tool_error(exc, attempted=f"legislation_tool(type={type!r}, ...)")
+```
+
+For non-HTTP errors (e.g. missing config):
+```python
+from ...deps import raise_tool_error
+
+raise_tool_error(
+    "configuration",
+    is_retryable=False,
+    attempted="tool_name",
+    description="What is missing and how to fix it.",
+)
+```
+
+### Structured payload fields (snake_case)
+- `error_category`: `"transient"` | `"not_found"` | `"auth_required"` | `"configuration"` | `"unknown"`
+- `is_retryable`: `True` if the caller can retry unchanged inputs
+- `attempted`: the tool name + key params that failed
+- `description`: human-readable detail (may include status codes, URLs)
+
+### httpx → category mapping (handled automatically by raise_http_tool_error)
+- `httpx.TimeoutException` → `transient`, `is_retryable=True`
+- `httpx.ConnectError`     → `transient`, `is_retryable=True`
+- `httpx.HTTPStatusError` 404 → `not_found`, `is_retryable=False`
+- `httpx.HTTPStatusError` 403 → `auth_required`, `is_retryable=False`
+- `httpx.HTTPStatusError` 429/503 → `transient`, `is_retryable=True`
+- `LegislationUpstreamError` → `transient`, `is_retryable=True`
+- Generic `Exception` → `unknown`, `is_retryable=False`
 
 ## LegislationClient specifics (src/deps.py)
 - 437 from CloudFront = JA3 fingerprint — already handled by curl_cffi
@@ -37,6 +76,5 @@ Use `from fastmcp.exceptions import ToolError` and raise `ToolError(...)`.
 - JS challenge page = `LegislationUpstreamError` — raise it, don't parse the HTML
 
 ## format_http_error() (src/deps.py)
-Returns a string for back-compat with existing `raise RuntimeError(format_http_error(e))` callsites
-in older tools. New tools should use `raise ToolError(format_http_error(e))` instead.
-Do NOT change existing callsites without a test confirming the tool still raises correctly.
+Legacy — returns a prose string. Keep for back-compat but do NOT use in new tools.
+New tools use `raise_http_tool_error()` instead.

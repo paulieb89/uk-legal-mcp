@@ -14,6 +14,7 @@ import httpx
 from fastmcp import FastMCP, Context
 from pydantic import Field
 
+from ...deps import raise_http_tool_error
 from . import parsers
 from .models import (
     GrepHit,
@@ -166,8 +167,11 @@ def register_tools(mcp: FastMCP) -> None:
         if party: qp["party"] = party
         if from_date: qp["from"] = from_date.isoformat()
         if to_date: qp["to"] = to_date.isoformat()
-        resp = await client.get(f"{TNA_BASE}/atom.xml", params=qp)
-        resp.raise_for_status()
+        try:
+            resp = await client.get(f"{TNA_BASE}/atom.xml", params=qp)
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise_http_tool_error(e, attempted=f"case_law_search(query={query!r})")
         return _parse_atom_feed(resp.content, limit=limit)
 
     @mcp.tool(
@@ -203,8 +207,11 @@ def register_tools(mcp: FastMCP) -> None:
         """
         client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
         slug = slug.lstrip("/")
-        resp = await client.get(f"{TNA_BASE}/{slug}/data.xml")
-        resp.raise_for_status()
+        try:
+            resp = await client.get(f"{TNA_BASE}/{slug}/data.xml")
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise_http_tool_error(e, attempted=f"case_law_grep_judgment(slug={slug!r})")
 
         hits = parsers.grep_paragraphs(
             resp.text,

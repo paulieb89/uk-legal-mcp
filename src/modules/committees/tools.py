@@ -13,7 +13,7 @@ import httpx
 from fastmcp import FastMCP, Context
 from pydantic import Field
 
-from ...deps import format_http_error
+from ...deps import format_http_error, raise_http_tool_error
 from .models import CommitteeDetail, CommitteeEvidencePage, CommitteeMember, CommitteeSearchResult, CommitteeSummary, EvidenceItem
 
 COMMITTEES_BASE = "https://committees-api.parliament.uk/api"
@@ -59,8 +59,11 @@ def register_tools(mcp: FastMCP) -> None:
         if house:
             qp["House"] = HOUSE_MAP.get(house)
 
-        resp = await client.get(f"{COMMITTEES_BASE}/Committees", params=qp)
-        resp.raise_for_status()
+        try:
+            resp = await client.get(f"{COMMITTEES_BASE}/Committees", params=qp)
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise_http_tool_error(e, attempted=f"committees_search_committees(query={query!r})")
         data = resp.json()
 
         items = data.get("items", data.get("results", data)) if isinstance(data, dict) else data
@@ -108,9 +111,12 @@ def register_tools(mcp: FastMCP) -> None:
         detail_req = client.get(f"{COMMITTEES_BASE}/Committees/{committee_id}")
         members_req = client.get(f"{COMMITTEES_BASE}/Committees/{committee_id}/Members")
 
-        detail_resp, members_resp = await asyncio.gather(detail_req, members_req)
-        detail_resp.raise_for_status()
-        members_resp.raise_for_status()
+        try:
+            detail_resp, members_resp = await asyncio.gather(detail_req, members_req)
+            detail_resp.raise_for_status()
+            members_resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise_http_tool_error(e, attempted=f"committees_get_committee(committee_id={committee_id})")
 
         detail_data = detail_resp.json()
         members_data = members_resp.json()
@@ -177,11 +183,14 @@ def register_tools(mcp: FastMCP) -> None:
             return t
 
         async def fetch_oral(skip: int, take: int) -> tuple[list[EvidenceItem], int]:
-            resp = await client.get(
-                f"{COMMITTEES_BASE}/OralEvidence",
-                params={"CommitteeId": committee_id, "Skip": skip, "Take": take},
-            )
-            resp.raise_for_status()
+            try:
+                resp = await client.get(
+                    f"{COMMITTEES_BASE}/OralEvidence",
+                    params={"CommitteeId": committee_id, "Skip": skip, "Take": take},
+                )
+                resp.raise_for_status()
+            except httpx.HTTPError as e:
+                raise_http_tool_error(e, attempted=f"committees_search_evidence(committee_id={committee_id}, evidence_type='oral')")
             data = resp.json()
             items = data.get("items", data.get("results", data)) if isinstance(data, dict) else data
             if not isinstance(items, list):
@@ -206,11 +215,14 @@ def register_tools(mcp: FastMCP) -> None:
             return results, len(items)
 
         async def fetch_written(skip: int, take: int) -> tuple[list[EvidenceItem], int]:
-            resp = await client.get(
-                f"{COMMITTEES_BASE}/WrittenEvidence",
-                params={"CommitteeId": committee_id, "Skip": skip, "Take": take},
-            )
-            resp.raise_for_status()
+            try:
+                resp = await client.get(
+                    f"{COMMITTEES_BASE}/WrittenEvidence",
+                    params={"CommitteeId": committee_id, "Skip": skip, "Take": take},
+                )
+                resp.raise_for_status()
+            except httpx.HTTPError as e:
+                raise_http_tool_error(e, attempted=f"committees_search_evidence(committee_id={committee_id}, evidence_type='written')")
             data = resp.json()
             items = data.get("items", data.get("results", data)) if isinstance(data, dict) else data
             if not isinstance(items, list):

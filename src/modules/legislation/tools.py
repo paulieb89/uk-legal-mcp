@@ -18,7 +18,7 @@ from lxml import etree, html
 from ...xml_safe import parse_xml
 from pydantic import Field
 
-from ...deps import LegislationUpstreamError, format_http_error
+from ...deps import LegislationUpstreamError, format_http_error, raise_http_tool_error, raise_tool_error
 from .models import LegislationResult, LegislationSearchResult, LegislationSection, LegislationTOC
 
 LEGISLATION_BASE = "https://www.legislation.gov.uk"
@@ -400,8 +400,11 @@ def register_tools(mcp: FastMCP) -> None:
         if year:
             qp["year"] = year
 
-        resp = await client.get(f"{LEGISLATION_BASE}{path}", params=qp)
-        resp.raise_for_status()
+        try:
+            resp = await client.get(f"{LEGISLATION_BASE}{path}", params=qp)
+            resp.raise_for_status()
+        except Exception as exc:
+            raise_http_tool_error(exc, attempted=f"legislation_search(query={query!r})")
         root = parse_xml(resp.content)
 
         total_el = root.findtext(".//os:totalResults", namespaces=ATOM_NS)
@@ -465,15 +468,21 @@ def register_tools(mcp: FastMCP) -> None:
         client = ctx.lifespan_context["legislation_http"]
         section = _normalise_section_id(section)
         url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}/data.xml"
+        _attempted = f"legislation_get_section(type={type!r}, year={year}, number={number}, section={section!r})"
         try:
             resp = await client.get(url)
             resp.raise_for_status()
             return _parse_clml_section(resp.text, section, max_chars)
         except LegislationUpstreamError as exc:
             html_url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}"
-            html_resp = await client.get_html(html_url)
-            html_resp.raise_for_status()
+            try:
+                html_resp = await client.get_html(html_url)
+                html_resp.raise_for_status()
+            except Exception as inner_exc:
+                raise_http_tool_error(inner_exc, attempted=_attempted)
             return _parse_html_section(html_resp.text, section, max_chars, str(exc))
+        except Exception as exc:
+            raise_http_tool_error(exc, attempted=_attempted)
 
     @mcp.tool(
         name="get_toc",
@@ -504,8 +513,11 @@ def register_tools(mcp: FastMCP) -> None:
         """
         client = ctx.lifespan_context["legislation_http"]
         url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/data.xml"
-        resp = await client.get(url)
-        resp.raise_for_status()
+        try:
+            resp = await client.get(url)
+            resp.raise_for_status()
+        except Exception as exc:
+            raise_http_tool_error(exc, attempted=f"legislation_get_toc(type={type!r}, year={year}, number={number})")
 
         all_items = _parse_toc_xml(resp.text)
         total_items = len(all_items)

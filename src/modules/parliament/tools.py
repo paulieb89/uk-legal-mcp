@@ -19,7 +19,7 @@ from pydantic import Field
 
 from collections import Counter
 
-from ...deps import format_http_error
+from ...deps import format_http_error, raise_http_tool_error
 from .resources import _assign_columns, _item_is_contribution, _strip_html, hansard_source_label
 from .models import (
     ColumnLookupResult,
@@ -866,7 +866,7 @@ def register_tools(mcp: FastMCP) -> None:
         except httpx.HTTPError as e:
             # Surface the error; an empty array is the normal "no divisions" case,
             # whereas an HTTP error means we couldn't reach upstream.
-            raise ToolError(format_http_error(e)) from e
+            raise_http_tool_error(e, attempted=f"parliament_get_debate_divisions(debate_ext_id={debate_ext_id!r})")
 
         items = resp.json()
         if not isinstance(items, list):
@@ -921,7 +921,7 @@ def register_tools(mcp: FastMCP) -> None:
             )
             resp.raise_for_status()
         except httpx.HTTPError as e:
-            raise ToolError(format_http_error(e)) from e
+            raise_http_tool_error(e, attempted=f"parliament_get_debate_contributions(debate_ext_id={debate_ext_id!r})")
 
         payload = resp.json() if resp.content else {}
         overview = payload.get("Overview") or {}
@@ -998,7 +998,7 @@ def register_tools(mcp: FastMCP) -> None:
             )
             resp.raise_for_status()
         except httpx.HTTPError as e:
-            raise ToolError(format_http_error(e)) from e
+            raise_http_tool_error(e, attempted=f"parliament_lookup_by_column(column_number={column_number!r}, volume_number={volume_number})")
 
         payload = resp.json() if resp.content else {}
         results = payload.get("Results") or []

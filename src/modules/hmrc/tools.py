@@ -15,7 +15,7 @@ from fastmcp import FastMCP, Context
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
-from ...deps import format_http_error
+from ...deps import format_http_error, raise_tool_error
 from .models import HMRCGuidanceResult, HMRCGuidanceSearchResult, MTDStatus, VATRate
 
 HMRC_API_BASE = os.getenv("HMRC_API_BASE", "https://test-api.service.hmrc.gov.uk")
@@ -120,10 +120,11 @@ def register_tools(mcp: FastMCP) -> None:
         client_id = os.getenv("HMRC_CLIENT_ID")
         client_secret = os.getenv("HMRC_CLIENT_SECRET")
         if not client_id or not client_secret:
-            raise ToolError(
-                "HMRC OAuth credentials not configured. "
-                "Set HMRC_CLIENT_ID and HMRC_CLIENT_SECRET. "
-                "Register at https://developer.service.hmrc.gov.uk"
+            raise_tool_error(
+                "configuration",
+                is_retryable=False,
+                attempted="hmrc_check_mtd_status",
+                description="HMRC OAuth credentials not configured. Set HMRC_CLIENT_ID and HMRC_CLIENT_SECRET environment variables.",
             )
 
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
