@@ -2,6 +2,19 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [0.6.1] — 2026-06-29
+
+### Fixed
+
+- **FastMCP pinned back to 3.2.3** — 3.2.4 introduced a breaking change that wraps single-Pydantic-model tool parameters in a `params` envelope, causing all 8 modules to fail with `Missing required argument` / `Unexpected keyword argument` errors on every tool call. 3.2.3 generates flat schemas as expected by MCP clients.
+- **LEGISLATION regex: lowercase connector words** — Act titles containing lowercase connectors (e.g. "Landlord and Tenant Act 1985", "Town and Country Planning Act 1990") were not matched because the pattern required every word to start with a capital letter. Fixed to allow lowercase inner words.
+- **NEUTRAL regex: trailing division qualifier** — Citations of the form `[2026] EWHC 1446 (Ch)` were parsed as bare ambiguous `EWHC` (confidence 0.5, no URL) instead of resolving to `EWHC (Ch)` (confidence 1.0, canonical TNA URL). Added an optional capture group for the trailing `(Division)` and wired it through `_parse_citation_from_match` to qualify the court code before ambiguity checks and URL resolution.
+- **`.dockerignore` nested cache globs** — Added `**/.mypy_cache/` and `**/.pytest_cache/` patterns to exclude nested per-module cache directories from the Docker build context.
+
+### Tests
+
+- 9 regression tests added covering both citation bugs: 4 for legislation lowercase connectors, 5 for EWHC trailing division qualifiers (including bare-EWHC still-ambiguous case). Suite: 51 tests, all passing.
+
 ## [0.6.0] — 2026-06-15
 
 ### Added
