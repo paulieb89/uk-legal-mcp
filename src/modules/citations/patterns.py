@@ -58,7 +58,7 @@ def _compile_patterns() -> dict[CitationType, re.Pattern]:
     """Compile all OSCOLA regex patterns once. Cached for the process lifetime."""
     return {
         CitationType.NEUTRAL: re.compile(
-            r"\[(\d{4})\]\s+(" + NEUTRAL_COURT_PATTERN + r")\s+(\d+)",
+            r"\[(\d{4})\]\s+(" + NEUTRAL_COURT_PATTERN + r")\s+(\d+)(?:\s*\(([A-Za-z]+)\))?",
             re.IGNORECASE,
         ),
         CitationType.LAW_REPORT: re.compile(
@@ -67,7 +67,7 @@ def _compile_patterns() -> dict[CitationType, re.Pattern]:
         ),
         CitationType.LEGISLATION: re.compile(
             r"s(?:ection)?\.?\s*(\d+[A-Z]?)(?:\(\d+\))*\s+"
-            r"([A-Z][A-Za-z']+(?:\s+[A-Z][A-Za-z']+)*\s+Act\s+\d{4})",
+            r"([A-Z][A-Za-z']+(?:\s+[A-Za-z']+)*\s+Act\s+\d{4})",
         ),
         CitationType.SI: re.compile(
             r"S\.?I\.?\s+(\d{4})\s*/\s*(\d+)",

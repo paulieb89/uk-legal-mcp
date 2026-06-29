@@ -94,6 +94,9 @@ def _parse_citation_from_match(
         year = int(match.group(1))
         court_raw = re.sub(r"\s+", " ", match.group(2).strip()).upper()
         number = int(match.group(3))
+        trailing_division = match.group(4)
+        if trailing_division and court_raw in AMBIGUOUS_COURTS:
+            court_raw = f"{court_raw} ({trailing_division.title()})"
         if court_is_ambiguous(court_raw):
             confidence = 0.5
         resolved = resolve_neutral_citation(year, court_raw, number)

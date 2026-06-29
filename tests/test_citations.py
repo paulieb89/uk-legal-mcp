@@ -257,6 +257,53 @@ def test_no_duplicate_spans_in_mixed_text():
 
 
 # ---------------------------------------------------------------------------
+# Regression: lowercase connector words in Act titles
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text,expected_section,expected_title_fragment", [
+    ("s.1 Landlord and Tenant Act 1985", "1", "Landlord and Tenant Act 1985"),
+    ("s.47 Town and Country Planning Act 1990", "47", "Town and Country Planning Act 1990"),
+    ("s.3 Administration of Justice Act 1985", "3", "Administration of Justice Act 1985"),
+    ("s.12 Acquisition of Land Act 1981", "12", "Acquisition of Land Act 1981"),
+])
+def test_legislation_lowercase_connector(text, expected_section, expected_title_fragment):
+    patterns = _compile_patterns()
+    confident, ambiguous = _extract_all_citations(text, patterns)
+    all_found = confident + ambiguous
+    assert len(all_found) >= 1, f"No citation found in: {text!r}"
+    c = all_found[0]
+    assert c.type == CitationType.LEGISLATION
+    assert c.section == expected_section
+    assert expected_title_fragment in c.legislation_title
+
+
+# ---------------------------------------------------------------------------
+# Regression: EWHC trailing division qualifier (e.g. "[2026] EWHC 1446 (Ch)")
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text,expected_court,expected_number,expect_resolved", [
+    ("[2026] EWHC 1446 (Ch)", "EWHC (CH)", 1446, True),
+    ("[2025] EWHC 200 (KB)", "EWHC (KB)", 200, True),
+    ("[2024] EWHC 301 (Comm)", "EWHC (COMM)", 301, True),
+    ("[2023] EWHC 99 (Admin)", "EWHC (ADMIN)", 99, True),
+    ("[2024] EWHC 400", "EWHC", 400, False),  # bare — still ambiguous
+])
+def test_ewhc_trailing_division_qualifier(text, expected_court, expected_number, expect_resolved):
+    patterns = _compile_patterns()
+    confident, ambiguous = _extract_all_citations(text, patterns)
+    all_found = confident + ambiguous
+    assert len(all_found) >= 1, f"No citation found in: {text!r}"
+    c = all_found[0]
+    assert c.type == CitationType.NEUTRAL
+    assert c.number == expected_number
+    assert c.court is not None and expected_court in c.court.upper()
+    if expect_resolved:
+        assert c.resolved_url is not None, f"Expected URL for {text!r}, got None"
+    else:
+        assert c.resolved_url is None, f"Expected None for bare {text!r}, got {c.resolved_url}"
+
+
+# ---------------------------------------------------------------------------
 # TNA HEAD check helper — unit tests (mocked HTTP, no network)
 # ---------------------------------------------------------------------------
 

@@ -6,7 +6,9 @@ dist/
 build/
 .eggs/
 
+**/.mypy_cache/
 .mypy_cache/
+**/.pytest_cache/
 .pytest_cache/
 .hypothesis/
 
