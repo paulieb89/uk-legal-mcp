@@ -4,7 +4,7 @@
   "title": "UK Legal Research",
   "description": "UK legal research — case law, legislation, Hansard, bills, votes, committees, HMRC, citations",
   "version": "0.6.0",
-  "websiteUrl": "https://bouch.dev/products/legal-research",
+  "websiteUrl": "https://bouch.dev/products/uk-legal-mcp",
   "repository": {
     "url": "https://github.com/paulieb89/uk-legal-mcp",
     "source": "github"
