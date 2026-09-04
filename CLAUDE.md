@@ -65,7 +65,7 @@ fly secrets set HMRC_CLIENT_ID=xxx HMRC_CLIENT_SECRET=xxx --app uk-legal-mcp
 
 - **Docstrings are load-bearing.** Field descriptions on Pydantic input models directly control how LLMs call the tools. When changing a parameter's behavior (e.g. phrase search vs keyword search), update the Field description to match. See commit `cd2b3a6` for the full audit of what went wrong and how it was fixed.
 
-- **Error formatting is generic.** `deps.py:format_http_error()` handles all httpx exceptions. Do not put API-specific error messages in generic handlers — the 403 message used to blame TNA for all 403s including Hansard.
+- **Errors raise through one helper.** `deps.py:raise_http_tool_error(exc, attempted=...)` converts any upstream exception into a structured `ToolError` carrying `error_category` / `is_retryable` / `attempted` / `description`. It handles httpx AND curl_cffi (the legislation client is curl_cffi — an httpx-only match silently drops every legislation error into `unknown`). `deps.py:format_http_error()` is LEGACY, returns a prose string, and must not be used in new code. Do not put API-specific error messages in generic handlers — the 403 message used to blame TNA for all 403s including Hansard.
 
 ## Upstream APIs
 
@@ -116,7 +116,7 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 1. Add input model (Pydantic `BaseModel` with `ConfigDict(extra="forbid")`) and Field descriptions
 2. Add tool function inside `register_tools(mcp)` in the module's `tools.py`
 3. Use `ctx.lifespan_context["http"]` for JSON APIs, `ctx.lifespan_context["xml_http"]` for XML
-4. Return JSON string (not dict). Use `model.model_dump_json(indent=2)` or `json.dumps()`
+4. Return a typed Pydantic model (or a dict), NOT a JSON string. FastMCP derives `outputSchema` from the return annotation and populates `structuredContent` — returning `str` collapses that to `{"type": "string"}` and loses structured output, which 2026 clients rely on. All 35 tools currently return object schemas; keep it that way.
 5. **Write the tool description in the 4-part pattern**: USE WHEN... / what it returns / AFTER calling, call X if Y / authoritative-source clause. See [`docs/internal/chatgpt-workflow-encoding.md`](docs/internal/chatgpt-workflow-encoding.md). The description is the ONLY workflow-teaching layer ChatGPT users see.
 6. Wrap all external calls in try/except routed through the structured envelope (status: ok|empty|auth_required|upstream_validation|upstream_timeout|upstream_unavailable|not_found|unknown_error). Empty/error envelopes carry `next_steps` or `detail` so the agent doesn't fall back to confabulation (Obs 183).
 7. **External XML must go through `src/xml_safe.py:parse_xml`** — never call `lxml.etree.fromstring` directly. defusedxml prevents XXE / billion-laughs / external-DTD attacks.
@@ -133,7 +133,8 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 
 ## Testing
 
-- Two non-live test files: `test_citations.py` (regex patterns, resolution, disambiguation, mixed-text extraction) and `test_gateway.py` (gateway integration — server identity, tool listing + schema validity, companion tools, resource templates, offline citation execution, and the custom `/health` `/metrics` `/.well-known/*` routes). Run offline, no API.
+- Eleven test files under `tests/`, all offline. The load-bearing ones: `test_citations.py` (regex patterns, resolution, disambiguation), `test_gateway.py` (server identity, tool listing + schema validity, companion tools, resource templates, and the custom `/health` `/metrics` `/.well-known/*` routes), `test_error_classification.py` (httpx and curl_cffi must classify identically), `test_xml_safe.py` (XXE / billion-laughs defences). Run `uv run pytest -m "not live" -q` for the count rather than trusting this list.
+- Note `tests/live/fixtures/` is gitignored, so a fresh clone cannot run the ~21 tests that read those captures. Anyone adding CI must deselect them or commit the fixtures.
 - Domain modules that hit live APIs are exercised by `audit_*` scripts and manual/dogfeed testing via Claude Desktop, ChatGPT, or MCP Inspector.
 - Always run `uv run pytest -m "not live" -q` (the full non-live suite) before deploying.
 - Test discipline: prefer smoke tests + real runtime probes over fitted unit tests that just restate the implementation (see auto-memory `no-fitted-tests`).
@@ -169,8 +170,6 @@ They are NOT loaded unless the relevant files are in scope — they don't bloat 
 | Command    | Purpose                                                         |
 |------------|----------------------------------------------------------------|
 | `/audit`   | Full conformance check — run before starting work              |
-| `/probe`   | Live smoke probe against the deployed server (or local gateway)|
-| `/new-tool`| Guided tool authoring checklist for a new tool                 |
 | `/bug`     | Incident → test → invariant flywheel for fixing bugs           |
 
 ### Hooks (deterministic, not prompt-guidance)
