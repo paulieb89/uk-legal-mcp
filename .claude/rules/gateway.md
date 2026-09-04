@@ -23,7 +23,7 @@ Tools registered via `register_tools(mcp)` inside the module's `tools.py`.
 Do not register tools directly on the gateway — they won't be namespaced correctly.
 
 ## Custom routes (not MCP tools)
-`/health`, `/metrics`, `/.well-known/mcp.json`, `/.well-known/agent.json` are
+`/health`, `/metrics`, `/.well-known/mcp/server-card.json`, `/.well-known/glama.json` are
 Starlette routes added to the gateway directly. They are tested in `tests/test_gateway.py`.
 Any new custom routes must be added to that test file.
 
