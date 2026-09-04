@@ -143,7 +143,7 @@ class PrometheusMiddleware(Middleware):
 gateway = FastMCP(
     name="uk-legal-mcp",
     version=_PROJECT_VERSION,
-    website_url="https://github.com/paulieb89/uk-legal-mcp",
+    website_url="https://bouch.dev/products/uk-legal-mcp",
     mask_error_details=True,
     lifespan=http_lifespan,
     instructions=(
