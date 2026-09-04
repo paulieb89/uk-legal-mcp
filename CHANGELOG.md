@@ -2,9 +2,16 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
-## [0.6.1] — 2026-06-29
+## [0.6.1] — 2026-09-04
+
+Prepared 2026-06-29 but never released — no tag was cut, so PyPI and the MCP
+registry never received it and the 29 June production deploy went out by hand
+as 0.6.0. This release ships the June work together with everything that
+landed since.
 
 ### Fixed
+
+- **curl_cffi HTTP failures were classified as `unknown` / non-retryable** — `raise_http_tool_error` type-checked only `httpx` exceptions, but the legislation client is curl_cffi (Chrome impersonation, required to pass CloudFront). `curl_cffi.requests.exceptions.HTTPError` shares no ancestor with `httpx.HTTPStatusError`, so every legislation HTTP error fell through to the generic catch-all with `is_retryable=False` and the status code was never read — making the existing 429/503 → transient mapping unreachable for all three `legislation_*` tools. Observed live: three consecutive calls returned `{"error_category": "unknown", "is_retryable": false}` for an upstream 438 that cleared itself within a minute. Status classification is now shared by both client families, and unrecognised 4xx/5xx are treated as transient and retryable rather than terminal.
 
 - **FastMCP pinned back to 3.2.3** — 3.2.4 introduced a breaking change that wraps single-Pydantic-model tool parameters in a `params` envelope, causing all 8 modules to fail with `Missing required argument` / `Unexpected keyword argument` errors on every tool call. 3.2.3 generates flat schemas as expected by MCP clients.
 - **LEGISLATION regex: lowercase connector words** — Act titles containing lowercase connectors (e.g. "Landlord and Tenant Act 1985", "Town and Country Planning Act 1990") were not matched because the pattern required every word to start with a capital letter. Fixed to allow lowercase inner words.
@@ -13,7 +20,16 @@ All notable changes to `uk-legal-mcp` are documented here. Format loosely follow
 
 ### Tests
 
+- 15 tests added for error classification (`tests/test_error_classification.py`), asserting both client families classify identically and that `unknown` is unreachable when a status code exists.
 - 9 regression tests added covering both citation bugs: 4 for legislation lowercase connectors, 5 for EWHC trailing division qualifiers (including bare-EWHC still-ambiguous case). Suite: 51 tests, all passing.
+
+### Changed
+
+- **`websiteUrl` now points at the current product page** — `server.json` pointed at `/products/legal-research`, a pre-relaunch skill page that 308s to `/products/uk-legal-mcp`. The registry propagates this field to Glama, PulseMCP and other aggregators, and the registry entry has carried the stale URL since 0.4.0.
+- **`serverInfo.websiteUrl` aligned with `server.json`** — it pointed at the GitHub repo, so a connecting client and a user arriving from a registry listing were sent to different places.
+- **`.claude/rules/gateway.md` corrected** — it documented `/.well-known/mcp.json` and `/.well-known/agent.json`; neither exists. The real routes are `/.well-known/mcp/server-card.json` and `/.well-known/glama.json`.
+- **`uv.lock` regenerated** — it disagreed with `pyproject.toml` on both the package version and the fastmcp pin, and failed `uv lock --check`. A `uv sync --locked` build would have failed outright.
+- **Removed the Fly.io per-PR preview workflow** — it had failed on every PR since May (`unauthorized` at app-creation time, a deploy-scoped token cannot create apps).
 
 ## [0.6.0] — 2026-06-15
 
