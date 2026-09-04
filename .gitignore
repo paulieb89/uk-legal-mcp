@@ -33,3 +33,6 @@ writing-mcp-tools-review.html
 eval-review-top.png
 *-workspace/
 .playwright-mcp/
+
+# mcp-publisher credentials — written to the repo root by `mcp-publisher login`
+.mcpregistry_*
