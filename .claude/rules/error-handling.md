@@ -56,24 +56,63 @@ raise_tool_error(
 ```
 
 ### Structured payload fields (snake_case)
-- `error_category`: `"transient"` | `"not_found"` | `"auth_required"` | `"configuration"` | `"unknown"`
+- `error_category`: `"transient"` | `"validation"` | `"not_found"` | `"auth_required"` | `"configuration"` | `"unknown"`
 - `is_retryable`: `True` if the caller can retry unchanged inputs
 - `attempted`: the tool name + key params that failed
 - `description`: human-readable detail (may include status codes, URLs)
 
-### httpx → category mapping (handled automatically by raise_http_tool_error)
-- `httpx.TimeoutException` → `transient`, `is_retryable=True`
-- `httpx.ConnectError`     → `transient`, `is_retryable=True`
-- `httpx.HTTPStatusError` 404 → `not_found`, `is_retryable=False`
-- `httpx.HTTPStatusError` 403 → `auth_required`, `is_retryable=False`
-- `httpx.HTTPStatusError` 429/503 → `transient`, `is_retryable=True`
+Field names are snake_case by deliberate choice (Python convention). MCP does
+not mandate a casing for payload fields; do not "fix" these to camelCase.
+
+### Status → category mapping (handled automatically by raise_http_tool_error)
+
+This mapping is applied to **both** client families. Match on exception type
+first, then classify on the status code in `_raise_for_status`:
+
+| Status | Category | `is_retryable` |
+|---|---|---|
+| 404 | `not_found` | False |
+| 401, 403 | `auth_required` | False |
+| 408, 425, 429, 500, 502, 503, 504 | `transient` | True |
+| 400, 405, 406, 409, 410, 414, 415, 422 | `validation` | False |
+| **any other 4xx/5xx** | **`transient`** | **True** |
+
+Non-status exceptions:
+- `httpx.TimeoutException` / `curl_cffi ... Timeout` → `transient`, `is_retryable=True`
+- `httpx.ConnectError` / `curl_cffi ... ConnectionError` → `transient`, `is_retryable=True`
 - `LegislationUpstreamError` → `transient`, `is_retryable=True`
-- Generic `Exception` → `unknown`, `is_retryable=False`
+- Generic `Exception` (no status available) → `unknown`, `is_retryable=False`
+
+### Two rules that are easy to get wrong
+
+**1. Both client families must be matched.** This server has two: `httpx` (most
+modules) and `curl_cffi` (the legislation client — see `src/deps.py` module
+docstring for why). `curl_cffi.requests.exceptions.HTTPError` shares no ancestor
+with `httpx.HTTPStatusError`, so an httpx-only `isinstance` chain silently drops
+every legislation HTTP error into the generic catch-all. That is exactly what
+happened: three consecutive `legislation_*` calls returned
+`{"error_category": "unknown", "is_retryable": false}` for an upstream 438,
+telling the agent to abandon a tool that recovered on its own within a minute.
+The status was never read. Covered now by `tests/test_error_classification.py`.
+
+**2. `unknown` must be unreachable whenever a status code exists.** An
+unrecognised status means "we have not seen this yet", NOT "this is hopeless".
+Genuine client errors have standard, enumerated codes; non-standard codes in the
+wild come from CDN/WAF infrastructure and are usually temporary. Defaulting them
+to non-retryable converts a transient block into a permanent-looking failure —
+and a wrong `is_retryable` is worse than none, because agents obey it. Reserve
+`unknown` for exceptions carrying no status at all.
 
 ## LegislationClient specifics (src/deps.py)
 - 437 from CloudFront = JA3 fingerprint — already handled by curl_cffi
+- 438 from CloudFront = observed while legislation.gov.uk's documented fair-use
+  limit (1,500 requests / 5 minutes) was in force. Classified `transient`.
 - 202 = render-pending — already handled by poll loop in LegislationClient
 - JS challenge page = `LegislationUpstreamError` — raise it, don't parse the HTML
+- There is still **no retry/backoff** on this client. Classification tells the
+  caller a retry is safe; it does not perform one. See
+  `uk-due-diligence-mcp/http_client.py::_request_with_retry` for the fleet
+  pattern if adding it.
 
 ## format_http_error() (src/deps.py)
 Legacy — returns a prose string. Keep for back-compat but do NOT use in new tools.

@@ -29,6 +29,9 @@ from typing import Literal
 
 import httpx
 from curl_cffi.requests import AsyncSession as CurlAsyncSession
+from curl_cffi.requests.exceptions import ConnectionError as CurlConnectionError
+from curl_cffi.requests.exceptions import HTTPError as CurlHTTPError
+from curl_cffi.requests.exceptions import Timeout as CurlTimeout
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
@@ -226,7 +229,7 @@ def format_http_error(e: Exception) -> str:
 # Structured ToolError helpers
 # ---------------------------------------------------------------------------
 
-_ErrCategory = Literal["transient", "not_found", "auth_required", "configuration", "unknown"]
+_ErrCategory = Literal["transient", "validation", "not_found", "auth_required", "configuration", "unknown"]
 
 
 def raise_tool_error(
@@ -239,7 +242,7 @@ def raise_tool_error(
     """Raise ToolError with a machine-readable JSON payload.
 
     Payload fields:
-      error_category — one of: transient, not_found, auth_required, configuration, unknown
+      error_category — one of: transient, validation, not_found, auth_required, configuration, unknown
       is_retryable   — True if the caller should retry without changing inputs
       attempted      — the tool call that failed, e.g. "case_law_search(query='...')"
       description    — human-readable detail (may include status codes / URLs)
@@ -252,32 +255,70 @@ def raise_tool_error(
     }))
 
 
+def _raise_for_status(status: int, *, attempted: str, url: str) -> None:
+    """Map an upstream HTTP status onto the fleet error taxonomy.
+
+    Shared by the httpx and curl_cffi branches so both clients classify
+    identically — the legislation client is curl_cffi (see module docstring)
+    and previously fell through to `unknown` regardless of status.
+
+    Unrecognised statuses are treated as TRANSIENT and retryable. Genuine
+    client errors have standard, enumerated codes; non-standard codes in the
+    wild come from CDN/WAF infrastructure, where the condition is temporary.
+    legislation.gov.uk's CloudFront is known to emit 437 (JA3 fingerprint
+    block) and has been observed emitting 438 while its documented fair-use
+    limit of 1,500 requests / 5 minutes was in force. Reporting those as
+    non-retryable tells the caller to abandon a tool that would have worked
+    seconds later.
+    """
+    where = f" URL: {url}" if url else ""
+    if status == 404:
+        raise_tool_error("not_found", is_retryable=False, attempted=attempted,
+                         description=f"Resource not found (404). Check the identifier is correct.{where}")
+    if status in (401, 403):
+        raise_tool_error("auth_required", is_retryable=False, attempted=attempted,
+                         description=f"Access denied ({status}).{where}")
+    if status in (408, 425, 429, 500, 502, 503, 504):
+        raise_tool_error("transient", is_retryable=True, attempted=attempted,
+                         description=f"Upstream returned {status} — retry after a short delay.{where}")
+    if status in (400, 405, 406, 409, 410, 414, 415, 422):
+        raise_tool_error("validation", is_retryable=False, attempted=attempted,
+                         description=f"Upstream rejected the request ({status}) — fix the input before retrying.{where}")
+    if 400 <= status < 600:
+        raise_tool_error("transient", is_retryable=True, attempted=attempted,
+                         description=(f"Upstream returned non-standard status {status} — most likely a CDN or "
+                                      f"rate-limit block rather than a bad request. Retry after a short delay; "
+                                      f"if it persists the upstream is blocking this client.{where}"))
+    raise_tool_error("unknown", is_retryable=False, attempted=attempted,
+                     description=f"Upstream returned {status}.{where}")
+
+
 def raise_http_tool_error(exc: Exception, *, attempted: str) -> None:
     """Convert any upstream exception into a structured ToolError.
 
-    Handles httpx errors, LegislationUpstreamError, and generic exceptions
-    (including curl_cffi errors from the legislation client).
+    Handles LegislationUpstreamError, httpx errors, curl_cffi errors (the
+    legislation client), and generic exceptions.
     """
     if isinstance(exc, LegislationUpstreamError):
         raise_tool_error("transient", is_retryable=True, attempted=attempted,
                          description=str(exc))
     if isinstance(exc, httpx.HTTPStatusError):
-        status = exc.response.status_code
-        if status == 404:
-            raise_tool_error("not_found", is_retryable=False, attempted=attempted,
-                             description=f"Resource not found (404). Check the identifier is correct. URL: {exc.request.url}")
-        if status == 403:
-            raise_tool_error("auth_required", is_retryable=False, attempted=attempted,
-                             description=f"Access denied (403). URL: {exc.request.url}")
-        if status in (429, 503):
-            raise_tool_error("transient", is_retryable=True, attempted=attempted,
-                             description=f"Upstream returned {status} — retry after a short delay. URL: {exc.request.url}")
-        raise_tool_error("unknown", is_retryable=False, attempted=attempted,
-                         description=f"Upstream returned {status}. URL: {exc.request.url}")
-    if isinstance(exc, httpx.TimeoutException):
+        _raise_for_status(exc.response.status_code, attempted=attempted, url=str(exc.request.url))
+    if isinstance(exc, CurlHTTPError):
+        # curl_cffi's HTTPError carries the Response on .response (set by
+        # curl_cffi.requests.exceptions.RequestException.__init__). It shares no
+        # ancestor with httpx.HTTPStatusError, so it needs its own branch — without
+        # one every legislation failure fell through to unknown/non-retryable.
+        resp = getattr(exc, "response", None)
+        status = getattr(resp, "status_code", None)
+        if status is not None:
+            _raise_for_status(status, attempted=attempted, url=str(getattr(resp, "url", "") or ""))
         raise_tool_error("transient", is_retryable=True, attempted=attempted,
-                         description="Request timed out (30s) — upstream may be slow, retry is safe.")
-    if isinstance(exc, httpx.ConnectError):
+                         description=f"Upstream HTTP error with no status available: {exc}. Retry is safe.")
+    if isinstance(exc, (httpx.TimeoutException, CurlTimeout)):
+        raise_tool_error("transient", is_retryable=True, attempted=attempted,
+                         description="Request timed out — upstream may be slow, retry is safe.")
+    if isinstance(exc, (httpx.ConnectError, CurlConnectionError)):
         raise_tool_error("transient", is_retryable=True, attempted=attempted,
                          description="Could not connect to upstream API — network error, retry is safe.")
     raise_tool_error("unknown", is_retryable=False, attempted=attempted,
