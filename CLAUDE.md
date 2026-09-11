@@ -44,8 +44,8 @@ python -m pytest tests/test_citations.py -v   # citation unit tests only
 python -m py_compile src/gateway.py
 python -m py_compile src/modules/citations/tools.py
 
-# Deploy to Fly.io
-fly deploy
+# Deploy: publish a GitHub release. .github/workflows/release.yml then
+# publishes to PyPI and runs flyctl deploy. Never run fly deploy by hand.
 
 # Check deploy status
 fly status --app uk-legal-mcp
@@ -141,7 +141,7 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 
 ## Deployment
 
-- `fly deploy` from repo root. Dockerfile copies `src/` only (tests excluded via `.dockerignore`).
+- Production deploys only through `.github/workflows/release.yml`, which runs when a GitHub release is published: PyPI publish, then `flyctl deploy`. Don't run `fly deploy` by hand (project settings deny it); it skips PyPI, so the published and live versions drift. Dockerfile copies `src/` only (tests excluded via `.dockerignore`).
 - Two machines in `lhr`, auto-stop enabled, min 1 running.
 - The "not listening on expected address" warning during rolling deploy is transient — the machine reaches good state immediately after.
 - Secrets are set via `fly secrets set` and persist across deploys.
