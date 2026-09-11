@@ -136,12 +136,12 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 - `-m "not live"` selects the deterministic, network-independent tests; any test that calls an upstream carries `@pytest.mark.live`. The load-bearing ones: `test_citations.py` (regex patterns, resolution, disambiguation), `test_gateway.py` (server identity, tool listing + schema validity, companion tools, resource templates, and the custom `/health` `/metrics` `/.well-known/*` routes), `test_error_classification.py` (httpx and curl_cffi must classify identically), `test_xml_safe.py` (XXE / billion-laughs defences). Run `uv run pytest -m "not live" -q` for the count rather than trusting this list.
 - Offline tests read committed fixtures from `tests/fixtures/` (provenance in its `README.md`). `tests/live/fixtures/` is gitignored scratch space for live captures; no test may depend on it.
 - Domain modules that hit live APIs are exercised by `audit_*` scripts and manual/dogfeed testing via Claude Desktop, ChatGPT, or MCP Inspector.
-- Always run `uv run pytest -m "not live" -q` (the full non-live suite) before deploying.
+- `.github/workflows/ci.yml` runs the non-live suite on every pull request and every push to `main`, and `release.yml` runs it again before anything is published. Run it locally before pushing rather than finding out in CI.
 - Test discipline: prefer smoke tests + real runtime probes over fitted unit tests that just restate the implementation (see auto-memory `no-fitted-tests`).
 
 ## Deployment
 
-- Production deploys only through `.github/workflows/release.yml`, which runs when a GitHub release is published: PyPI publish, then `flyctl deploy`. Don't run `fly deploy` by hand (project settings deny it); it skips PyPI, so the published and live versions drift. Dockerfile copies `src/` only (tests excluded via `.dockerignore`).
+- Production deploys only through `.github/workflows/release.yml`, which runs when a GitHub release is published: the non-live suite must pass, then PyPI publish, then `flyctl deploy`. Don't run `fly deploy` by hand (project settings deny it); it skips PyPI, so the published and live versions drift. Dockerfile copies `src/` only (tests excluded via `.dockerignore`).
 - Two machines in `lhr`, auto-stop enabled, min 1 running.
 - The "not listening on expected address" warning during rolling deploy is transient — the machine reaches good state immediately after.
 - Secrets are set via `fly secrets set` and persist across deploys.

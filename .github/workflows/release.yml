@@ -5,8 +5,26 @@ on:
     types: [published]
 
 jobs:
+  test:
+    name: Non-live tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - run: uv lock --check
+      - run: uv sync --frozen --group dev
+      # No live-marked test runs here, so nothing should reach the network. The
+      # dead proxy turns an accidental request into a failure instead of a
+      # silent pass; it is a regression guard, not proof that egress is closed.
+      - run: uv run pytest -m "not live" -q
+        env:
+          UV_FROZEN: "1"
+          HTTP_PROXY: http://127.0.0.1:9
+          HTTPS_PROXY: http://127.0.0.1:9
+
   publish:
     name: Publish to PyPI
+    needs: test
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
