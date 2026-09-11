@@ -6,13 +6,15 @@ reaches Claude; exit 2 from PostToolUse shows Claude the stderr.
 """
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-HOOK = Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "post_edit_check.py"
+ROOT = Path(__file__).resolve().parents[1]
+HOOK = ROOT / ".claude" / "hooks" / "post_edit_check.py"
 
 
 def _run(stdin: str) -> subprocess.CompletedProcess:
@@ -69,3 +71,25 @@ def test_unusable_payload_exits_0(stdin):
 def test_missing_file_exits_0(tmp_path):
     r = _run(_edit(tmp_path / "deleted.py"))
     assert (r.returncode, r.stderr) == (0, "")
+
+
+def test_configured_command_finds_hook_from_any_cwd(tmp_path):
+    # Hooks run in Claude's current directory, which follows `cd`. A relative
+    # script path breaks there, and python3 exits 2 for a missing script, so
+    # Claude would be shown a false error after every edit.
+    settings = json.loads((ROOT / ".claude" / "settings.json").read_text())
+    [command] = [h["command"] for m in settings["hooks"]["PostToolUse"] for h in m["hooks"]]
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(ROOT)}
+
+    def run(f: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            command, shell=True, cwd=tmp_path, env=env, input=_edit(f),
+            capture_output=True, text=True, timeout=30,
+        )
+
+    ok = run(_write(tmp_path, "ok.py", "x = 1\n"))
+    assert (ok.returncode, ok.stderr) == (0, "")
+    bad = _write(tmp_path, "bad.py", "def broken(:\n")
+    r = run(bad)
+    assert r.returncode == 2
+    assert f"{bad}:1: SyntaxError" in r.stderr
