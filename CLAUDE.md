@@ -173,13 +173,7 @@ They are NOT loaded unless the relevant files are in scope — they don't bloat 
 | `/bug`     | Incident → test → invariant flywheel for fixing bugs           |
 
 ### Hooks (deterministic, not prompt-guidance)
-`.claude/hooks/post_edit_check.py` fires on every Write/Edit/MultiEdit:
-1. `py_compile` on the changed file — syntax errors surface immediately
-2. `uv run pytest -m "not live" -q` if the file is in `src/` or `tests/`
-
-`.claude/hooks/session_start.py` fires at session start — prints orientation reminder.
-
-Hooks are exit-0 feedback hooks (not blockers) — failures appear in Claude's context for self-correction.
+`.claude/hooks/post_edit_check.py` runs after every Write/Edit of a `.py` file and compiles it. A syntax error exits 2, which is how a PostToolUse hook gets its stderr in front of Claude; a hook that exits 0 is never seen. It does not run tests — run `uv run pytest -m "not live" -q` yourself. Behaviour is pinned by `tests/test_post_edit_hook.py`.
 
 ## Style
 

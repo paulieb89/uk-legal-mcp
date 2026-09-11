@@ -30,16 +30,6 @@
           }
         ]
       }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 .claude/hooks/session_start.py"
-          }
-        ]
-      }
     ]
   }
 }
