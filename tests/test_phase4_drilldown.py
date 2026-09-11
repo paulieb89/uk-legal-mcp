@@ -19,7 +19,7 @@ from fastmcp import Client
 from src.gateway import gateway
 from src.modules.case_law import parsers
 
-FIXTURE = Path(__file__).parent / "live" / "fixtures" / "uksc_2024_12_full.xml"
+FIXTURE = Path(__file__).parent / "fixtures" / "uksc_2024_12_full.xml"
 
 
 def _xml() -> str:
@@ -137,6 +137,7 @@ async def test_resources_as_tools_transform_exposes_read_resource_tool():
     assert "list_resources" in tools
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_judgment_index_under_5k_tokens_live():
     """End-to-end audit-acceptance check against the real TNA endpoint."""
@@ -146,6 +147,7 @@ async def test_judgment_index_under_5k_tokens_live():
     assert _est_tokens(text) < 5_000
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_judgment_para_returns_single_paragraph_live():
     async with Client(gateway) as c:
@@ -155,6 +157,7 @@ async def test_judgment_para_returns_single_paragraph_live():
     assert _est_tokens(text) < 2_000
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_grep_judgment_tool_returns_hits_live():
     async with Client(gateway) as c:
@@ -169,6 +172,7 @@ async def test_grep_judgment_tool_returns_hits_live():
         assert "appellant" in h.snippet.lower()
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_typical_workflow_under_7k_tokens():
     """Integration check: header + grep + 2 paragraphs ≤ 7k tokens.

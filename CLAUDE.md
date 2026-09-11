@@ -133,8 +133,8 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 
 ## Testing
 
-- Eleven test files under `tests/`, all offline. The load-bearing ones: `test_citations.py` (regex patterns, resolution, disambiguation), `test_gateway.py` (server identity, tool listing + schema validity, companion tools, resource templates, and the custom `/health` `/metrics` `/.well-known/*` routes), `test_error_classification.py` (httpx and curl_cffi must classify identically), `test_xml_safe.py` (XXE / billion-laughs defences). Run `uv run pytest -m "not live" -q` for the count rather than trusting this list.
-- Note `tests/live/fixtures/` is gitignored, so a fresh clone cannot run the ~21 tests that read those captures. Anyone adding CI must deselect them or commit the fixtures.
+- `-m "not live"` selects the deterministic, network-independent tests; any test that calls an upstream carries `@pytest.mark.live`. The load-bearing ones: `test_citations.py` (regex patterns, resolution, disambiguation), `test_gateway.py` (server identity, tool listing + schema validity, companion tools, resource templates, and the custom `/health` `/metrics` `/.well-known/*` routes), `test_error_classification.py` (httpx and curl_cffi must classify identically), `test_xml_safe.py` (XXE / billion-laughs defences). Run `uv run pytest -m "not live" -q` for the count rather than trusting this list.
+- Offline tests read committed fixtures from `tests/fixtures/` (provenance in its `README.md`). `tests/live/fixtures/` is gitignored scratch space for live captures; no test may depend on it.
 - Domain modules that hit live APIs are exercised by `audit_*` scripts and manual/dogfeed testing via Claude Desktop, ChatGPT, or MCP Inspector.
 - Always run `uv run pytest -m "not live" -q` (the full non-live suite) before deploying.
 - Test discipline: prefer smoke tests + real runtime probes over fitted unit tests that just restate the implementation (see auto-memory `no-fitted-tests`).

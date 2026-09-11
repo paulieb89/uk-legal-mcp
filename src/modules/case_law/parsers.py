@@ -1,7 +1,7 @@
 """Pure-function LegalDocML parsing helpers.
 
 No HTTP, no FastMCP, no Pydantic — testable offline against the committed
-fixture (`tests/live/fixtures/uksc_2024_12_full.xml`).
+fixture (`tests/fixtures/uksc_2024_12_full.xml`).
 
 Sub-paragraphs without `eId` are nested inside their parent `<paragraph eId>`
 and ride along inside the parent's serialised XML automatically.

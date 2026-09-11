@@ -23,14 +23,33 @@ from pathlib import Path
 import httpx
 import pytest
 import tiktoken
+from tiktoken.load import load_tiktoken_bpe
 
-FIXTURES = Path(__file__).parent / "live" / "fixtures"
+FIXTURES = Path(__file__).parent / "fixtures"
 CLML_FIXTURE = FIXTURES / "housing_act_1988_s21_clml.xml"
 HTML_FIXTURE = FIXTURES / "housing_act_1988_s21_html.html"
 
 LEX_BASE = "https://lex.lab.i.ai.gov.uk"
 
-_enc = tiktoken.get_encoding("cl100k_base")
+# Exact cl100k_base built from the committed asset, because
+# tiktoken.get_encoding() downloads it on a cold cache. Arguments mirror
+# cl100k_base() in tiktoken_ext/openai_public.py (tiktoken 0.12.0); see
+# tests/fixtures/README.md.
+_enc = tiktoken.Encoding(
+    "cl100k_base",
+    pat_str=r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}++|\p{N}{1,3}+| ?[^\s\p{L}\p{N}]++[\r\n]*+|\s++$|\s*[\r\n]|\s+(?!\S)|\s""",
+    mergeable_ranks=load_tiktoken_bpe(
+        str(FIXTURES / "cl100k_base.tiktoken"),
+        expected_hash="223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7",
+    ),
+    special_tokens={
+        "<|endoftext|>": 100257,
+        "<|fim_prefix|>": 100258,
+        "<|fim_middle|>": 100259,
+        "<|fim_suffix|>": 100260,
+        "<|endofprompt|>": 100276,
+    },
+)
 
 
 def tok(s: str) -> int:

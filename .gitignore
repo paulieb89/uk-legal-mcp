@@ -28,6 +28,7 @@ docs/internal/
 
 # Eval/session artefacts
 *.html
+!tests/fixtures/*.html
 *.png
 writing-mcp-tools-review.html
 eval-review-top.png

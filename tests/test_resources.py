@@ -13,6 +13,9 @@ by CloudFront (issue #4) — those tests are skipped on connection refusal
 rather than failed.
 """
 
+from unittest.mock import AsyncMock
+
+import httpx
 import pytest
 from fastmcp import Client
 
@@ -32,6 +35,7 @@ async def test_legislation_resource_templates_registered():
     assert "legislation://{type}/{year}/{number}/toc{?date}" in templates
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_legislation_search_default_finds_named_act():
     """Regression: 'Housing Act 1988' must rank ukpga/1988/50 in the top 3.
@@ -64,20 +68,32 @@ async def test_legislation_search_default_finds_named_act():
 
 
 @pytest.mark.asyncio
-async def test_judgment_wildcard_substitution_handles_deep_slug():
-    """Multi-segment wildcard slug ('ewca/civ/2023/N') routes correctly via a sub-path."""
+async def test_judgment_wildcard_substitution_handles_deep_slug(monkeypatch):
+    """Multi-segment wildcard slug ('ewca/civ/2023/N') routes correctly via a sub-path.
+
+    The TNA fetch is stubbed at httpx.AsyncClient.get, so no network is used;
+    the stub records the exact upstream URL built from the substituted slug.
+    """
+    upstream_url = "https://caselaw.nationalarchives.gov.uk/ewca/civ/2099/99999/data.xml"
+    tna_get = AsyncMock(
+        return_value=httpx.Response(404, request=httpx.Request("GET", upstream_url))
+    )
+    monkeypatch.setattr("httpx.AsyncClient.get", tna_get)
+
     async with Client(gateway) as client:
         # 404 is expected for a made-up slug; the test is that the URL is
         # constructed with the wildcard substituted, not that this case exists.
         with pytest.raises(Exception) as exc_info:
             await client.read_resource("judgment://ewca/civ/2099/99999/header")
 
+    tna_get.assert_awaited_once_with(upstream_url)
     msg = str(exc_info.value)
     assert "ewca/civ/2099/99999" in msg, (
         f"Wildcard substitution failed — error message did not contain the slug: {msg}"
     )
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_legislation_section_resource_fetches_clml():
     """Section resource (HRA 1998 s.1) returns bounded CLML XML."""
@@ -95,6 +111,7 @@ async def test_legislation_section_resource_fetches_clml():
     assert len(text) < 100_000
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_legislation_section_point_in_time_via_date_query():
     """Optional ?date=YYYY-MM-DD returns the section as it stood on that date."""
@@ -112,6 +129,7 @@ async def test_legislation_section_point_in_time_via_date_query():
     assert text.startswith("<Legislation"), f"Expected CLML, got: {text[:80]!r}"
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_legislation_toc_resource_returns_lines():
     """TOC resource returns 'id: title' lines from a real Act."""
