@@ -21,23 +21,9 @@ not the whole Act.
 
 from fastmcp import Context, FastMCP
 
-from ...xml_safe import parse_xml
+from .tools import _parse_toc_xml
 
 LEGISLATION_BASE = "https://www.legislation.gov.uk"
-ATOM_NS = {"leg": "http://www.legislation.gov.uk/namespaces/legislation"}
-
-
-def _parse_toc(xml_text: str) -> list[str]:
-    """Flatten CLML XML into 'id: title' strings, document order."""
-    root = parse_xml(xml_text)
-    items: list[str] = []
-    for el in root.iter():
-        id_val = el.get("id")
-        if id_val:
-            title_el = el.find("leg:Title", ATOM_NS)
-            if title_el is not None and title_el.text:
-                items.append(f"{id_val}: {title_el.text.strip()}")
-    return items
 
 
 def register_legislation_resources(gateway: FastMCP) -> None:
@@ -101,5 +87,5 @@ def register_legislation_resources(gateway: FastMCP) -> None:
             url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/data.xml"
         resp = await client.get(url)
         resp.raise_for_status()
-        items = _parse_toc(resp.text)
+        items = _parse_toc_xml(resp.text)
         return "\n".join(items)

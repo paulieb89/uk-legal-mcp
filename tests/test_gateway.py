@@ -256,6 +256,88 @@ class TestHmrcTools:
 
 
 # ---------------------------------------------------------------------------
+# Legislation tools (live — exercises the audited SI provision-resolution fix
+# through the actual registered MCP tool, not just the internal parser)
+# ---------------------------------------------------------------------------
+
+
+def _skip_on_waf(exc: Exception):
+    if "WAF" in str(exc) or "437" in str(exc) or "438" in str(exc):
+        pytest.skip(f"legislation.gov.uk WAF challenge — see issue #4: {exc}")
+    raise exc
+
+
+class TestLegislationTools:
+    """Source-fidelity audit: legislation_get_section(uksi, 1998, 1833, '4')
+    returned the enclosing Part II heading and document boilerplate instead
+    of regulation 4's own content. These exercise the fix through the real
+    registered MCP tool against live legislation.gov.uk."""
+
+    @pytest.mark.live
+    @pytest.mark.asyncio
+    async def test_audited_si_regulation_resolves_correctly(self, client: Client):
+        try:
+            result = await client.call_tool(
+                "legislation_get_section",
+                {"type": "uksi", "year": 1998, "number": 1833, "section": "4"},
+            )
+        except Exception as e:
+            _skip_on_waf(e)
+        assert not result.is_error, f"Tool error: {result.data}"
+        assert result.data.title == "Maximum weekly working time", (
+            f"Got {result.data.title!r} — the audited bug returns the Part II "
+            f"heading here instead."
+        )
+        assert "48 hours" in result.data.content
+        assert "Council Directive" not in result.data.content
+
+    @pytest.mark.live
+    @pytest.mark.asyncio
+    async def test_audited_si_toc_lists_regulations(self, client: Client):
+        try:
+            result = await client.call_tool(
+                "legislation_get_toc",
+                {"type": "uksi", "year": 1998, "number": 1833, "limit": 1000},
+            )
+        except Exception as e:
+            _skip_on_waf(e)
+        assert not result.is_error, f"Tool error: {result.data}"
+        assert any(
+            item.startswith("regulation-4:") for item in result.data.items
+        ), f"Expected a 'regulation-4: ...' entry, got {result.data.items[:10]}..."
+
+    @pytest.mark.live
+    @pytest.mark.asyncio
+    async def test_unknown_si_provision_returns_not_found(self, client: Client):
+        with pytest.raises(ToolError) as exc_info:
+            await client.call_tool(
+                "legislation_get_section",
+                {"type": "uksi", "year": 1998, "number": 1833, "section": "99999"},
+            )
+        msg = str(exc_info.value)
+        if "WAF" in msg or "437" in msg or "438" in msg:
+            pytest.skip(f"legislation.gov.uk WAF challenge — see issue #4: {msg}")
+        assert "not_found" in msg, f"Expected not_found error_category, got: {msg}"
+
+    @pytest.mark.live
+    @pytest.mark.asyncio
+    async def test_existing_act_behaviour_unchanged(self, client: Client):
+        """Regression guard: Housing Act 1988 s.21 (already source-verified
+        in the prior audit) must still resolve correctly after generalising
+        provision lookup to cover regulations/articles too."""
+        try:
+            result = await client.call_tool(
+                "legislation_get_section",
+                {"type": "ukpga", "year": 1988, "number": 50, "section": "21"},
+            )
+        except Exception as e:
+            _skip_on_waf(e)
+        assert not result.is_error, f"Tool error: {result.data}"
+        assert "possession" in result.data.content.lower()
+        assert result.data.extent == ["England", "Wales"]
+
+
+# ---------------------------------------------------------------------------
 # Custom HTTP routes (tested via ASGI test client)
 # ---------------------------------------------------------------------------
 

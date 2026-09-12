@@ -28,6 +28,9 @@ from tiktoken.load import load_tiktoken_bpe
 FIXTURES = Path(__file__).parent / "fixtures"
 CLML_FIXTURE = FIXTURES / "housing_act_1988_s21_clml.xml"
 HTML_FIXTURE = FIXTURES / "housing_act_1988_s21_html.html"
+WTR_REG4_FIXTURE = FIXTURES / "working_time_regs_1998_reg4_clml.xml"
+WTR_TOC_FIXTURE = FIXTURES / "working_time_regs_1998_toc_excerpt_clml.xml"
+ORDER_ARTICLE2_FIXTURE = FIXTURES / "commencement_order_2026_852_article2_clml.xml"
 
 LEX_BASE = "https://lex.lab.i.ai.gov.uk"
 
@@ -377,6 +380,191 @@ class TestRepealAndVersionDate:
 </Legislation>"""
         result = _parse_clml_section(no_restrict_start_date, "1", 10_000)
         assert result.version_date == date(1999, 12, 1)
+
+
+class TestProvisionResolutionAcrossLegislationFamilies:
+    """Source-fidelity audit: legislation_get_section(uksi, 1998, 1833, "4")
+    returned the enclosing Part II heading plus document-level dc:description
+    boilerplate instead of regulation 4's own heading/text — because
+    _parse_clml_section only ever looked for id='section-{N}', never
+    'regulation-{N}' or 'article-{N}'.
+
+    Root cause was structural, not SI-specific: CLML represents a provision
+    as <P1group> (carries <Title>) wrapping <P1> (usually carries @id) — the
+    same split exists in Acts (verified against Housing Act 1988) as in SIs.
+    The fix (_find_provision_element) tries each known provision noun
+    (section/regulation/article) with exact @id equality, never a prefix or
+    substring match, and _parse_clml_section now raises ProvisionNotFoundError
+    instead of falling back to whole-document text when nothing matches.
+
+    Fixtures are real, unmodified legislation.gov.uk captures (see
+    tests/fixtures/README.md for URLs and capture dates) — not hand-built
+    approximations.
+    """
+
+    def _wtr_reg4(self) -> str:
+        return WTR_REG4_FIXTURE.read_text()
+
+    def _order_article2(self) -> str:
+        return ORDER_ARTICLE2_FIXTURE.read_text()
+
+    # ── the audited case: SI regulation ──────────────────────────────────
+
+    def test_si_regulation_resolves_its_own_heading(self):
+        """This is the exact audited failure: title must be regulation 4's
+        own heading, not Part II's ('RIGHTS AND OBLIGATIONS CONCERNING
+        WORKING TIME')."""
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(self._wtr_reg4(), "4", 10_000)
+        assert result.title == "Maximum weekly working time", (
+            f"Got {result.title!r} — if this is a Part/Chapter heading, the "
+            f"parser is falling back to document-wide search again."
+        )
+
+    def test_si_regulation_content_excludes_document_boilerplate(self):
+        """The audited content pollution: document-level <dc:description>
+        (Council Directive text, unrelated to any single regulation) must
+        not appear in a specific regulation's content."""
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(self._wtr_reg4(), "4", 10_000)
+        assert "Council Directive" not in result.content
+        assert "Statute Law Database" not in result.content
+        assert "Children (Protection at Work) Regulations" not in result.content
+
+    def test_si_regulation_content_is_its_own_text_not_a_neighbour(self):
+        """Content must be regulation 4's own substantive text (the 48-hour
+        limit) and must not spill into regulation 5's heading — proving the
+        match is scoped to the single provision, not a broader container."""
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(self._wtr_reg4(), "4", 10_000)
+        assert "48 hours" in result.content
+        assert "Agreement to exclude the maximum" not in result.content
+
+    def test_si_regulation_section_number_and_extent_preserved(self):
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(self._wtr_reg4(), "4", 10_000)
+        assert result.section_number == "4"
+        assert set(result.extent) <= {"England", "Wales", "Scotland", "Northern Ireland"}
+        assert result.extent  # this instrument's RestrictExtent is E+W+S
+
+    # ── SI Order (article-N), not Regulations (regulation-N) ────────────
+
+    def test_si_order_article_resolves_its_own_heading(self):
+        """Same `uksi` type code, different drafting style: Orders use
+        'article-N', not 'regulation-N'. Confirms the fix is noun-generic,
+        not just 'add regulation- alongside section-'."""
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(self._order_article2(), "2", 10_000)
+        assert result.title == "Commencement of provision"
+        assert "section 208" in result.content
+
+    # ── honest not-found, never a neighbour/ancestor node ─────────────────
+
+    def test_unknown_provision_number_raises_not_found(self):
+        """A provision number absent from the document must raise, not
+        silently return the whole document or an enclosing heading."""
+        from src.modules.legislation.tools import _parse_clml_section, ProvisionNotFoundError
+        with pytest.raises(ProvisionNotFoundError):
+            _parse_clml_section(self._wtr_reg4(), "999", 10_000)
+
+    def test_no_accidental_prefix_match_of_a_longer_number(self):
+        """Requesting '4' must never match an id like 'regulation-40' — exact
+        @id equality only, never startswith/substring. Only 'regulation-40'
+        exists in this document, so '4' must raise not-found, never
+        silently resolve to the '40' node."""
+        from src.modules.legislation.tools import _parse_clml_section, ProvisionNotFoundError
+        synthetic = """<?xml version="1.0"?>
+<Legislation xmlns="http://www.legislation.gov.uk/namespaces/legislation"
+             xmlns:ukm="http://www.legislation.gov.uk/namespaces/metadata">
+  <Body>
+    <P1group><Title>Not this one</Title>
+      <P1 id="regulation-40"><P1para>Wrong provision — forty, not four.</P1para></P1>
+    </P1group>
+  </Body>
+</Legislation>"""
+        with pytest.raises(ProvisionNotFoundError):
+            _parse_clml_section(synthetic, "4", 10_000)
+
+    def test_exact_match_still_works_alongside_a_similarly_prefixed_id(self):
+        """Positive counterpart to the prefix-match guard: '4' must resolve
+        correctly even when 'regulation-40' is also present in the document."""
+        from src.modules.legislation.tools import _parse_clml_section
+        synthetic = """<?xml version="1.0"?>
+<Legislation xmlns="http://www.legislation.gov.uk/namespaces/legislation"
+             xmlns:ukm="http://www.legislation.gov.uk/namespaces/metadata">
+  <Body>
+    <P1group><Title>The real four</Title>
+      <P1 id="regulation-4"><P1para>Correct provision.</P1para></P1>
+    </P1group>
+    <P1group><Title>Forty</Title>
+      <P1 id="regulation-40"><P1para>Wrong provision — forty, not four.</P1para></P1>
+    </P1group>
+  </Body>
+</Legislation>"""
+        result = _parse_clml_section(synthetic, "4", 10_000)
+        assert result.title == "The real four"
+        assert "Correct provision" in result.content
+        assert "Wrong provision" not in result.content
+
+    # ── existing Act behaviour must not regress ──────────────────────────
+
+    def test_act_section_still_resolves_via_generalised_lookup(self):
+        """Housing Act 1988 s.21 (id on <P1>, Title on parent <P1group>) must
+        keep working through _find_provision_element exactly as it did
+        through the old section-only lookup."""
+        from src.modules.legislation.tools import _parse_clml_section
+        result = _parse_clml_section(_clml(), "21", 10_000)
+        assert "possession" in result.content.lower()
+        assert result.section_number == "21"
+
+
+class TestParseTocXml:
+    """legislation_get_toc's confirmed defect: only Part/Chapter/crossheading
+    entries appeared (elements with @id AND <Title> on the SAME node); every
+    individual provision was silently missing because CLML splits @id and
+    <Title> across the <P1group>/<P1> pair. This affected Acts and SIs alike
+    — the Housing Act 1988 TOC was equally missing every 'section-N' entry,
+    just less noticeable against its many crossheadings.
+    """
+
+    def test_si_toc_lists_individual_regulations(self):
+        from src.modules.legislation.tools import _parse_toc_xml
+        items = _parse_toc_xml(WTR_TOC_FIXTURE.read_text())
+        assert "regulation-4: Maximum weekly working time" in items, items
+
+    def test_si_toc_still_lists_part_headings(self):
+        """Fixing provision-level entries must not drop the higher-level
+        structure that already worked."""
+        from src.modules.legislation.tools import _parse_toc_xml
+        items = _parse_toc_xml(WTR_TOC_FIXTURE.read_text())
+        assert "part-I: GENERAL" in items
+        assert "part-II: RIGHTS AND OBLIGATIONS CONCERNING WORKING TIME" in items
+
+    def test_si_toc_preserves_document_order(self):
+        from src.modules.legislation.tools import _parse_toc_xml
+        items = _parse_toc_xml(WTR_TOC_FIXTURE.read_text())
+        assert items.index("part-I: GENERAL") < items.index("regulation-1: Citation, commencement and extent")
+        assert items.index("regulation-2: Interpretation") < items.index("part-II: RIGHTS AND OBLIGATIONS CONCERNING WORKING TIME")
+        assert items.index("part-II: RIGHTS AND OBLIGATIONS CONCERNING WORKING TIME") < items.index("regulation-4: Maximum weekly working time")
+
+    def test_act_toc_also_lists_individual_sections(self):
+        """The same defect, and the same fix, applies to Acts — not just SIs."""
+        from src.modules.legislation.tools import _parse_toc_xml
+        items = _parse_toc_xml(_clml())
+        section_entries = [i for i in items if i.startswith("section-21")]
+        assert section_entries, (
+            f"Expected a 'section-21: ...' entry in the TOC, got {items}. "
+            f"If this is empty, the Act regression is back."
+        )
+
+    def test_act_toc_unwraps_repealed_heading_via_retained_text(self):
+        """A repealed section's <Title> wraps its heading in <Repeal
+        RetainText='true'> — the retained text should still surface in the
+        TOC (a lawyer can still see what the repealed section was called),
+        not silently degrade to a bare id."""
+        from src.modules.legislation.tools import _parse_toc_xml
+        items = _parse_toc_xml(_clml())
+        assert any(i.startswith("section-21: ") and len(i) > len("section-21: ") for i in items), items
 
 
 # ── 2. HTML fallback parser ────────────────────────────────────────────────

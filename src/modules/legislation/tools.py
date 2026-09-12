@@ -65,6 +65,53 @@ def _normalise_section_id(section: str) -> str:
     return value
 
 
+# The CLML provision noun is a property of a document's own drafting style,
+# not of its `type` code: legislation.gov.uk types are broader than drafting
+# conventions — a single `uksi` type covers both Regulations (id="regulation-N")
+# and Orders (id="article-N"), verified live against uksi/2026/852 ("The
+# Health and Social Care Act 2012 (Commencement No. 12) Order 2026", ids
+# article-1/article-2) vs uksi/1998/1833 ("The Working Time Regulations 1998",
+# ids regulation-1..regulation-30-ish). Acts (ukpga/asp/nia) use "section-N".
+# There is no reliable way to predict which noun a given document uses from
+# its type/year/number alone, so provision lookup tries each of the three
+# known nouns in turn and matches on EXACT @id equality only — never a
+# prefix/substring match, so section="4" can never accidentally resolve to
+# "regulation-40".
+_PROVISION_NOUNS = ("section", "regulation", "article")
+
+
+class ProvisionNotFoundError(Exception):
+    """Raised when no known provision noun (section/regulation/article) with
+    the requested number exists in the fetched CLML document."""
+
+
+def _find_provision_element(root, section: str, ns: dict):
+    """Locate the structural container for a numbered provision.
+
+    CLML represents a provision as a <P1group> (carries <Title> and any
+    RestrictExtent/RestrictStartDate) wrapping a <P1> (carries the provision
+    text). The @id lives on whichever of the two carries it — verified live:
+    older/most real documents (Housing Act 1988, Working Time Regulations
+    1998) put @id on <P1>; some revised CLML puts it directly on <P1group>.
+    Both placements are tried, exact-match only, for each candidate noun.
+
+    Returns the P1group element (so callers see Title + extent/date
+    attributes) or None if no candidate id matches anywhere in the document.
+    """
+    for noun in _PROVISION_NOUNS:
+        id_value = f"{noun}-{section}"
+        group = root.find(f".//leg:P1group[@id='{id_value}']", ns)
+        if group is not None:
+            return group
+        p1 = root.find(f".//leg:P1[@id='{id_value}']", ns)
+        if p1 is not None:
+            parent = p1.getparent()
+            if parent is not None and etree.QName(parent).localname == "P1group":
+                return parent
+            return p1
+    return None
+
+
 def _parse_html_section(html_text: str, section: str, max_chars: int, warning: str) -> LegislationSection:
     """Best-effort parser for legislation.gov.uk HTML section pages.
 
@@ -211,9 +258,9 @@ def _find_restrict_extent(section_el, root) -> tuple[str, bool]:
 
 
 def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> LegislationSection:
-    """Extract a section from CLML XML, truncating content to max_chars.
+    """Extract a provision (section/regulation/article) from CLML XML.
 
-    Extent comes from the RestrictExtent attribute on the section's element
+    Extent comes from the RestrictExtent attribute on the provision's element
     (or its nearest ancestor that carries one), mapped through the canonical
     code→name table. When no RestrictExtent is found, `extent` is the empty
     list per the documented contract — never fabricated.
@@ -221,6 +268,13 @@ def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> Legislat
     Older fixtures may carry a doctored `<ukm:Extent Value="..."/>` element;
     we fall back to that to keep test fixtures portable, but real CLML uses
     RestrictExtent.
+
+    Raises ProvisionNotFoundError when no section/regulation/article with
+    this number exists in the document — the caller must surface this as an
+    honest not-found result, never fall back to returning the whole
+    document's text or an ancestor heading as if it were the requested
+    provision (see the source-fidelity audit: this used to silently return
+    Part-level content for a requested SI regulation).
     """
     root = parse_xml(xml_text)
     ns = {
@@ -231,24 +285,12 @@ def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> Legislat
     def extract_text(el) -> str:
         return " ".join(el.itertext()).strip()
 
-    # Section element: prefer the P1group structural container because it
-    # carries RestrictExtent AND wraps the section's <Title>. The id attribute
-    # may live on either P1group or P1 depending on the Act's vintage:
-    #   1. P1group[@id='section-N']  — newer revised CLML
-    #   2. P1[@id='section-N']        — older / many real Acts (e.g. Housing
-    #      Act 1988). When the id is on P1, walk up to its P1group parent so
-    #      we still see the Title and RestrictExtent above.
-    # NB: lxml elements have no useful truth-testing, so chain with `is None`.
-    section_el = root.find(f".//leg:P1group[@id='section-{section}']", ns)
+    section_el = _find_provision_element(root, section, ns)
     if section_el is None:
-        p1 = root.find(f".//leg:P1[@id='section-{section}']", ns)
-        if p1 is not None:
-            parent = p1.getparent()
-            if parent is not None and etree.QName(parent).localname == "P1group":
-                section_el = parent
-            else:
-                section_el = p1
-    raw_content = extract_text(section_el) if section_el is not None else extract_text(root)
+        raise ProvisionNotFoundError(
+            f"No section, regulation, or article numbered {section!r} found in this document."
+        )
+    raw_content = extract_text(section_el)
     original_length = len(raw_content)
     truncated = original_length > max_chars
     content = raw_content[:max_chars] + " …[truncated]" if truncated else raw_content
@@ -279,7 +321,7 @@ def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> Legislat
     if _section_is_repealed(section_el, ns):
         in_force = False
         prospective = False
-    elif section_el is not None:
+    else:
         in_force_el = section_el.find(".//ukm:InForce", ns)
         if in_force_el is not None:
             applied = (in_force_el.get("Applied") or "").lower() == "true"
@@ -308,25 +350,22 @@ def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> Legislat
             except ValueError:
                 pass
 
-    # Section title: prefer the section element's direct <Title> child so
-    # we don't grab the Part / Chapter / Act title that appears earlier in
-    # the document. Fall back to root-wide search only when the section
-    # element wasn't located.
+    # Provision title: the direct <Title> child of section_el (the P1group),
+    # never a root-wide search — that would risk picking up the Part/Chapter/
+    # Act title that appears earlier in the document (the audited bug: a
+    # requested regulation returning its enclosing Part's heading instead of
+    # its own). section_el is always resolved by this point (ProvisionNotFoundError
+    # was raised above otherwise), so there is no "unlocated" fallback case.
     title = f"Section {section}"
-    if section_el is not None:
-        title_el = section_el.find("leg:Title", ns)
-        if title_el is None:
-            title_el = section_el.find(".//leg:Title", ns)
-        if title_el is not None:
-            # When the title is wrapped in <Repeal>, the text lives inside the
-            # Repeal child; itertext() flattens that for us.
-            title_text = " ".join(title_el.itertext()).strip()
-            if title_text:
-                title = title_text
-    else:
-        title_el = root.find(".//leg:Title", ns)
-        if title_el is not None and title_el.text:
-            title = title_el.text.strip()
+    title_el = section_el.find("leg:Title", ns)
+    if title_el is None:
+        title_el = section_el.find(".//leg:Title", ns)
+    if title_el is not None:
+        # When the title is wrapped in <Repeal>, the text lives inside the
+        # Repeal child; itertext() flattens that for us.
+        title_text = " ".join(title_el.itertext()).strip()
+        if title_text:
+            title = title_text
 
     return LegislationSection(
         title=title,
@@ -344,20 +383,59 @@ def _parse_clml_section(xml_text: str, section: str, max_chars: int) -> Legislat
 
 
 def _parse_toc_xml(xml_text: str) -> list[str]:
-    """Extract the full table of contents from CLML XML.
+    """Extract the full table of contents from CLML XML, in document order.
 
-    Returns every structural element that has an @id and a <Title>, in
-    document order. No slicing — callers apply offset/limit themselves.
+    Two shapes of structural element both need covering:
+      - Part/Chapter/crossheading containers carry @id and <Title> on the
+        SAME element — a plain per-element check finds these.
+      - Individual provisions (<P1group> wrapping <P1>) do NOT: @id lives on
+        whichever of the two the document puts it on (usually <P1>, verified
+        against Housing Act 1988 and the Working Time Regulations 1998;
+        occasionally <P1group> itself), while <Title> is always the direct
+        child of <P1group>. Neither element alone satisfies "has @id AND has
+        its own Title", so the naive per-element check silently drops every
+        provision and only Part-level structure survives — the confirmed TOC
+        defect from the source-fidelity audit (affects Acts and SIs alike;
+        it was never SI-specific, just harder to notice against an Act's
+        many crossheadings).
+
+    No slicing — callers apply offset/limit themselves. Untitled provisions
+    (id present, no <Title> — real but rare, e.g. an inserted "5A" with no
+    heading) are still listed, as a bare id, so they remain discoverable via
+    legislation_get_section even without a heading to show.
     """
+    def title_text(el) -> str | None:
+        # itertext(), not .text: a repealed provision's heading is wrapped
+        # <Title><Repeal RetainText="true">actual heading</Repeal></Title>,
+        # so .text alone (direct text only) misses it — the retained text is
+        # meant to stay readable, so surface it rather than dropping to a
+        # bare id for every repealed provision.
+        title_el = el.find("leg:Title", ns)
+        if title_el is None:
+            return None
+        text = " ".join(title_el.itertext()).strip()
+        return text or None
+
     root = parse_xml(xml_text)
     ns = {"leg": "http://www.legislation.gov.uk/namespaces/legislation"}
     items = []
     for el in root.iter():
-        id_val = el.get("id")
-        if id_val:
-            title_el = el.find("leg:Title", ns)
-            if title_el is not None and title_el.text:
-                items.append(f"{id_val}: {title_el.text.strip()}")
+        tag = etree.QName(el).localname
+        if tag == "P1group":
+            id_val = el.get("id")
+            if not id_val:
+                p1 = el.find("leg:P1", ns)
+                id_val = p1.get("id") if p1 is not None else None
+            if not id_val:
+                continue
+            text = title_text(el)
+            items.append(f"{id_val}: {text}" if text else id_val)
+        else:
+            id_val = el.get("id")
+            if id_val:
+                text = title_text(el)
+                if text:
+                    items.append(f"{id_val}: {text}")
     return items
 
 
@@ -445,17 +523,26 @@ def register_tools(mcp: FastMCP) -> None:
         type: Annotated[str, Field(description="Legislation type code: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). Use the value from legislation_search results.", min_length=2, max_length=10)],
         year: Annotated[int, Field(description="Year of enactment", ge=1800, le=2100)],
         number: Annotated[int, Field(description="Chapter or SI number", ge=1)],
-        section: Annotated[str, Field(description="Section number, e.g. '47' or '12A'. Use the numeric part only — not 'section-47'. Schedules are not currently supported.", min_length=1, max_length=50)],
+        section: Annotated[str, Field(description="Provision number, e.g. '47' or '12A' — works for Act sections, SI regulations, and SI articles alike. Use the numeric part only — not 'section-47'/'regulation-47'/'article-47'. Schedules are not currently supported.", min_length=1, max_length=50)],
         max_chars: Annotated[int, Field(description="Maximum characters of section content to return. Default 10,000 (~2,500 tokens) covers almost every section. Raise to 50,000+ only for unusually long Finance Act definition sections. Check content_truncated in the response to see if it was cut.", ge=500, le=200000)] = 10000,
         *,
         ctx: Context,
     ) -> LegislationSection:
-        """USE THIS TOOL WHEN you have a known Act / SI and want the parsed text of a specific section, with extent and in-force metadata.
+        """USE THIS TOOL WHEN you have a known Act / SI and want the parsed text of a specific section, regulation, or article, with extent and in-force metadata.
 
-        Returns full section text, territorial extent, in-force status, and
-        prospective flag. Content capped per max_chars (default 10,000,
-        ~2,500 tokens) — raise for unusually long definition sections; check
-        content_truncated in the response.
+        Returns the provision's own text and its own heading — never a
+        neighbouring or enclosing Part/Chapter's content. Also returns
+        territorial extent, in-force status, and prospective flag. Content
+        capped per max_chars (default 10,000, ~2,500 tokens) — raise for
+        unusually long definition sections; check content_truncated in the
+        response.
+
+        Works uniformly across Act sections ('section-N'), SI regulations
+        ('regulation-N'), and SI articles ('article-N') — pass the bare
+        number regardless of which the document uses; you don't need to know
+        which noun applies. Raises a not_found error (rather than returning
+        a plausible but wrong node) if the number doesn't exist in this
+        document — check legislation_get_toc for valid numbers.
 
         ALWAYS check `extent` — a section may apply to England & Wales but not
         Scotland or Northern Ireland. Reciting a section without checking
@@ -467,12 +554,34 @@ def register_tools(mcp: FastMCP) -> None:
         """
         client = ctx.lifespan_context["legislation_http"]
         section = _normalise_section_id(section)
+        # The URL always uses the literal "section" path segment regardless
+        # of the document's own provision noun (section/regulation/article):
+        # legislation.gov.uk itself 303/307-redirects to the correct noun
+        # (verified live: .../uksi/1998/1833/section/4/ -> .../regulation/4/,
+        # and .../uksi/2026/852/section/1/ -> .../article/1/...), and the
+        # legislation_http client follows redirects. So the fetch always
+        # lands on the right document; only the CLML *parsing* needs to know
+        # about multiple provision nouns (see _find_provision_element).
         url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}/data.xml"
         _attempted = f"legislation_get_section(type={type!r}, year={year}, number={number}, section={section!r})"
         try:
             resp = await client.get(url)
             resp.raise_for_status()
             return _parse_clml_section(resp.text, section, max_chars)
+        except ProvisionNotFoundError as exc:
+            raise_tool_error(
+                "not_found",
+                is_retryable=False,
+                attempted=_attempted,
+                description=(
+                    f"{type}/{year}/{number} was fetched successfully but does not "
+                    f"contain a section, regulation, or article numbered {section!r}. "
+                    f"{exc} Check legislation_get_toc for the valid provision numbers, "
+                    "or confirm the number against legislation.gov.uk directly — do "
+                    "not assume a neighbouring provision or the whole document answers "
+                    "this request."
+                ),
+            )
         except LegislationUpstreamError as exc:
             html_url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}"
             try:
@@ -497,10 +606,16 @@ def register_tools(mcp: FastMCP) -> None:
         *,
         ctx: Context,
     ) -> LegislationTOC:
-        """USE THIS TOOL WHEN you have a known Act / SI and want the structural table of contents (parts, chapters, sections, schedules).
+        """USE THIS TOOL WHEN you have a known Act / SI and want the structural table of contents (parts, chapters, individual sections/regulations/articles).
 
-        Returns structural elements with XML id and title, e.g. 'section-47:
-        Definitions'. AFTER calling, pass the numeric section identifier (use
+        Returns structural elements with XML id and title, in document order,
+        e.g. 'section-47: Definitions' for an Act or 'regulation-4: Maximum
+        weekly working time' for an SI. Individual provisions are listed
+        alongside their enclosing Part/Chapter/crossheading headings — both
+        levels matter: the heading entries give you the document's shape,
+        the provision entries give you what to pass to legislation_get_section.
+        A provision with no heading in the source (rare) is listed as a bare
+        id with no title. AFTER calling, pass the numeric identifier (use
         '47', NOT 'section-47') into legislation_get_section for full text.
 
         Large statutes (Companies Act 2006 has many hundreds of items) are
