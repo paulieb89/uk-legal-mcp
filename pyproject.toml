@@ -63,11 +63,17 @@ uk-legal-mcp = "src.gateway:main_stdio"
 packages = ["src"]
 
 [tool.hatch.build.targets.sdist]
+# tests/ is not needed to build the wheel from the sdist, and it carries a
+# 1.7 MB tokenizer fixture.
 exclude = [
     ".build-venv/",
     ".mypy_cache/",
     ".pytest_cache/",
     "research/",
+    "tests/",
+    # .gitignore un-ignores this one with `!tests/fixtures/*.html`, which
+    # otherwise survives the `tests/` exclusion above.
+    "tests/fixtures/*.html",
 ]
 
 [dependency-groups]
