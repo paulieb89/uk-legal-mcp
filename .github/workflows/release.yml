@@ -22,9 +22,100 @@ jobs:
           HTTP_PROXY: http://127.0.0.1:9
           HTTPS_PROXY: http://127.0.0.1:9
 
+  preflight:
+    name: Verify release artifacts
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Record the inputs this release builds from
+        run: |
+          echo "ref: ${{ github.ref }}"
+          echo "commit: $(git rev-parse HEAD)  (event sha: ${{ github.sha }})"
+          sha256sum Dockerfile uv.lock pyproject.toml
+
+      - run: uv build
+
+      - name: Record artifact identity
+        run: sha256sum dist/*.whl dist/*.tar.gz
+
+      # The smoke environment installs the locked production set first, then the
+      # wheel with --no-deps, so the wheel is exercised against exactly the
+      # versions uv.lock selects instead of a fresh resolution.
+      - name: Smoke-test the built wheel
+        run: |
+          uv export --frozen --no-dev --no-emit-project --no-hashes --no-annotate \
+            --format requirements.txt -o "$RUNNER_TEMP/locked.txt"
+          uv venv "$RUNNER_TEMP/smoke"
+          uv pip install --python "$RUNNER_TEMP/smoke/bin/python" -r "$RUNNER_TEMP/locked.txt"
+          uv pip install --python "$RUNNER_TEMP/smoke/bin/python" --no-deps dist/*.whl
+          cd "$RUNNER_TEMP"
+          ./smoke/bin/python - <<'PY'
+          import asyncio, importlib.metadata as md
+          import src.gateway as g
+
+          assert "site-packages" in g.__file__, f"imported from source tree: {g.__file__}"
+          ep = [e for e in md.entry_points(group="console_scripts") if e.name == "uk-legal-mcp"][0]
+          assert ep.load().__name__ == "main_stdio", ep.value
+
+          from fastmcp import Client
+
+          async def probe():
+              async with Client(g.gateway) as c:
+                  tools = await c.list_tools()
+                  assert tools, "no tools registered"
+                  print("tools:", len(tools), "resources:", len(await c.list_resources()))
+
+          asyncio.run(probe())
+
+          from starlette.testclient import TestClient
+
+          app = g.gateway.http_app(
+              path="/mcp", json_response=True, stateless_http=True, transport="streamable-http"
+          )
+          with TestClient(app) as tc:
+              r = tc.get("/health")
+              assert r.status_code == 200, r.status_code
+              print("health:", r.text)
+          print("wheel smoke OK")
+          PY
+
+      - name: Rebuild the wheel from the sdist
+        run: |
+          mkdir -p "$RUNNER_TEMP/sdist"
+          tar xzf dist/*.tar.gz -C "$RUNNER_TEMP/sdist"
+          cd "$RUNNER_TEMP"/sdist/*/
+          uv build --wheel --out-dir "$RUNNER_TEMP/sdist-wheel"
+          ls -l "$RUNNER_TEMP/sdist-wheel"
+
+      - name: Build the production image
+        run: |
+          docker build -t uk-legal-mcp:preflight .
+          docker image inspect uk-legal-mcp:preflight --format 'image id: {{.Id}}'
+
+      - name: Smoke-test the built image
+        run: |
+          cleanup() { docker rm -f uk-legal-preflight >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker run -d --name uk-legal-preflight -p 8080:8080 uk-legal-mcp:preflight
+          # Docker accepts the socket before Uvicorn binds, so retry on every
+          # error rather than only on connection-refused.
+          curl -fsS --retry 30 --retry-delay 1 --retry-all-errors --max-time 90 \
+            http://127.0.0.1:8080/health
+          init=$(curl -fsS --max-time 30 -X POST http://127.0.0.1:8080/mcp \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"preflight","version":"0"}}}')
+          echo "$init" | head -c 200; echo
+          echo "$init" | grep -q '"protocolVersion"'
+          curl -fsS --max-time 20 http://127.0.0.1:8080/metrics | head -1
+          echo "container health + MCP initialize OK"
+
   publish:
     name: Publish to PyPI
-    needs: test
+    needs: [test, preflight]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
