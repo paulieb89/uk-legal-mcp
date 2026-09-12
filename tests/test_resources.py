@@ -132,7 +132,9 @@ async def test_legislation_section_point_in_time_via_date_query():
 @pytest.mark.live
 @pytest.mark.asyncio
 async def test_legislation_toc_resource_returns_lines():
-    """TOC resource returns 'id: title' lines from a real Act."""
+    """TOC resource returns 'id: title' lines from a real Act, including
+    individual sections (not just Part/crossheading structure — see the
+    source-fidelity audit fix for _parse_toc_xml)."""
     async with Client(gateway) as client:
         try:
             result = await client.read_resource("legislation://ukpga/1998/42/toc")
@@ -144,7 +146,16 @@ async def test_legislation_toc_resource_returns_lines():
     text = result[0].text
     lines = [ln for ln in text.splitlines() if ln.strip()]
     assert len(lines) > 5, "HRA 1998 should produce a non-trivial TOC"
-    assert all(":" in ln for ln in lines), "Each line should be 'id: title'"
+    # Most lines are "id: title"; a genuinely untitled provision (HRA 1998
+    # has exactly one, inside Schedule 1) is listed as a bare id rather than
+    # silently dropped — so require the colon form for the vast majority,
+    # not all, and require actual section entries to be present at all
+    # (the confirmed defect: only Part/crossheading lines used to appear).
+    with_colon = [ln for ln in lines if ":" in ln]
+    assert len(with_colon) >= len(lines) - 2, f"Too many titleless entries: {lines}"
+    assert any(ln.startswith("section-1:") for ln in lines), (
+        f"Expected an individual 'section-1: ...' entry, got: {lines}"
+    )
 
 
 @pytest.mark.asyncio

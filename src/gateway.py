@@ -66,7 +66,7 @@ from .modules.hmrc import hmrc_mcp
 from .modules.legislation import legislation_mcp
 from .modules.legislation.resources import (
     LEGISLATION_BASE,
-    _parse_toc,
+    _parse_toc_xml,
     register_legislation_resources,
 )
 from .modules.parliament import parliament_mcp
