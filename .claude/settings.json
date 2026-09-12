@@ -2,41 +2,36 @@
   "permissions": {
     "allow": [
       "Bash(uv run pytest*)",
-      "Bash(uv run python*)",
       "Bash(python -m pytest*)",
       "Bash(python -m py_compile*)",
       "Bash(python3 -m py_compile*)",
-      "Bash(fly deploy*)",
       "Bash(fly logs*)",
       "Bash(fly status*)",
-      "Bash(fly secrets*)",
       "Bash(git status)",
       "Bash(git diff*)",
       "Bash(git log*)",
-      "Bash(git add*)",
-      "Bash(git commit*)",
-      "Bash(git push*)"
+      "Bash(git add*)"
     ],
-    "deny": []
+    "ask": [
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(fly secrets *)",
+      "Bash(flyctl secrets *)",
+      "Bash(gh release create *)"
+    ],
+    "deny": [
+      "Bash(fly deploy *)",
+      "Bash(flyctl deploy *)"
+    ]
   },
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Write|Edit|MultiEdit",
+        "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/post_edit_check.py"
-          }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 .claude/hooks/session_start.py"
+            "command": "python3 \"${CLAUDE_PROJECT_DIR}/.claude/hooks/post_edit_check.py\""
           }
         ]
       }

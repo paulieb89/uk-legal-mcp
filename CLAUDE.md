@@ -44,8 +44,8 @@ python -m pytest tests/test_citations.py -v   # citation unit tests only
 python -m py_compile src/gateway.py
 python -m py_compile src/modules/citations/tools.py
 
-# Deploy to Fly.io
-fly deploy
+# Deploy: publish a GitHub release. .github/workflows/release.yml then
+# publishes to PyPI and runs flyctl deploy. Never run fly deploy by hand.
 
 # Check deploy status
 fly status --app uk-legal-mcp
@@ -133,15 +133,15 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 
 ## Testing
 
-- Eleven test files under `tests/`, all offline. The load-bearing ones: `test_citations.py` (regex patterns, resolution, disambiguation), `test_gateway.py` (server identity, tool listing + schema validity, companion tools, resource templates, and the custom `/health` `/metrics` `/.well-known/*` routes), `test_error_classification.py` (httpx and curl_cffi must classify identically), `test_xml_safe.py` (XXE / billion-laughs defences). Run `uv run pytest -m "not live" -q` for the count rather than trusting this list.
-- Note `tests/live/fixtures/` is gitignored, so a fresh clone cannot run the ~21 tests that read those captures. Anyone adding CI must deselect them or commit the fixtures.
+- `-m "not live"` selects the deterministic, network-independent tests; any test that calls an upstream carries `@pytest.mark.live`. The load-bearing ones: `test_citations.py` (regex patterns, resolution, disambiguation), `test_gateway.py` (server identity, tool listing + schema validity, companion tools, resource templates, and the custom `/health` `/metrics` `/.well-known/*` routes), `test_error_classification.py` (httpx and curl_cffi must classify identically), `test_xml_safe.py` (XXE / billion-laughs defences). Run `uv run pytest -m "not live" -q` for the count rather than trusting this list.
+- Offline tests read committed fixtures from `tests/fixtures/` (provenance in its `README.md`). `tests/live/fixtures/` is gitignored scratch space for live captures; no test may depend on it.
 - Domain modules that hit live APIs are exercised by `audit_*` scripts and manual/dogfeed testing via Claude Desktop, ChatGPT, or MCP Inspector.
-- Always run `uv run pytest -m "not live" -q` (the full non-live suite) before deploying.
+- `.github/workflows/ci.yml` runs the non-live suite on every pull request and every push to `main`, and `release.yml` runs it again before anything is published. Run it locally before pushing rather than finding out in CI.
 - Test discipline: prefer smoke tests + real runtime probes over fitted unit tests that just restate the implementation (see auto-memory `no-fitted-tests`).
 
 ## Deployment
 
-- `fly deploy` from repo root. Dockerfile copies `src/` only (tests excluded via `.dockerignore`).
+- Production deploys only through `.github/workflows/release.yml`, which runs when a GitHub release is published: the non-live suite must pass, then PyPI publish, then `flyctl deploy`. Don't run `fly deploy` by hand (project settings deny it); it skips PyPI, so the published and live versions drift. Dockerfile copies `src/` only (tests excluded via `.dockerignore`).
 - Two machines in `lhr`, auto-stop enabled, min 1 running.
 - The "not listening on expected address" warning during rolling deploy is transient — the machine reaches good state immediately after.
 - Secrets are set via `fly secrets set` and persist across deploys.
@@ -173,13 +173,7 @@ They are NOT loaded unless the relevant files are in scope — they don't bloat 
 | `/bug`     | Incident → test → invariant flywheel for fixing bugs           |
 
 ### Hooks (deterministic, not prompt-guidance)
-`.claude/hooks/post_edit_check.py` fires on every Write/Edit/MultiEdit:
-1. `py_compile` on the changed file — syntax errors surface immediately
-2. `uv run pytest -m "not live" -q` if the file is in `src/` or `tests/`
-
-`.claude/hooks/session_start.py` fires at session start — prints orientation reminder.
-
-Hooks are exit-0 feedback hooks (not blockers) — failures appear in Claude's context for self-correction.
+`.claude/hooks/post_edit_check.py` runs after every Write/Edit of a `.py` file and compiles it. A syntax error exits 2, which is how a PostToolUse hook gets its stderr in front of Claude; a hook that exits 0 is never seen. It does not run tests — run `uv run pytest -m "not live" -q` yourself. Behaviour is pinned by `tests/test_post_edit_hook.py`.
 
 ## Style
 

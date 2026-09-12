@@ -199,6 +199,7 @@ class TestCitationTools:
         assert not result.is_error, f"Tool error: {result.data}"
         assert result.data is not None
 
+    @pytest.mark.live
     @pytest.mark.asyncio
     async def test_citations_resolve(self, client: Client):
         result = await client.call_tool(
@@ -208,6 +209,7 @@ class TestCitationTools:
         assert not result.is_error, f"Tool error: {result.data}"
         assert result.data is not None
 
+    @pytest.mark.live
     @pytest.mark.asyncio
     async def test_citations_resolve_fake_citation_not_verified(self, client: Client):
         """Fabricated neutral citation must return confidence 0.0, not verified."""
