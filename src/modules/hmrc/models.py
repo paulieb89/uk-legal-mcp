@@ -11,12 +11,14 @@ class VATRate(BaseModel):
 
     Backed by a small static lookup table, not a live HMRC/GOV.UK query.
 
-    `matched_category` is None whenever no specific table category matched
-    (including a genuine tie between two equally-specific categories). In
-    that case `rate` and `rate_percentage` are ALSO None — this tool never
-    fabricates a rate for an unresolved query. Callers must not assume a
-    default (e.g. standard 20%) when `rate` is None; read `notes` for
-    guidance on where to check instead.
+    `matched_category` is None whenever the query is not exactly a table
+    category name (or alias). In that case `rate`, `rate_percentage` and
+    `verified_on` are ALSO None — this tool never fabricates a rate for an
+    unresolved query. Callers must not assume a default (e.g. standard 20%)
+    when `rate` is None; read `notes` for guidance on where to check instead.
+
+    Exempt and zero-rated are different treatments: zero-rated has
+    `rate_percentage` 0.0, exempt has `rate_percentage` None.
     """
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -25,10 +27,9 @@ class VATRate(BaseModel):
     matched_category: str | None = Field(
         None,
         description=(
-            "The static lookup table category actually matched (e.g. 'hot food'), or "
-            "None when no specific category matched, or the match was ambiguous "
-            "between two equally-specific categories. `rate`/`rate_percentage` are "
-            "None whenever this is None — see `notes`."
+            "The static lookup table category the query exactly named (e.g. 'hot food'), "
+            "or None when the query is not a category name. `rate`/`rate_percentage` "
+            "are None whenever this is None — see `notes`."
         ),
     )
     rate: Literal["standard", "reduced", "zero", "exempt", "outside_scope"] | None = Field(
@@ -42,8 +43,9 @@ class VATRate(BaseModel):
     rate_percentage: float | None = Field(
         None,
         description=(
-            "Applicable rate as percentage: 20.0 (standard), 5.0 (reduced), 0.0 "
-            "(zero/exempt), or None when `rate` is None (no confident match)."
+            "Rate charged on a taxable supply: 20.0 (standard), 5.0 (reduced), 0.0 "
+            "(zero). None for an exempt supply, which is not taxed at any rate "
+            "(exempt is not the same as 0%), and None when `rate` is None."
         ),
     )
     effective_from: date | None = Field(
@@ -57,16 +59,19 @@ class VATRate(BaseModel):
             "instead — the two are deliberately independent."
         ),
     )
-    verified_on: date = Field(
-        ...,
+    verified_on: date | None = Field(
+        None,
         description=(
-            "Date this entry (or, for an unresolved query, the lookup table's "
-            "category set as a whole) was last checked against GOV.UK/HMRC "
-            "guidance. A data-currency signal only — see `effective_from` for the "
-            "rate's own legal commencement date, when known."
+            "Date the matched entry was last checked against GOV.UK/HMRC guidance. "
+            "None for an unresolved query, since no entry was matched. A "
+            "data-currency signal only — see `effective_from` for the rate's own "
+            "legal commencement date, when known."
         ),
     )
-    source_url: str = Field(..., description="GOV.UK/HMRC guidance page backing this rate")
+    source_url: str = Field(..., description=(
+        "GOV.UK/HMRC guidance page backing the matched entry; for an unresolved "
+        "query, the general VAT rates page to consult instead"
+    ))
     notes: str | None = Field(None, description="Any additional notes or conditions on this rate")
 
 

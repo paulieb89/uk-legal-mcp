@@ -20,13 +20,24 @@ two ways, both covered below:
   - `effective_from` was repurposed to mean "last verified", conflating a
     data-currency signal with the rate's actual legal commencement date.
 
-The fix replaces character-substring matching with whole-word-phrase
-containment plus most-specific-wins selection (order-independent by
-construction), returns no rate at all when no confident match exists, and
-splits "last verified" (`verified_on`, always populated) from "known legal
+That fix used whole-word-phrase containment plus most-specific-wins
+selection, returned no rate at all when no confident match existed, and split
+"last verified" (`verified_on`, always populated) from "known legal
 commencement date" (`effective_from`, populated only where evidenced, usually
-None). These tests assert the actual failure modes, not just that a result
-object comes back.
+None).
+
+The qualification re-audit (2026-09-13) found containment itself unsafe: a
+qualifier outside the table vanished into the broader category. "pet food"
+matched "food" and came back zero-rated (GOV.UK: packaged pet food is
+standard-rated). Two entries were also wrong at source: "funeral" said burial
+and cremation are zero-rated (VAT Notice 701/32: exempt, while flowers,
+headstones and animal cremation are standard-rated), and "medicine" said
+certain over-the-counter medicines are zero-rated (VAT Notice 701/57: only
+qualifying goods dispensed on prescription under set conditions; medicines
+sold over the counter are standard-rated). Matching is now exact category
+names or explicit aliases, the broad "funeral" and "medicine" categories are
+replaced by source-worded ones, and "pet food" is its own entry. These tests
+assert the actual failure modes, not just that a result object comes back.
 """
 
 import pytest
@@ -34,7 +45,7 @@ import pytest_asyncio
 from fastmcp import Client
 
 from src.gateway import gateway
-from src.modules.hmrc.tools import _lookup_vat, _matches_phrase, _VAT_LOOKUP
+from src.modules.hmrc.tools import _VAT_ALIASES, _VAT_LOOKUP, _lookup_vat, _normalise
 
 
 @pytest_asyncio.fixture
@@ -63,10 +74,12 @@ class TestLookupVatInternal:
         assert result.rate == "zero"
         assert result.rate_percentage == 0.0
 
-    def test_hot_food_phrase_inside_longer_query(self):
+    def test_category_inside_a_longer_query_is_not_matched(self):
+        """Exact matching: extra words are never silently discarded, even when
+        (as here) the broader category would happen to give the right answer."""
         result = _lookup_vat("hot food from a takeaway van")
-        assert result.matched_category == "hot food"
-        assert result.rate == "standard"
+        assert result.matched_category is None
+        assert result.rate is None
 
     @pytest.mark.parametrize(
         "query",
@@ -103,20 +116,16 @@ class TestLookupVatInternal:
         assert result.matched_category is None
         assert result.rate is None
 
-    def test_matching_is_not_dict_order_dependent(self):
-        """Reversing table iteration order must not change the winning match.
-
-        Regression guard against reintroducing "first match in dict order
-        wins" — the actual bug shape behind the hot-food/food failure.
-        """
-        query_words = "hot food".split()
-        forward = [k for k in _VAT_LOOKUP if _matches_phrase(query_words, k.split())]
-        reversed_keys = list(reversed(list(_VAT_LOOKUP.keys())))
-        backward = [k for k in reversed_keys if _matches_phrase(query_words, k.split())]
-        assert set(forward) == set(backward) == {"food", "hot food"}
-        # Selection logic (in _lookup_vat) must independently pick the same
-        # longest match regardless of which order the candidates were found in.
-        assert _lookup_vat("hot food").matched_category == "hot food"
+    def test_every_category_and_alias_is_reachable_exactly(self):
+        """Keys and aliases are stored normalised, so each one can be matched,
+        and every alias points at a real category."""
+        for key in _VAT_LOOKUP:
+            assert _normalise(key) == key, key
+            assert _lookup_vat(key).matched_category == key
+        for alias, key in _VAT_ALIASES.items():
+            assert _normalise(alias) == alias, alias
+            assert key in _VAT_LOOKUP, alias
+            assert _lookup_vat(alias).matched_category == key
 
     def test_every_table_entry_has_source_and_verified_date(self):
         """Every entry must carry discoverable provenance (audit requirement),
@@ -135,7 +144,7 @@ class TestUnresolvedQueriesNeverFabricateARate:
         assert result.rate is None
         assert result.rate_percentage is None
         assert result.effective_from is None
-        assert result.verified_on is not None
+        assert result.verified_on is None
         assert "GOV.UK" in result.notes
 
     def test_unmatched_query_notes_do_not_imply_a_default_rate(self):
@@ -149,22 +158,141 @@ class TestUnresolvedQueriesNeverFabricateARate:
         assert result.rate is None
         assert result.rate_percentage is None
 
-    def test_ambiguous_tie_has_no_rate(self, monkeypatch):
-        """A genuine tie between equally-specific categories must return no
-        rate at all — not pick one by table order, and not fall back to a
-        fabricated standard-rate default either."""
-        import src.modules.hmrc.tools as hmrc_tools
+    def test_unmatched_notes_list_the_category_names(self):
+        """The retry path for an exact matcher: the names come from the table itself."""
+        result = _lookup_vat("pet food supplies")
+        for key in _VAT_LOOKUP:
+            assert key in result.notes
 
-        tied_table = {
-            "aaa bbb": hmrc_tools._VATEntry("zero", 0.0, "n1", hmrc_tools._LEGACY_REVIEW_DATE, hmrc_tools._GENERAL_RATES_URL),
-            "ccc ddd": hmrc_tools._VATEntry("standard", 20.0, "n2", hmrc_tools._LEGACY_REVIEW_DATE, hmrc_tools._GENERAL_RATES_URL),
-        }
-        monkeypatch.setattr(hmrc_tools, "_VAT_LOOKUP", tied_table)
-        result = hmrc_tools._lookup_vat("aaa bbb ccc ddd")
-        assert result.matched_category is None
-        assert result.rate is None
-        assert result.rate_percentage is None
-        assert "Ambiguous" in result.notes
+
+class TestQualifiersAreNeverDiscarded:
+    """A category phrase inside a qualified query must not resolve to that category.
+
+    Each query below contains a table category plus words the table does not
+    model; the qualifier can change the VAT treatment, so the result must be
+    unresolved rather than the broader category's rate.
+    """
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "baby food",
+            "animal feed food",
+            "hot food takeaway",
+            "animal cremation",
+            "over the counter medicine",
+            "animal medicine",
+            "prescription medicine",
+            "funeral services",
+            "funeral flowers",
+            "pet insurance",
+            "land with buildings",
+            "domestic fuel oil",
+            "solar panels for a business",
+        ],
+    )
+    def test_qualified_query_is_unresolved(self, query):
+        result = _lookup_vat(query)
+        assert (result.matched_category, result.rate, result.rate_percentage) == (None, None, None), query
+
+    @pytest.mark.parametrize("query", ["funeral", "burial", "cremation", "medicine", "medicines"])
+    def test_broad_terms_with_mixed_treatment_are_unresolved(self, query):
+        """GOV.UK gives these terms more than one treatment (exempt disposal of
+        the dead vs standard-rated flowers, headstones and animal cremation;
+        zero-rated dispensed prescriptions vs standard-rated over-the-counter
+        medicines), so no single rate is returned."""
+        result = _lookup_vat(query)
+        assert (result.matched_category, result.rate) == (None, None), query
+
+    @pytest.mark.parametrize(
+        "query", ["Hot  Food", "SOLAR PANELS", "energy-saving materials", "children\u2019s clothing"]
+    )
+    def test_normalisation_is_limited_to_case_spacing_hyphens_and_apostrophes(self, query):
+        assert _lookup_vat(query).matched_category is not None, query
+
+
+class TestSourceCorrections:
+    """Entries corrected against GOV.UK in the 2026-09-13 re-audit."""
+
+    def test_pet_food_is_standard_rated(self):
+        result = _lookup_vat("pet food")
+        assert (result.matched_category, result.rate, result.rate_percentage) == ("pet food", "standard", 20.0)
+        assert result.verified_on.isoformat() == "2026-09-13"
+        assert result.source_url == "https://www.gov.uk/guidance/vat-rates-on-different-goods-and-services"
+
+    @pytest.mark.parametrize(
+        "query", ["burial or cremation of the dead", "burial or cremation of dead people", "burial at sea"]
+    )
+    def test_burial_or_cremation_of_the_dead_is_exempt(self, query):
+        result = _lookup_vat(query)
+        assert (result.matched_category, result.rate, result.rate_percentage) == ("burial or cremation of the dead", "exempt", None)
+        assert "701/32" in result.notes
+        assert "animals are standard-rated" in result.notes
+        assert result.source_url.endswith("burial-cremation-and-commemoration-of-the-dead-notice-70132")
+        assert result.verified_on.isoformat() == "2026-09-13"
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "prescriptions dispensed by a registered pharmacist",
+            "dispensing of prescriptions by a registered pharmacist",
+            "dispensed prescriptions",
+        ],
+    )
+    def test_dispensed_prescriptions_are_zero_rated_with_conditions(self, query):
+        result = _lookup_vat(query)
+        assert (result.matched_category, result.rate) == ("prescriptions dispensed by a registered pharmacist", "zero")
+        assert "over the counter are a separate, standard-rated supply" in result.notes
+        assert result.source_url.endswith("health-professionals-pharmaceutical-products-and-vat-notice-70157")
+        assert result.verified_on.isoformat() == "2026-09-13"
+
+    def test_corrected_entries_do_not_mark_unrelated_rows_reverified(self):
+        new = {"pet food", "burial or cremation of the dead", "prescriptions dispensed by a registered pharmacist"}
+        earlier = {"food", "hot food", "energy saving materials", "solar panels"}
+        dates = {k: e.verified_on.isoformat() for k, e in _VAT_LOOKUP.items()}
+        assert {k for k, d in dates.items() if d == "2026-09-13"} == new
+        assert {k for k, d in dates.items() if d == "2026-09-12"} == earlier
+
+
+class TestRatePercentageSemantics:
+    """Zero-rated, exempt and unresolved must stay structurally distinguishable.
+
+    An exempt supply is not taxed at 0%: exemption and zero rating have different
+    consequences (e.g. for input tax recovery), so exempt carries no percentage.
+    """
+
+    def test_table_invariant_by_treatment(self):
+        for key, entry in _VAT_LOOKUP.items():
+            if entry.rate == "exempt":
+                assert entry.percentage is None, key
+            elif entry.rate == "zero":
+                assert entry.percentage == 0.0, key
+            else:
+                assert entry.rate in ("standard", "reduced"), key
+                assert entry.percentage is not None and entry.percentage > 0, key
+
+    def test_zero_exempt_and_unresolved_differ(self):
+        zero = _lookup_vat("food")
+        exempt = _lookup_vat("financial services")
+        unresolved = _lookup_vat("quantum widgets")
+        assert (zero.rate, zero.rate_percentage) == ("zero", 0.0)
+        assert (exempt.rate, exempt.rate_percentage) == ("exempt", None)
+        assert (unresolved.matched_category, unresolved.rate, unresolved.rate_percentage) == (None, None, None)
+        assert exempt.matched_category is not None and exempt.verified_on is not None
+        assert unresolved.verified_on is None
+
+    @pytest.mark.asyncio
+    async def test_zero_exempt_and_unresolved_differ_via_mcp_tool(self, client: Client):
+        async def call(q):
+            result = await client.call_tool("hmrc_get_vat_rate", {"commodity_code": q})
+            assert not result.is_error
+            d = result.structured_content
+            return d["matched_category"], d["rate"], d["rate_percentage"], d["verified_on"]
+
+        assert await call("dispensed prescriptions") == ("prescriptions dispensed by a registered pharmacist", "zero", 0.0, "2026-09-13")
+        assert await call("burial at sea") == ("burial or cremation of the dead", "exempt", None, "2026-09-13")
+        assert await call("insurance") == ("insurance", "exempt", None, "2023-11-22")
+        assert await call("underwater basket weaving lessons") == (None, None, None, None)
 
 
 class TestEffectiveFromVsVerifiedOn:
@@ -236,13 +364,33 @@ class TestGetVatRateTool:
         assert result.data.rate_percentage is None
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "query, expected",
+        [
+            ("pet food", ("pet food", "standard", 20.0)),
+            ("burial or cremation of the dead", ("burial or cremation of the dead", "exempt", None)),
+            ("dispensed prescriptions", ("prescriptions dispensed by a registered pharmacist", "zero", 0.0)),
+            ("funeral", (None, None, None)),
+            ("cremation", (None, None, None)),
+            ("medicine", (None, None, None)),
+            ("animal medicine", (None, None, None)),
+            ("baby food", (None, None, None)),
+        ],
+    )
+    async def test_audited_and_qualifier_cases_via_mcp_tool(self, client: Client, query, expected):
+        result = await client.call_tool("hmrc_get_vat_rate", {"commodity_code": query})
+        assert not result.is_error
+        data = result.structured_content
+        assert (data["matched_category"], data["rate"], data["rate_percentage"]) == expected
+
+    @pytest.mark.asyncio
     async def test_unmatched_query_via_mcp_tool_has_no_rate(self, client: Client):
         result = await client.call_tool("hmrc_get_vat_rate", {"commodity_code": "artisanal candle making kits"})
         assert not result.is_error
         assert result.data.matched_category is None
         assert result.data.rate is None
         assert result.data.rate_percentage is None
-        assert result.data.verified_on is not None
+        assert result.data.verified_on is None
 
     @pytest.mark.asyncio
     async def test_output_schema_has_nullable_rate_fields(self, client: Client):
@@ -262,5 +410,5 @@ class TestGetVatRateTool:
         assert allows_null(props["rate_percentage"]), props["rate_percentage"]
         assert allows_null(props["effective_from"]), props["effective_from"]
         assert allows_null(props["matched_category"]), props["matched_category"]
-        # verified_on is always populated — must NOT be nullable.
-        assert not allows_null(props["verified_on"]), props["verified_on"]
+        # verified_on is null for an unresolved query, which has no matched entry.
+        assert allows_null(props["verified_on"]), props["verified_on"]
