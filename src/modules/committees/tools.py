@@ -13,10 +13,15 @@ import httpx
 from fastmcp import FastMCP, Context
 from pydantic import Field
 
-from ...deps import format_http_error, raise_http_tool_error
+from ...deps import format_http_error, raise_http_tool_error, raise_tool_error
 from .models import CommitteeDetail, CommitteeEvidencePage, CommitteeMember, CommitteeSearchResult, CommitteeSummary, EvidenceItem
 
 COMMITTEES_BASE = "https://committees-api.parliament.uk/api"
+
+# The evidence endpoints' Swagger declares Skip as int32; Skip=2**31-1 returns
+# an empty page and Skip=2**31 is a 400 (verified live 2026-09-13). Offsets
+# past 2000 serve the expected continuation, so there is no smaller bound.
+UPSTREAM_SKIP_MAX = 2**31 - 1
 
 HOUSE_MAP = {"Commons": 1, "Lords": 2, "Joint": 0}
 
@@ -222,20 +227,23 @@ def register_tools(mcp: FastMCP) -> None:
     async def committees_search_evidence(
         committee_id: Annotated[int, Field(description="Committee ID from committees_search_committees results.", ge=1)],
         evidence_type: Annotated[Literal["oral", "written", "both"], Field(description="Type of evidence to search.")] = "both",
-        offset: Annotated[int, Field(description="Number of evidence items to skip before this page. Default 0. Re-call with offset=offset+returned while has_more is true.", ge=0, le=2000)] = 0,
-        limit: Annotated[int, Field(description="Maximum evidence items to return. Default 20. When evidence_type='both' the limit is split across oral and written (roughly half each).", ge=1, le=100)] = 20,
+        offset: Annotated[int, Field(description="Number of evidence items to skip before this page. Default 0. Re-call with offset=offset+returned while has_more is true. For evidence_type='both' this is a position in the combined sequence (all oral evidence, then all written evidence).", ge=0, le=UPSTREAM_SKIP_MAX)] = 0,
+        limit: Annotated[int, Field(description="Maximum evidence items to return. Default 20. For evidence_type='both' a page may hold only oral, only written, or the last oral items followed by the first written items.", ge=1, le=100)] = 20,
         max_title_chars: Annotated[int, Field(description="Per-item cap on the free-text title field. Default 300 prevents context blow-up from verbose inquiry titles. Raise to 1000+ only when you need the full title text.", ge=50, le=2000)] = 300,
         *,
         ctx: Context,
     ) -> CommitteeEvidencePage:
         """USE THIS TOOL WHEN you have a committee_id and want the oral and written evidence submitted to it.
 
-        Returns ONE PAGE of evidence (default 20). Free-text titles are capped
-        per max_title_chars; witness lists are capped at 10 per item. An
-        organisation witness (no named individual) is rendered as
-        '<Organisation> (<Role>)'; a null entry means the source gave no
-        name for that witness at all. For committees with many submissions,
-        re-call with offset=offset+returned while has_more is true.
+        Returns ONE PAGE of evidence (default 20) plus `total`, the source's
+        count of matching items. evidence_type='both' lists all oral evidence
+        first, then all written evidence, each newest-published first as the
+        source orders it. Free-text titles are capped per max_title_chars;
+        witness lists are capped at 10 per item. An organisation witness (no
+        named individual) is rendered as '<Organisation> (<Role>)'; a null
+        entry means the source gave no name for that witness at all. For
+        committees with many submissions, re-call with offset=offset+returned
+        while has_more is true.
 
         Authoritative source for parliamentary committee evidence.
         """
@@ -245,6 +253,17 @@ def register_tools(mcp: FastMCP) -> None:
             if len(t) > max_title_chars:
                 return t[: max_title_chars] + " …[truncated]"
             return t
+
+        def _source_total(data, kind: str) -> int:
+            total = data.get("totalResults") if isinstance(data, dict) else None
+            if not isinstance(total, int):
+                raise_tool_error(
+                    "unknown",
+                    is_retryable=False,
+                    attempted=f"committees_search_evidence(committee_id={committee_id}, evidence_type={kind!r})",
+                    description="committees-api response carried no integer totalResults, so paging cannot be established.",
+                )
+            return total
 
         async def fetch_oral(skip: int, take: int) -> tuple[list[EvidenceItem], int]:
             try:
@@ -256,9 +275,10 @@ def register_tools(mcp: FastMCP) -> None:
             except httpx.HTTPError as e:
                 raise_http_tool_error(e, attempted=f"committees_search_evidence(committee_id={committee_id}, evidence_type='oral')")
             data = resp.json()
-            items = data.get("items", data.get("results", data)) if isinstance(data, dict) else data
+            total = _source_total(data, "oral")
+            items = data.get("items")
             if not isinstance(items, list):
-                return [], 0
+                return [], total
             results: list[EvidenceItem] = []
             for item in items:
                 ev_date = item.get("evidenceDate") or item.get("date")
@@ -271,7 +291,7 @@ def register_tools(mcp: FastMCP) -> None:
                     witnesses=(witnesses[:10] or None),
                     url=item.get("url"),
                 ))
-            return results, len(items)
+            return results, total
 
         async def fetch_written(skip: int, take: int) -> tuple[list[EvidenceItem], int]:
             try:
@@ -283,9 +303,10 @@ def register_tools(mcp: FastMCP) -> None:
             except httpx.HTTPError as e:
                 raise_http_tool_error(e, attempted=f"committees_search_evidence(committee_id={committee_id}, evidence_type='written')")
             data = resp.json()
-            items = data.get("items", data.get("results", data)) if isinstance(data, dict) else data
+            total = _source_total(data, "written")
+            items = data.get("items")
             if not isinstance(items, list):
-                return [], 0
+                return [], total
             results: list[EvidenceItem] = []
             for item in items:
                 ev_date = item.get("dateReceived") or item.get("date")
@@ -297,26 +318,26 @@ def register_tools(mcp: FastMCP) -> None:
                     witnesses=None,
                     url=item.get("url"),
                 ))
-            return results, len(items)
-
-        evidence: list[EvidenceItem] = []
-        has_more = False
+            return results, total
 
         if evidence_type == "oral":
-            evidence, raw = await fetch_oral(offset, limit)
-            has_more = raw == limit
+            evidence, total = await fetch_oral(offset, limit)
         elif evidence_type == "written":
-            evidence, raw = await fetch_written(offset, limit)
-            has_more = raw == limit
+            evidence, total = await fetch_written(offset, limit)
         else:
-            oral_take = (limit + 1) // 2  # remainder to oral
-            written_take = limit // 2
-            (oral, oral_raw), (written, written_raw) = await asyncio.gather(
-                fetch_oral(offset, oral_take),
-                fetch_written(offset, written_take),
-            )
-            evidence = oral + written
-            has_more = (oral_raw == oral_take) or (written_raw == written_take)
+            # The two endpoints are separately paginated streams with no shared
+            # sort key, so "both" is their concatenation: oral positions
+            # 0..oral_total-1, then written. One offset then names exactly one
+            # position in exactly one stream, and the oral request itself
+            # reports oral_total.
+            oral, oral_total = await fetch_oral(offset, limit)
+            written_needed = 0
+            if offset + len(oral) >= oral_total:
+                written_needed = limit - len(oral)
+            # Take=0 is a 400 upstream; a 1-row request still reports the total.
+            written, written_total = await fetch_written(max(0, offset - oral_total), written_needed or 1)
+            evidence = oral + (written if written_needed else [])
+            total = oral_total + written_total
 
         return CommitteeEvidencePage(
             committee_id=committee_id,
@@ -324,6 +345,7 @@ def register_tools(mcp: FastMCP) -> None:
             offset=offset,
             limit=limit,
             returned=len(evidence),
-            has_more=has_more,
+            total=total,
+            has_more=offset + len(evidence) < total,
             evidence=evidence,
         )
