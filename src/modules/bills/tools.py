@@ -17,6 +17,12 @@ from .models import BillDetail, BillSearchResult, BillSponsor, BillStage, BillSu
 
 BILLS_BASE = "https://bills-api.parliament.uk/api/v1"
 
+# The Bills API Swagger declares Skip as int32 with no other bound. Live
+# (2026-09-13, OriginatingHouse=Commons, 3,196 results): Skip=2000/2500/3195
+# continue the result set, Skip past the end and Skip=2**31-1 return an empty
+# page with the real totalResults, and Skip=2**31 is a 400.
+UPSTREAM_SKIP_MAX = 2**31 - 1
+
 STAGE_ID_MAP: dict[str, list[int]] = {
     "firstreading": [6, 1],
     "secondreading": [7, 2],
@@ -141,7 +147,7 @@ def register_tools(mcp: FastMCP) -> None:
         session: Annotated[int | None, Field(description="Numeric parliamentary session ID (e.g. 40 = 2024-25, 39 = 2023-24). NOT a year string like '2025'. If you only know the year, omit this and filter the results instead. Omit to search all sessions.", ge=1)] = None,
         house: Annotated[Literal["Commons", "Lords", "All"] | None, Field(description="Filter by originating house: the House the bill was introduced in, wherever it sits now. Omit (or 'All') for all houses.")] = None,
         stage: Annotated[Literal["firstreading", "secondreading", "committee", "report", "thirdreading", "royalassent"] | None, Field(description="Filter by current legislative stage.")] = None,
-        offset: Annotated[int, Field(description="Number of results to skip before this page. Default 0 for the first page. Re-call with offset=offset+returned while has_more is true to paginate.", ge=0, le=2000)] = 0,
+        offset: Annotated[int, Field(description="Number of results to skip before this page. Default 0 for the first page. Re-call with offset=offset+returned while has_more is true to paginate.", ge=0, le=UPSTREAM_SKIP_MAX)] = 0,
         limit: Annotated[int, Field(description="Maximum bills to return in this call. Default 20 keeps responses focused; raise up to 100 for bulk exports.", ge=1, le=100)] = 20,
         *,
         ctx: Context,
