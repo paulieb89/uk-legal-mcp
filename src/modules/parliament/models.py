@@ -16,14 +16,45 @@ class HansardContribution(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    member_name: str = Field(..., description="Name of the contributing member (MemberName)")
+    member_name: str | None = Field(None, description=(
+        "Authoritative display name of the contributing member — populated ONLY "
+        "when the source endpoint itself supplies a real name field, never derived "
+        "by parsing `attributed_to`. Populated from Hansard's MemberName field on "
+        "the search endpoints (parliament_search_hansard, parliament_member_debates). "
+        "ALWAYS None from parliament_get_debate_contributions (backed by "
+        "/debates/Debate/{ext}.json), because DebateItem has no MemberName field at "
+        "all — only `AttributedTo` (a citation-display string) and `member_id`. "
+        "AttributedTo's shape varies unpredictably (own name first, hereditary-title "
+        "styling, ministerial office, chair/speaker role, annotations, collective "
+        "labels — e.g. 'Lord Pannick (CB)' vs 'The Earl of Devon (CB)' vs 'Madam "
+        "Deputy Speaker (Judith Cummins)' vs 'Madam Deputy Speaker' alone, all "
+        "verified live) with no positional rule that reliably recovers the person's "
+        "name across all of them — two earlier attempts ('use the last parenthesis', "
+        "then 'unless it starts with `The `') were each falsified by a real, live "
+        "counterexample. `attributed_to` is preserved in full instead of being "
+        "decomposed into a guess. Resolve authoritative identity via `member_id` "
+        "and parliament_find_member when this is None."
+    ))
     member_id: int | None = Field(None, description=(
         "Members API integer ID. Use as {member_id} in "
-        "hansard://member/{member_id}/biography for the member's role history."
+        "hansard://member/{member_id}/biography for the member's role history. "
+        "None for a collective or otherwise unresolved attribution (e.g. "
+        "'Hon. Members') — Hansard itself has no member to identify there."
     ))
-    attributed_to: str = Field(..., description="Full citable attribution string, e.g. 'The Minister of State, DESNZ (Lord Whitehead) (Lab)'. Includes role-at-time of contribution for ministerial interventions.")
-    party: str | None = Field(None, description="Political party affiliation parsed from the trailing '(Party)' suffix in AttributedTo")
-    constituency: str | None = Field(None, description="Constituency (Commons only; None for Lords)")
+    attributed_to: str = Field(..., description="Full citable attribution string, verbatim from Hansard, e.g. 'The Minister of State, DESNZ (Lord Whitehead) (Lab)' or 'Lord Pannick (CB)'. This is the authoritative citation text — quote it as-is rather than reconstructing it from other fields.")
+    party: str | None = Field(None, description=(
+        "ALWAYS None. Hansard's AttributedTo is a citation-display string Hansard "
+        "composes for readability, not structured party data — neither the "
+        "search-contributions nor the debate-items schema declares a Party field, "
+        "and the parenthesised text varies by convention (constituency, party, "
+        "office, 'Maiden Speech', a virtual-attendance marker, or nothing at all) "
+        "in ways that cannot be told apart by position alone. Guessing a party from "
+        "it previously produced fabricated values for ministers/officeholders (e.g. "
+        "party='Lucy Powell' for 'The Leader of the House of Commons (Lucy Powell)'). "
+        "For a member's authoritative party, resolve `member_id` via "
+        "parliament_find_member against the Members API's structured latestParty field."
+    ))
+    constituency: str | None = Field(None, description="Constituency (Commons only; None for Lords). Not currently populated from AttributedTo — see `party`'s note on why positional parsing of that string is unsafe; use parliament_find_member for authoritative constituency.")
     date: Date = Field(..., description="Date the contribution was made (SittingDate)")
     debate_title: str = Field(..., description="Title of the debate or question (DebateSection)")
     debate_id: int = Field(..., description="Integer DebateSectionId — internal Hansard identifier")
@@ -98,7 +129,15 @@ class HansardSearchResult(BaseModel):
         "Top-ranked divisions touching this topic (from upstream Divisions[] preview, capped at 4). "
         "Each entry's `id` chains to votes_get_division; `debate_section_ext_id` chains back to the parent debate."
     ))
-    party_breakdown: dict[str, int] = Field(default_factory=dict, description="Counts by party across the returned page")
+    party_breakdown: dict[str, int] = Field(default_factory=dict, description=(
+        "ALWAYS EMPTY. Hansard's contribution schema has no structured party field "
+        "(see HansardContribution.party) — an aggregation over unjustified values "
+        "would just be a party-shaped guess. Kept as a field (rather than removed) "
+        "for schema stability. For real party facets, resolve member_id per "
+        "contribution via parliament_find_member; this tool does not do that "
+        "automatically — it would cost one extra HTTP call per distinct member "
+        "in the page."
+    ))
     house_breakdown: dict[str, int] = Field(default_factory=dict, description="Counts by house across the returned page")
     date_range: tuple[Date, Date] | None = Field(None, description="(min, max) SittingDate of returned contributions, or None if empty")
     has_more: bool = Field(False, description="True if a full page was returned (more may exist; re-call with offset=offset+limit)")
@@ -148,7 +187,11 @@ class TopContributor(BaseModel):
         "hansard://member/{member_id}/biography for the member's role history."
     ))
     member_name: str = Field(..., description="Member display name")
-    party: str | None = Field(None, description="Party affiliation parsed from AttributedTo")
+    party: str | None = Field(None, description=(
+        "Not derivable from Hansard's AttributedTo (see HansardContribution.party) "
+        "— would require resolving member_id via parliament_find_member. Currently "
+        "unused: top_contributors is always empty (see PolicyPositionSummary.by_party)."
+    ))
     count: int = Field(..., ge=0, description="Number of contributions on this topic in the sampled window")
 
 

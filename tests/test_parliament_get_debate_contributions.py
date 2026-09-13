@@ -80,9 +80,16 @@ async def test_member_id_filter_finds_pannick():
         "is wrong or the Items shape changed."
     )
     pannick = result.data.contributions[0]
-    assert "Pannick" in pannick.member_name, (
-        f"Expected Pannick in member_name, got {pannick.member_name!r}. "
-        "AttributedTo parsing may be broken."
+    # member_name is always None on this path (DebateItem has no authoritative
+    # name field — see tests/test_parliament_attribution.py for why decomposing
+    # AttributedTo into a name was tried and abandoned after three rounds of
+    # live counterexamples). "Pannick" identity comes from attributed_to
+    # (the honest citation string) and member_id (the join key), not a parsed
+    # member_name.
+    assert pannick.member_name is None
+    assert "Pannick" in pannick.attributed_to, (
+        f"Expected Pannick in attributed_to, got {pannick.attributed_to!r}. "
+        "AttributedTo may be missing or the wrong contribution matched."
     )
     assert pannick.member_id == PANNICK_MEMBER_ID
     assert "disproportionate" in pannick.text.lower(), (
