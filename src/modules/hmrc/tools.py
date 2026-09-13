@@ -26,29 +26,25 @@ GOVUK_SEARCH_BASE = "https://www.gov.uk/api/search.json"
 # ---------------------------------------------------------------------------
 # VAT rate static lookup table
 #
-# Matching is whole-word-phrase containment, not character-substring
-# containment: a table category matches only when every one of its words
-# appears as a contiguous run of whole words in the (normalised) query. This
-# is deliberate — a naive `key in query or query in key` character check
-# (the previous implementation) let a short, less-specific key match inside
-# a longer, more-specific one regardless of which was "correct": querying
-# "hot food" matched the "food" entry first (wrong: hot food is a standard-
-# rated exception to the general food zero rate) purely because "food" is a
-# substring of "hot food" and happened to iterate first. The same mechanism
-# silently mismatched "ebooks" against "books" too (right rate by luck, wrong
-# notes/URL). See docs/internal or the source-fidelity audit for detail.
-#
-# When more than one category matches, the most specific (longest) one wins,
-# by word count then character length — never by dict insertion order. A
-# genuine tie (two equally-specific categories both matching) is surfaced as
-# an unmatched/ambiguous result rather than silently resolved by order.
+# Matching is exact: after normalising case, whitespace, hyphens and
+# apostrophes, the whole query must equal a category name or an explicit
+# alias. A category phrase found *inside* a longer query is not a match,
+# because the extra words can change the treatment: "pet food" is
+# standard-rated although "food" is zero-rated, over-the-counter medicine is
+# standard-rated although dispensed prescriptions are zero-rated, and animal
+# cremation is standard-rated although burial or cremation of the dead is
+# exempt. Earlier versions matched by phrase containment (most specific key
+# wins), which silently resolved any unanticipated qualifier into the broader
+# category. An unmatched query returns no rate; the caller can retry with one
+# of the category names listed in the notes.
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class _VATEntry:
     rate: str
-    percentage: float
+    # None for exempt supplies: exemption is not a 0% taxable rate.
+    percentage: float | None
     notes: str
     verified_on: date
     source_url: str
@@ -63,6 +59,8 @@ class _VATEntry:
 _GENERAL_RATES_URL = "https://www.gov.uk/guidance/vat-rates-on-different-goods-and-services"
 _FOOD_NOTICE_URL = "https://www.gov.uk/guidance/food-products-and-vat-notice-70114"
 _ESM_NOTICE_URL = "https://www.gov.uk/guidance/vat-on-energy-saving-materials-and-heating-equipment-notice-7086"
+_BURIAL_NOTICE_URL = "https://www.gov.uk/guidance/burial-cremation-and-commemoration-of-the-dead-notice-70132"
+_PHARMACEUTICAL_NOTICE_URL = "https://www.gov.uk/guidance/health-professionals-pharmaceutical-products-and-vat-notice-70157"
 
 # Most entries below have not been individually re-checked against GOV.UK in
 # this pass — `verified_on` for those is the date the table was last reviewed
@@ -73,6 +71,9 @@ _LEGACY_REVIEW_DATE = date(2023, 11, 22)  # Autumn Statement 2023
 # Entries individually re-verified against live GOV.UK guidance for the
 # source-fidelity audit remediation (see PR description for the fetches).
 _CURRENT_REVIEW_DATE = date(2026, 9, 12)
+# Entries added or corrected when matching became exact, each checked against
+# the GOV.UK page in its source_url.
+_QUALIFIER_REVIEW_DATE = date(2026, 9, 13)
 
 _FOOD = _VATEntry(
     "zero", 0.0,
@@ -103,6 +104,13 @@ _ENERGY_SAVING_MATERIALS = _VATEntry(
 _VAT_LOOKUP: dict[str, _VATEntry] = {
     "food": _FOOD,
     "hot food": _HOT_FOOD,
+    "pet food": _VATEntry(
+        "standard", 20.0,
+        "Products packaged as pet food are standard-rated, unlike most food for "
+        "human consumption. Some animals, animal feeding stuffs, plants and seeds "
+        "can be zero-rated only if the conditions in VAT Notice 701/15 are met.",
+        _QUALIFIER_REVIEW_DATE, _GENERAL_RATES_URL,
+    ),
     "catering": _VATEntry("standard", 20.0, "Restaurant and catering services are standard-rated.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
     "children's clothing": _VATEntry("zero", 0.0, "Clothing designed for children under 14 is zero-rated.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
     "adult clothing": _VATEntry("standard", 20.0, "Adult clothing is standard-rated.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
@@ -112,17 +120,28 @@ _VAT_LOOKUP: dict[str, _VATEntry] = {
     "children's car seats": _VATEntry("reduced", 5.0, "Children's car seats are reduced-rated at 5%.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
     "domestic fuel": _VATEntry("reduced", 5.0, "Gas and electricity for domestic use is reduced-rated at 5%.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
     "energy saving materials": _ENERGY_SAVING_MATERIALS,
-    "energy-saving materials": _ENERGY_SAVING_MATERIALS,
     "solar panels": _ENERGY_SAVING_MATERIALS,
-    "medicine": _VATEntry("zero", 0.0, "Prescription and certain over-the-counter medicines are zero-rated.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
-    "financial services": _VATEntry("exempt", 0.0, "Most financial services are VAT-exempt.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
-    "insurance": _VATEntry("exempt", 0.0, "Insurance services are generally VAT-exempt.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
-    "health": _VATEntry("exempt", 0.0, "Medical and health services by registered practitioners are exempt.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
-    "education": _VATEntry("exempt", 0.0, "Education provided by eligible bodies (schools, universities) is exempt.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
-    "postage stamps": _VATEntry("exempt", 0.0, "Royal Mail postage services are VAT-exempt.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
-    "betting": _VATEntry("exempt", 0.0, "Betting, gaming, and lottery services are VAT-exempt.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
-    "land": _VATEntry("exempt", 0.0, "Sale or lease of bare land is VAT-exempt (unless opted to tax).", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
-    "residential property": _VATEntry("exempt", 0.0, "Sale and lease of residential property is VAT-exempt.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
+    "prescriptions dispensed by a registered pharmacist": _VATEntry(
+        "zero", 0.0,
+        "Drugs, medicines and other qualifying goods are zero-rated only when all "
+        "conditions are met: dispensed to an individual for their personal use; "
+        "not for patients in hospital or a similar institution, and not "
+        "administered, injected or applied by a health professional in the course "
+        "of treatment; dispensed by a registered pharmacist (or under a relevant "
+        "provision); and prescribed by a relevant practitioner. Hearing aids, "
+        "dentures, spectacles and contact lenses are not qualifying goods. "
+        "Medicines sold over the counter are a separate, standard-rated supply. "
+        "See VAT Notice 701/57, sections 3.2 and 11.4.5.",
+        _QUALIFIER_REVIEW_DATE, _PHARMACEUTICAL_NOTICE_URL,
+    ),
+    "financial services": _VATEntry("exempt", None, "Most financial services are VAT-exempt.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
+    "insurance": _VATEntry("exempt", None, "Insurance services are generally VAT-exempt.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
+    "health": _VATEntry("exempt", None, "Medical and health services by registered practitioners are exempt.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
+    "education": _VATEntry("exempt", None, "Education provided by eligible bodies (schools, universities) is exempt.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
+    "postage stamps": _VATEntry("exempt", None, "Royal Mail postage services are VAT-exempt.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
+    "betting": _VATEntry("exempt", None, "Betting, gaming, and lottery services are VAT-exempt.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
+    "land": _VATEntry("exempt", None, "Sale or lease of bare land is VAT-exempt (unless opted to tax).", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
+    "residential property": _VATEntry("exempt", None, "Sale and lease of residential property is VAT-exempt.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
     "new build residential": _VATEntry("zero", 0.0, "First grant of a major interest in a new dwelling is zero-rated.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
     "software": _VATEntry("standard", 20.0, "Software and digital services are standard-rated.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
     "saas": _VATEntry("standard", 20.0, "Software as a Service is standard-rated.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
@@ -130,22 +149,34 @@ _VAT_LOOKUP: dict[str, _VATEntry] = {
     "legal services": _VATEntry("standard", 20.0, "Legal services are standard-rated.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
     "transport": _VATEntry("zero", 0.0, "Most passenger transport is zero-rated. Exception: taxis, private hire.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
     "taxi": _VATEntry("standard", 20.0, "Taxi and private hire vehicle services are standard-rated.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
-    "funeral": _VATEntry("zero", 0.0, "Burial and cremation services are zero-rated.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
+    "burial or cremation of the dead": _VATEntry(
+        "exempt", None,
+        "Disposal of the remains of the dead (burial, cremation or burial at sea) "
+        "and making arrangements for it are exempt. Goods and services an "
+        "undertaker supplies as part of a funeral package that includes the "
+        "disposal, such as the coffin, embalming, bearers and transport of the "
+        "deceased, are also exempt. Flowers, wreaths, headstones and other "
+        "commemorative items, newspaper announcements, and the burial or "
+        "cremation of animals are standard-rated. See VAT Notice 701/32.",
+        _QUALIFIER_REVIEW_DATE, _BURIAL_NOTICE_URL,
+    ),
     "exports": _VATEntry("zero", 0.0, "Exports of goods outside the UK are zero-rated.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
     "contraceptives": _VATEntry("zero", 0.0, "Contraceptive products are zero-rated.", _LEGACY_REVIEW_DATE, _GENERAL_RATES_URL),
 }
 
 
+# Alternative exact wordings for a category (normalised form -> category).
+_VAT_ALIASES: dict[str, str] = {
+    "dispensing of prescriptions by a registered pharmacist": "prescriptions dispensed by a registered pharmacist",
+    "dispensed prescriptions": "prescriptions dispensed by a registered pharmacist",
+    "burial or cremation of dead people": "burial or cremation of the dead",
+    "burial at sea": "burial or cremation of the dead",
+}
+
+
 def _normalise(text: str) -> str:
-    return re.sub(r"\s+", " ", text.strip().lower())
-
-
-def _matches_phrase(query_words: list[str], key_words: list[str]) -> bool:
-    """True if `key_words` appears as a contiguous run of whole words in `query_words`."""
-    n, m = len(query_words), len(key_words)
-    if m == 0 or m > n:
-        return False
-    return any(query_words[i : i + m] == key_words for i in range(n - m + 1))
+    text = text.lower().replace("\u2019", "'").replace("\u2018", "'").replace("-", " ")
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _unmatched(commodity_code: str, notes: str) -> VATRate:
@@ -153,38 +184,25 @@ def _unmatched(commodity_code: str, notes: str) -> VATRate:
     return VATRate(
         commodity_code=commodity_code, matched_category=None,
         rate=None, rate_percentage=None, effective_from=None,
-        verified_on=_LEGACY_REVIEW_DATE, source_url=_GENERAL_RATES_URL,
+        verified_on=None, source_url=_GENERAL_RATES_URL,
         notes=notes,
     )
 
 
 def _lookup_vat(commodity_code: str) -> VATRate:
-    query_words = _normalise(commodity_code).split()
-
-    candidates = [key for key in _VAT_LOOKUP if _matches_phrase(query_words, key.split())]
-    if not candidates:
+    query = _normalise(commodity_code)
+    key = query if query in _VAT_LOOKUP else _VAT_ALIASES.get(query)
+    if key is None:
         return _unmatched(
             commodity_code,
-            f"No specific category matched '{commodity_code}' in the static lookup. "
-            "No rate is returned — this tool does not guess a default. Consult "
-            f"authoritative GOV.UK guidance at {_GENERAL_RATES_URL}.",
+            f"'{commodity_code}' is not a category in the static lookup. Only an exact "
+            "category name matches: extra words are never ignored, because a "
+            "qualifier can change the VAT treatment. No rate is returned and this "
+            "tool does not guess a default. Categories: "
+            f"{', '.join(sorted(_VAT_LOOKUP))}. Otherwise consult authoritative "
+            f"GOV.UK guidance at {_GENERAL_RATES_URL} or hmrc_search_guidance.",
         )
 
-    # Most specific (longest) match wins. Word count first, then character
-    # length, so multi-word phrases always outrank a single-word substring of
-    # themselves regardless of table order.
-    best_len = max((len(c.split()), len(c)) for c in candidates)
-    best = sorted(c for c in candidates if (len(c.split()), len(c)) == best_len)
-
-    if len(best) > 1:
-        return _unmatched(
-            commodity_code,
-            f"Ambiguous match: '{commodity_code}' matches equally specific categories "
-            f"{best!r} with different rates. No rate is returned — this tool does not "
-            f"guess between them. Consult authoritative GOV.UK guidance at {_GENERAL_RATES_URL}.",
-        )
-
-    key = best[0]
     entry = _VAT_LOOKUP[key]
     return VATRate(
         commodity_code=commodity_code, matched_category=key,
@@ -205,32 +223,22 @@ def register_tools(mcp: FastMCP) -> None:
     async def hmrc_get_vat_rate(
         commodity_code: Annotated[str, Field(description="Commodity code or plain-English description. E.g. 'food', 'domestic fuel', 'software', 'financial services', 'new build residential'", min_length=2, max_length=200)],
     ) -> VATRate:
-        """USE THIS TOOL WHEN you have a UK commodity or service description and want its VAT rate category.
+        """USE THIS TOOL WHEN you know the UK VAT category name for a good or service and want its VAT treatment.
 
-        Returns the rate (standard 20%, reduced 5%, zero 0%, exempt), which
-        static-table category matched (`matched_category`), the GOV.UK source
-        page, and any relevant conditions or exceptions.
+        Exact named-category lookup, not a free-text VAT classifier or tax
+        advice. The query must equal a category name, ignoring only case,
+        spacing, hyphens and apostrophe style. Extra qualifying words are never
+        discarded: 'pet food' is its own category, and 'baby food' is not
+        'food'.
 
-        Matching is whole-phrase, most-specific-wins: 'hot food' matches the
-        standard-rated 'hot food' exception, not the broader zero-rated 'food'
-        category, even though 'food' is a substring of the query.
+        A match returns `rate` (standard, reduced, zero or exempt),
+        `rate_percentage` (None for exempt), conditions in `notes`, the GOV.UK
+        `source_url`, and that entry's `verified_on` date.
 
-        IMPORTANT: when no specific category matches (or the match is
-        ambiguous between two equally specific categories), `matched_category`,
-        `rate` and `rate_percentage` are ALL null — this tool never fabricates
-        a standard-rate default. Treat a null `rate` as "not determined", not
-        as any real VAT category, and consult `notes` / hmrc_search_guidance
-        instead of assuming 20%.
-
-        `verified_on` says when this entry (or, for a null result, the table's
-        category set) was last checked against GOV.UK/HMRC guidance — a
-        minority of entries (currently: food, hot food, energy-saving
-        materials/solar panels) were checked live for this fix; everything
-        else was last reviewed wholesale on 22 Nov 2023 (Autumn Statement) and
-        may have changed since. `effective_from` is a SEPARATE, usually-null
-        field: the rate's own known legal commencement date, populated only
-        where specifically evidenced (e.g. energy-saving materials, 1 April
-        2022) — never treat a null `effective_from` as meaning the rate is new.
+        An unresolved query returns no rate: `matched_category`, `rate`,
+        `rate_percentage` and `verified_on` are all null, never a default.
+        Its `notes` list the category names. AFTER an unresolved result, retry
+        with a listed name or call hmrc_search_guidance.
         """
         return _lookup_vat(commodity_code)
 
