@@ -1,0 +1,253 @@
+{
+ "_capture": {
+  "captured": "2026-09-13",
+  "request": "https://bills-api.parliament.uk/api/v1/Bills?BillIds=4126&BillIds=4030&BillIds=4129&BillIds=3894&BillIds=4280&BillIds=4123&Take=20",
+  "selection": "one real bill per originating/current combination: Lords->Commons (4126), Commons->Lords (4030), Lords->Lords (4129), Lords->Unassigned/Act (3894), plus the most recently updated Commons->Commons and Commons->Unassigned bills",
+  "trim": "none"
+ },
+ "response": {
+  "items": [
+   {
+    "billId": 4129,
+    "shortTitle": "Financial Services and Markets Bill [HL]",
+    "formerShortTitle": null,
+    "currentHouse": "Lords",
+    "originatingHouse": "Lords",
+    "lastUpdate": "2026-09-11T17:29:44.2271869",
+    "billWithdrawn": null,
+    "isDefeated": false,
+    "billTypeId": 1,
+    "introducedSessionId": 40,
+    "includedSessionIds": [
+     40
+    ],
+    "isAct": false,
+    "currentStage": {
+     "id": 21150,
+     "stageId": 5,
+     "sessionId": 40,
+     "description": "3rd reading",
+     "abbreviation": "3R",
+     "house": "Lords",
+     "stageSittings": [
+      {
+       "id": 18555,
+       "stageId": 5,
+       "billStageId": 21150,
+       "billId": 4129,
+       "date": "2026-09-15T00:00:00"
+      }
+     ],
+     "sortOrder": 5
+    }
+   },
+   {
+    "billId": 3894,
+    "shortTitle": "General Cemetery Act 2025",
+    "formerShortTitle": null,
+    "currentHouse": "Unassigned",
+    "originatingHouse": "Lords",
+    "lastUpdate": "2026-04-01T10:12:36.3317237",
+    "billWithdrawn": null,
+    "isDefeated": false,
+    "billTypeId": 6,
+    "introducedSessionId": 39,
+    "includedSessionIds": [
+     39
+    ],
+    "isAct": true,
+    "currentStage": {
+     "id": 20260,
+     "stageId": 11,
+     "sessionId": 39,
+     "description": "Royal Assent",
+     "abbreviation": "RA",
+     "house": "Unassigned",
+     "stageSittings": [
+      {
+       "id": 17477,
+       "stageId": 11,
+       "billStageId": 20260,
+       "billId": 3894,
+       "date": "2025-10-27T00:00:00"
+      }
+     ],
+     "sortOrder": 13
+    }
+   },
+   {
+    "billId": 4030,
+    "shortTitle": "Railways Bill",
+    "formerShortTitle": null,
+    "currentHouse": "Lords",
+    "originatingHouse": "Commons",
+    "lastUpdate": "2026-09-11T17:12:36.8899708",
+    "billWithdrawn": null,
+    "isDefeated": false,
+    "billTypeId": 1,
+    "introducedSessionId": 39,
+    "includedSessionIds": [
+     39,
+     40
+    ],
+    "isAct": false,
+    "currentStage": {
+     "id": 21076,
+     "stageId": 3,
+     "sessionId": 40,
+     "description": "Committee stage",
+     "abbreviation": "CS",
+     "house": "Lords",
+     "stageSittings": [
+      {
+       "id": 18500,
+       "stageId": 3,
+       "billStageId": 21076,
+       "billId": 4030,
+       "date": "2026-09-08T00:00:00"
+      },
+      {
+       "id": 18501,
+       "stageId": 3,
+       "billStageId": 21076,
+       "billId": 4030,
+       "date": "2026-09-10T00:00:00"
+      },
+      {
+       "id": 18502,
+       "stageId": 3,
+       "billStageId": 21076,
+       "billId": 4030,
+       "date": "2026-09-16T00:00:00"
+      },
+      {
+       "id": 18503,
+       "stageId": 3,
+       "billStageId": 21076,
+       "billId": 4030,
+       "date": "2026-10-12T00:00:00"
+      },
+      {
+       "id": 18504,
+       "stageId": 3,
+       "billStageId": 21076,
+       "billId": 4030,
+       "date": "2026-10-19T00:00:00"
+      },
+      {
+       "id": 18505,
+       "stageId": 3,
+       "billStageId": 21076,
+       "billId": 4030,
+       "date": "2026-10-21T00:00:00"
+      },
+      {
+       "id": 18506,
+       "stageId": 3,
+       "billStageId": 21076,
+       "billId": 4030,
+       "date": "2026-10-26T00:00:00"
+      }
+     ],
+     "sortOrder": 13
+    }
+   },
+   {
+    "billId": 4126,
+    "shortTitle": "Social Housing Bill [HL]",
+    "formerShortTitle": null,
+    "currentHouse": "Commons",
+    "originatingHouse": "Lords",
+    "lastUpdate": "2026-09-11T16:46:17.7251043",
+    "billWithdrawn": null,
+    "isDefeated": false,
+    "billTypeId": 1,
+    "introducedSessionId": 40,
+    "includedSessionIds": [
+     40
+    ],
+    "isAct": false,
+    "currentStage": {
+     "id": 21204,
+     "stageId": 8,
+     "sessionId": 40,
+     "description": "Committee stage",
+     "abbreviation": "CS",
+     "house": "Commons",
+     "stageSittings": [],
+     "sortOrder": 8
+    }
+   },
+   {
+    "billId": 4280,
+    "shortTitle": "Sovereign Grant Bill",
+    "formerShortTitle": null,
+    "currentHouse": "Commons",
+    "originatingHouse": "Commons",
+    "lastUpdate": "2026-09-11T16:45:26.2725225",
+    "billWithdrawn": null,
+    "isDefeated": false,
+    "billTypeId": 1,
+    "introducedSessionId": 40,
+    "includedSessionIds": [
+     40
+    ],
+    "isAct": false,
+    "currentStage": {
+     "id": 21152,
+     "stageId": 7,
+     "sessionId": 40,
+     "description": "2nd reading",
+     "abbreviation": "2R",
+     "house": "Commons",
+     "stageSittings": [
+      {
+       "id": 18572,
+       "stageId": 7,
+       "billStageId": 21152,
+       "billId": 4280,
+       "date": "2026-09-14T00:00:00"
+      }
+     ],
+     "sortOrder": 2
+    }
+   },
+   {
+    "billId": 4123,
+    "shortTitle": "Steel Industry (Nationalisation) Act 2026",
+    "formerShortTitle": "",
+    "currentHouse": "Unassigned",
+    "originatingHouse": "Commons",
+    "lastUpdate": "2026-08-19T12:29:31.6525861",
+    "billWithdrawn": null,
+    "isDefeated": false,
+    "billTypeId": 1,
+    "introducedSessionId": 40,
+    "includedSessionIds": [
+     40
+    ],
+    "isAct": true,
+    "currentStage": {
+     "id": 21092,
+     "stageId": 11,
+     "sessionId": 40,
+     "description": "Royal Assent",
+     "abbreviation": "RA",
+     "house": "Unassigned",
+     "stageSittings": [
+      {
+       "id": 18484,
+       "stageId": 11,
+       "billStageId": 21092,
+       "billId": 4123,
+       "date": "2026-07-15T00:00:00"
+      }
+     ],
+     "sortOrder": 15
+    }
+   }
+  ],
+  "totalResults": 6,
+  "itemsPerPage": 20
+ }
+}

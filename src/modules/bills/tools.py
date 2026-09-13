@@ -17,8 +17,6 @@ from .models import BillDetail, BillSearchResult, BillSponsor, BillStage, BillSu
 
 BILLS_BASE = "https://bills-api.parliament.uk/api/v1"
 
-HOUSE_MAP = {"Commons": 1, "Lords": 2}
-
 STAGE_ID_MAP: dict[str, list[int]] = {
     "firstreading": [6, 1],
     "secondreading": [7, 2],
@@ -49,6 +47,7 @@ def _parse_bill_summary(item: dict) -> BillSummary:
         short_title=item.get("shortTitle", "Unknown"),
         long_title=item.get("longTitle"),
         current_house=_parse_house(item.get("currentHouse")),
+        originating_house=_parse_house(item.get("originatingHouse")),
         current_stage=current_stage,
         is_act=item.get("isAct", False),
         url=f"https://bills.parliament.uk/bills/{item.get('billId', 0)}",
@@ -140,7 +139,7 @@ def register_tools(mcp: FastMCP) -> None:
     async def bills_search_bills(
         query: Annotated[str, Field(description="Search term for bill titles and descriptions, e.g. 'online safety' or 'financial services'.", min_length=1, max_length=500)],
         session: Annotated[int | None, Field(description="Numeric parliamentary session ID (e.g. 40 = 2024-25, 39 = 2023-24). NOT a year string like '2025'. If you only know the year, omit this and filter the results instead. Omit to search all sessions.", ge=1)] = None,
-        house: Annotated[Literal["Commons", "Lords", "All"] | None, Field(description="Filter by originating house. Omit for all houses.")] = None,
+        house: Annotated[Literal["Commons", "Lords", "All"] | None, Field(description="Filter by originating house: the House the bill was introduced in, wherever it sits now. Omit (or 'All') for all houses.")] = None,
         stage: Annotated[Literal["firstreading", "secondreading", "committee", "report", "thirdreading", "royalassent"] | None, Field(description="Filter by current legislative stage.")] = None,
         offset: Annotated[int, Field(description="Number of results to skip before this page. Default 0 for the first page. Re-call with offset=offset+returned while has_more is true to paginate.", ge=0, le=2000)] = 0,
         limit: Annotated[int, Field(description="Maximum bills to return in this call. Default 20 keeps responses focused; raise up to 100 for bulk exports.", ge=1, le=100)] = 20,
@@ -149,8 +148,8 @@ def register_tools(mcp: FastMCP) -> None:
     ) -> BillSearchResult:
         """USE THIS TOOL WHEN searching UK parliamentary bills by keyword, session, house, or legislative stage.
 
-        Returns a paginated page of bill summaries (title, current stage, whether
-        it became an Act). AFTER calling, pass a bill_id into bills_get_bill for
+        Returns a paginated page of bill summaries (title, originating and current
+        house, current stage, whether it became an Act). AFTER calling, pass a bill_id into bills_get_bill for
         full detail (sponsors, long title, Royal Assent date).
 
         Authoritative source for UK parliamentary bill status.
@@ -164,7 +163,9 @@ def register_tools(mcp: FastMCP) -> None:
         if session is not None:
             qp["Session"] = session
         if house and house != "All":
-            qp["CurrentHouse"] = HOUSE_MAP.get(house)
+            # Bills API Swagger: OriginatingHouse (All|Commons|Lords) is a
+            # separate filter from CurrentHouse (All|Commons|Lords|Unassigned).
+            qp["OriginatingHouse"] = house
         if stage:
             qp["BillStage"] = STAGE_ID_MAP[stage]
 

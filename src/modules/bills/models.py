@@ -29,6 +29,7 @@ class BillSummary(BaseModel):
     short_title: str = Field(..., description="Short title of the bill")
     long_title: str | None = Field(None, description="Full long title")
     current_house: str | None = Field(None, description="House where the bill currently sits")
+    originating_house: str | None = Field(None, description="House where the bill was introduced (what the search `house` filter matches)")
     current_stage: str | None = Field(None, description="Current legislative stage")
     is_act: bool = Field(False, description="Whether the bill has received Royal Assent")
     url: str = Field(..., description="Parliament URL for this bill")
