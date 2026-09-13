@@ -94,15 +94,22 @@ def _parse_hansard_contributions(data: dict, text_mode: Literal["preview", "full
 
     Reads citation-grade metadata from each upstream `Contributions[i]` entry.
     Skips rows where required identifiers are missing so the schema stays sound.
+
+    `party` is always None here — see HansardContribution.party for why: the
+    upstream SearchReferencesItem schema has no Party field, and AttributedTo
+    is a citation-display string whose parenthesised content means different
+    things (constituency, party, office, an annotation like 'Maiden Speech')
+    depending on form, which cannot be told apart by position alone.
+
+    `member_name` comes straight from the upstream MemberName field (None if
+    the row genuinely lacks one) — this endpoint's schema declares that
+    field, so it's an authoritative fact here, not a derivation.
     """
     contributions: list[HansardContribution] = []
     for item in data.get("Contributions", []):
         try:
-            attr = item.get("AttributedTo") or item.get("MemberName") or ""
-            name = item.get("MemberName") or "Unknown"
-            party = None
-            if "(" in attr and ")" in attr:
-                party = attr[attr.rfind("(") + 1:attr.rfind(")")]
+            name = item.get("MemberName") or None
+            attr = item.get("AttributedTo") or name or ""
 
             raw_text_field = "ContributionTextFull" if text_mode == "full" else "ContributionText"
             text = _strip_html(item.get(raw_text_field) or item.get("ContributionText") or "")
@@ -119,8 +126,8 @@ def _parse_hansard_contributions(data: dict, text_mode: Literal["preview", "full
             contributions.append(HansardContribution(
                 member_name=name,
                 member_id=item.get("MemberId"),
-                attributed_to=attr or name,
-                party=party,
+                attributed_to=attr or "Unknown",
+                party=None,
                 constituency=None,
                 date=sitting_date,
                 debate_title=debate_title,
@@ -148,10 +155,25 @@ def _parse_debate_item_as_contribution(
 ) -> HansardContribution | None:
     """Parse a single /debates/Debate/{ext}.json Items entry into HansardContribution.
 
-    The Items shape differs from /search.json Contributions (no MemberName field,
-    Value instead of ContributionText, ExternalId instead of ContributionExtId, and
-    debate metadata lives on the Overview rather than the item itself), so we can't
-    reuse _parse_hansard_contributions directly.
+    The Items shape differs from /search.json Contributions (no MemberName field
+    at all, Value instead of ContributionText, ExternalId instead of
+    ContributionExtId, and debate metadata lives on the Overview rather than the
+    item itself), so we can't reuse _parse_hansard_contributions directly.
+
+    member_name is always None here — DebateItem gives only AttributedTo (a
+    citation-display string) and MemberId, never a structured name field.
+    AttributedTo's shape is not decomposable into a person's name by any
+    general rule: it varies unpredictably between an ordinary member's own
+    name ("Lord Pannick (CB)"), a hereditary peer's title-as-name ("The Earl
+    of Devon (CB)" — trailing group is a party code, not a name), a
+    ministerial office ("The Secretary of State for Defence (Wes Streeting)"
+    — trailing group IS the name here), and a chair/speaker role that isn't
+    even "The "-prefixed ("Madam Deputy Speaker (Judith Cummins)", and
+    sometimes with no parenthesis at all: "Madam Deputy Speaker"). Two
+    successive positional heuristics here (last-parenthesis, then
+    "The "-prefix) were each falsified by a live counterexample; there is no
+    third rule to reach for. `attributed_to` carries the complete, honest
+    citation instead — resolve identity via `member_id` + parliament_find_member.
 
     `column_assignment` is the result of _assign_columns(items) for the full Items
     list — we look up this item's carry-forward column_start/end via item_index.
@@ -162,17 +184,6 @@ def _parse_debate_item_as_contribution(
         attr = (item.get("AttributedTo") or "").strip()
         if not attr:
             return None
-        # Strip role/party suffix to recover the bare name. AttributedTo looks like
-        # "Lord Pannick (CB)" or "The Parliamentary Under-Secretary (Baroness X) (Lab)";
-        # the parenthesised tail is the party.
-        name = attr
-        party = None
-        if "(" in attr and attr.endswith(")"):
-            party = attr[attr.rfind("(") + 1:-1]
-            name = attr[:attr.rfind("(")].strip()
-            # If there's a role wrapper like "The Minister (Lord X)", peel one more.
-            if name.endswith(")") and "(" in name:
-                name = name[name.rfind("(") + 1:-1].strip()
 
         text = _strip_html(item.get("Value") or "")
         if not text:
@@ -195,10 +206,10 @@ def _parse_debate_item_as_contribution(
         ) if debate_ext_id and contribution_ext_id else ""
 
         return HansardContribution(
-            member_name=name or "Unknown",
+            member_name=None,
             member_id=item.get("MemberId"),
             attributed_to=attr,
-            party=party,
+            party=None,
             constituency=None,
             date=sitting_date,
             debate_title=debate_title,
@@ -218,18 +229,24 @@ def _parse_debate_item_as_contribution(
         return None
 
 
-def _compute_search_facets(contributions: list[HansardContribution]) -> tuple[dict[str, int], dict[str, int], tuple[date, date] | None]:
-    """Compute party / house breakdown and date range across a returned page."""
-    party_counter: Counter[str] = Counter()
+def _compute_search_facets(contributions: list[HansardContribution]) -> tuple[dict[str, int], tuple[date, date] | None]:
+    """Compute house breakdown and date range across a returned page.
+
+    No party facet: HansardContribution.party is always None (see its
+    field description), so a party_counter here would only ever produce
+    {"Unknown": total} — not a real breakdown, and easy to mistake for one.
+    HansardSearchResult.party_breakdown is kept as an always-empty field for
+    schema stability; this function simply doesn't compute a party facet at
+    all rather than compute a hollow one.
+    """
     house_counter: Counter[str] = Counter()
     for c in contributions:
-        party_counter[c.party or "Unknown"] += 1
         house_counter[c.house] += 1
     date_range: tuple[date, date] | None = None
     if contributions:
         dates = [c.date for c in contributions]
         date_range = (min(dates), max(dates))
-    return dict(party_counter), dict(house_counter), date_range
+    return dict(house_counter), date_range
 
 
 def _safe_int(value, default: int = 0) -> int:
@@ -469,7 +486,7 @@ def register_tools(mcp: FastMCP) -> None:
         # Use the dedicated endpoint's total when available — it's authoritative for the
         # contribution category we paginated; fall back to /search.json's TotalContributions.
         total_corpus = contribs_payload.get("TotalResultCount") or payload.get("TotalContributions")
-        party_breakdown, house_breakdown, date_range = _compute_search_facets(contributions)
+        house_breakdown, date_range = _compute_search_facets(contributions)
         return HansardSearchResult(
             query=query,
             from_date=from_date,
@@ -491,7 +508,7 @@ def register_tools(mcp: FastMCP) -> None:
             total_members=payload.get("TotalMembers"),
             top_debates=_parse_top_debates_preview(payload),
             top_divisions=_parse_top_divisions_preview(payload),
-            party_breakdown=party_breakdown,
+            party_breakdown={},
             house_breakdown=house_breakdown,
             date_range=date_range,
             has_more=len(contributions) == limit,
