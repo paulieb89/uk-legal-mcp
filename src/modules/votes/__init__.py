@@ -25,7 +25,8 @@ votes_mcp = FastMCP(
         "debate division id is reusable here.\n\n"
         "On error, returns a {status, detail} envelope (status: ok|empty|not_found|"
         "upstream_validation|upstream_timeout|upstream_unavailable|unknown_error). "
-        "Commons API caps at 25 per page; Lords API similar. Re-call with offset to paginate."
+        "Commons API caps at 25 per page; Lords honours limit up to 100. `total` is the "
+        "source's full match count; re-call with offset=offset+returned while has_more is true."
     ),
 )
 
