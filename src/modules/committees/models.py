@@ -77,9 +77,8 @@ class CommitteeEvidencePage(BaseModel):
 
     Returned by committees_search_evidence. Callers paginate by
     re-calling with offset=offset+returned while has_more is True.
-    When evidence_type="both", oral and written evidence are
-    interleaved in a single `evidence` list and the limit is split
-    across both.
+    When evidence_type="both", the sequence being paged is all oral
+    evidence followed by all written evidence.
     """
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -91,13 +90,15 @@ class CommitteeEvidencePage(BaseModel):
     offset: int = Field(..., description="Number of evidence items skipped before this page")
     limit: int = Field(..., description="Max evidence items requested for this page")
     returned: int = Field(..., description="Number of evidence items actually returned in this call")
+    total: int = Field(..., description=(
+        "Evidence items matching this query, from committees-api's totalResults "
+        "(for evidence_type='both', the oral count plus the written count)"
+    ))
     has_more: bool = Field(
         ...,
         description=(
-            "True if there may be more evidence beyond this page. Re-call with "
-            "offset=offset+returned to fetch the next page. Conservative: when "
-            "evidence_type='both', True if either oral or written upstream page "
-            "came back full."
+            "True if evidence exists beyond this page (offset + returned < total). "
+            "Re-call with offset=offset+returned to fetch the next page."
         ),
     )
     evidence: list[EvidenceItem] = Field(
