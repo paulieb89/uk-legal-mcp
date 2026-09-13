@@ -21,6 +21,68 @@ COMMITTEES_BASE = "https://committees-api.parliament.uk/api"
 HOUSE_MAP = {"Commons": 1, "Lords": 2, "Joint": 0}
 
 
+def _witness_display_name(w: dict) -> str | None:
+    """Derive a witness's display identity, preferring their personal name.
+
+    committees-api.parliament.uk's witness object carries `name` for an
+    individual submitter, but `name: null` for an Organisation submitter —
+    there is no person to name. This was the confirmed source-fidelity
+    crash: the old parser read `w.get("name", str(w))`, which only
+    substitutes the fallback when the key is ABSENT, not when it's present
+    with value None, so an Organisation witness's null `name` reached
+    `EvidenceItem.witnesses: list[str]` directly and failed Pydantic
+    validation.
+
+    `organisations[0]` cardinality — verified live (2026-09) across 228
+    real witnesses from three committees (Treasury 158, Justice 102, Home
+    Affairs 83): the swagger schema declares `organisations` as an
+    unbounded `IEnumerable<Organisation>`, and it genuinely is — 4 witnesses
+    carried 2 or 3 entries. But every one of those was an Individual witness
+    with a populated `name` (the array there lists that PERSON's several
+    professional affiliations, e.g. "Swansea University" + "Vox Pol
+    Institute" for one academic), so `name` wins before `organisations` is
+    ever consulted. On the branch this function actually reaches —
+    Organisation-type, `name` null, no person to name — cardinality was
+    exactly 1 in all 51 instances observed, 0 counterexamples. `[0]` is
+    therefore reading "the identifying organisation" (there is only ever
+    one when it matters), not silently discarding a second one.
+
+    Returns None (no fabricated string) if neither a personal name nor an
+    organisation entry is available — not observed live, but the schema
+    doesn't rule it out, so this stays honest rather than guessing.
+    """
+    name = w.get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    organisations = w.get("organisations")
+    if isinstance(organisations, list) and organisations and isinstance(organisations[0], dict):
+        org_name = organisations[0].get("name")
+        role = organisations[0].get("role")
+        if org_name and role:
+            return f"{org_name} ({role})"
+        if org_name:
+            return org_name
+    return None
+
+
+def _parse_witnesses(raw_witnesses) -> list[str | None]:
+    """Map a raw oral-evidence `witnesses` array to display names.
+
+    A string entry is used as-is (defensive — not observed live, the real
+    shape is always objects, but cheap to keep honest). A dict entry is
+    resolved via _witness_display_name, which can legitimately return None.
+    Anything else is skipped, matching the pre-existing behaviour for
+    malformed entries.
+    """
+    witnesses: list[str | None] = []
+    for w in raw_witnesses or []:
+        if isinstance(w, str):
+            witnesses.append(w)
+        elif isinstance(w, dict):
+            witnesses.append(_witness_display_name(w))
+    return witnesses
+
+
 def _parse_house(house_val) -> str | None:
     if isinstance(house_val, int):
         return {1: "Commons", 2: "Lords", 0: "Joint"}.get(house_val)
@@ -169,9 +231,11 @@ def register_tools(mcp: FastMCP) -> None:
         """USE THIS TOOL WHEN you have a committee_id and want the oral and written evidence submitted to it.
 
         Returns ONE PAGE of evidence (default 20). Free-text titles are capped
-        per max_title_chars; witness lists are capped at 10 per item. For
-        committees with many submissions, re-call with offset=offset+returned
-        while has_more is true.
+        per max_title_chars; witness lists are capped at 10 per item. An
+        organisation witness (no named individual) is rendered as
+        '<Organisation> (<Role>)'; a null entry means the source gave no
+        name for that witness at all. For committees with many submissions,
+        re-call with offset=offset+returned while has_more is true.
 
         Authoritative source for parliamentary committee evidence.
         """
@@ -198,12 +262,7 @@ def register_tools(mcp: FastMCP) -> None:
             results: list[EvidenceItem] = []
             for item in items:
                 ev_date = item.get("evidenceDate") or item.get("date")
-                witnesses: list[str] = []
-                for w in item.get("witnesses", []):
-                    if isinstance(w, str):
-                        witnesses.append(w)
-                    elif isinstance(w, dict):
-                        witnesses.append(w.get("name", str(w)))
+                witnesses = _parse_witnesses(item.get("witnesses", []))
                 results.append(EvidenceItem(
                     id=item.get("id", 0),
                     type="oral",

@@ -58,7 +58,17 @@ class EvidenceItem(BaseModel):
     type: Literal["oral", "written"] = Field(..., description="Type of evidence")
     title: str = Field(..., description="Evidence title or session description (may be truncated per max_title_chars)")
     date: Date | None = Field(None, description="Date the evidence was given or submitted")
-    witnesses: list[str] | None = Field(None, description="Witness names (oral evidence only, capped at 10 per item)")
+    witnesses: list[str | None] | None = Field(None, description=(
+        "Witness display names (oral evidence only, capped at 10 per item). "
+        "An organisation witness (e.g. a regulator or company giving evidence "
+        "collectively, not through one named individual) has no personal name "
+        "upstream — that entry is rendered as '<Organisation> (<Role>)' "
+        "instead, e.g. 'Bank of England (Governor)'. A null entry means "
+        "committees-api.parliament.uk supplied neither a personal name nor "
+        "an organisation for that witness slot — honest absence, not a "
+        "fabricated placeholder; it is not omitted from the list, so the "
+        "count of entries still matches the number of witnesses upstream."
+    ))
     url: str | None = Field(None, description="URL to the evidence document")
 
 
