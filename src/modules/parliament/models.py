@@ -391,7 +391,16 @@ class MemberResult(BaseModel):
     party: str = Field(..., description="Current or last party affiliation")
     constituency: str | None = Field(None, description="Constituency (Commons); None for Lords")
     house: Literal["Commons", "Lords"] = Field(..., description="House of Parliament")
-    is_current: bool = Field(..., description="Whether the member currently sits")
+    is_current: bool | None = Field(None, description=(
+        "Whether the member currently sits, in priority order: (1) the "
+        "source's own membershipStatus.statusIsActive when membershipStatus "
+        "is present — authoritative, used directly; (2) False when "
+        "membershipStatus is null/absent but this record's own "
+        "membershipEndDate is set — an authoritative end date, not an "
+        "inference from how other records look; (3) None when neither is "
+        "available — genuinely indeterminate, not fabricated as True or "
+        "False. A null membershipStatus is NOT by itself read as 'ended'."
+    ))
 
 
 class MemberSearchResult(BaseModel):

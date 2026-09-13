@@ -249,6 +249,36 @@ def _compute_search_facets(contributions: list[HansardContribution]) -> tuple[di
     return dict(house_counter), date_range
 
 
+def _safe_nested_get(d: dict | None, key: str, default: dict) -> dict:
+    """dict.get(key, default) that also treats an explicit JSON null as absent.
+
+    members-api.parliament.uk sometimes returns a nested object key with an
+    explicit `null` rather than omitting it — a Lords member excluded under
+    the House of Lords (Hereditary Peers) Act 2026 keeps a real
+    `latestHouseMembership` object, but its own `latestParty`/
+    `latestHouseMembership` could equally be null or absent for a record with
+    no such data. `d.get(key, default)` only substitutes `default` when `key`
+    is missing, not when it's present with value `None`, so a chained
+    `d.get("a", {}).get("b")` crashes with AttributeError the moment "a" is
+    present-but-null — that crash was live-reproducible via
+    parliament_find_member(name="Devon").
+
+    This deliberately DISCARDS the "absent vs. explicit null" distinction,
+    collapsing both to `default` — appropriate only where nothing downstream
+    treats them differently (as with latestHouseMembership/latestParty here:
+    either way means "no such object", full stop). Do NOT reach for this
+    where absent-vs-null is itself meaningful evidence — see
+    `_derive_is_current`, which reads `membershipStatus` directly instead of
+    through this helper, because there "null" (no current status recorded)
+    and "a real object" (an authoritative current/ended fact) must not be
+    conflated.
+    """
+    if not isinstance(d, dict):
+        return default
+    value = d.get(key, default)
+    return default if value is None else value
+
+
 def _safe_int(value, default: int = 0) -> int:
     """Coerce a string or int to int, returning default on failure.
 
@@ -403,6 +433,62 @@ def _parse_top_divisions_preview(payload: dict) -> list[DivisionMatchLite]:
         if parsed is not None:
             out.append(parsed)
     return out
+
+
+def _derive_is_current(latest_house_membership: dict) -> bool | None:
+    """Whether a member currently sits, following source evidence in
+    priority order — never a cross-record correlation:
+
+    1. membershipStatus.statusIsActive, when membershipStatus is an actual
+       object — this field's entire purpose is to state current/ended
+       status, so when present it's authoritative and wins outright.
+    2. False, when membershipStatus is null/absent but THIS SAME record
+       carries an authoritative membershipEndDate — the membership has
+       demonstrably ended regardless of what membershipStatus does or
+       doesn't say. Verified live: member id 4707, "The Earl of Devon"
+       (excluded under the House of Lords (Hereditary Peers) Act 2026) has
+       membershipStatus=null but membershipEndDate="2026-04-29T00:00:00"
+       and membershipEndReason="Excluded" on the same latestHouseMembership
+       object — that end date is direct evidence for THIS record, not an
+       inference from how other records happened to look.
+    3. None (genuinely indeterminate) when neither establishes the fact —
+       do not fabricate True or False. Not yet observed live, but nothing
+       in the schema rules it out, and a null status must not be read as
+       "ended" by itself: a future record could plausibly have temporarily
+       absent status metadata for a still-current member, which this
+       priority order treats as unknown rather than silently wrong.
+    """
+    status = latest_house_membership.get("membershipStatus")
+    if isinstance(status, dict) and "statusIsActive" in status:
+        return bool(status.get("statusIsActive"))
+    if latest_house_membership.get("membershipEndDate"):
+        return False
+    return None
+
+
+def _parse_member_search_item(item: dict) -> MemberResult:
+    """Parse one members-api.parliament.uk /Members/Search item into MemberResult.
+
+    latestHouseMembership and latestParty are, in every real record observed,
+    either a populated object or an absent key — never an explicit JSON null
+    themselves — routed through _safe_nested_get purely for safe traversal
+    (both "absent" and "null" legitimately mean "no such object" for these
+    two; nothing downstream treats them differently). membershipStatus is
+    read directly (not through _safe_nested_get) because here the distinction
+    between "null" and "a real object" IS meaningful — see _derive_is_current.
+    """
+    v = item.get("value", item)
+    latest_house_membership = _safe_nested_get(v, "latestHouseMembership", {})
+    latest_party = _safe_nested_get(v, "latestParty", {})
+    house_id = latest_house_membership.get("house", 1)
+    return MemberResult(
+        id=v.get("id", 0),
+        name=v.get("nameDisplayAs", "Unknown"),
+        party=latest_party.get("name", "Unknown"),
+        constituency=latest_house_membership.get("membershipFrom"),
+        house="Commons" if house_id == 1 else "Lords",
+        is_current=_derive_is_current(latest_house_membership),
+    )
 
 
 def register_tools(mcp: FastMCP) -> None:
@@ -664,18 +750,7 @@ def register_tools(mcp: FastMCP) -> None:
         resp = await client.get(f"{MEMBERS_BASE}/Members/Search", params={"Name": name})
         resp.raise_for_status()
 
-        members: list[MemberResult] = []
-        for item in resp.json().get("items", []):
-            v = item.get("value", item)
-            house_id = v.get("latestHouseMembership", {}).get("house", 1)
-            members.append(MemberResult(
-                id=v.get("id", 0),
-                name=v.get("nameDisplayAs", "Unknown"),
-                party=v.get("latestParty", {}).get("name", "Unknown"),
-                constituency=v.get("latestHouseMembership", {}).get("membershipFrom"),
-                house="Commons" if house_id == 1 else "Lords",
-                is_current=v.get("latestHouseMembership", {}).get("membershipStatus", {}).get("statusIsActive", False),
-            ))
+        members = [_parse_member_search_item(item) for item in resp.json().get("items", [])]
 
         return MemberSearchResult(query=name, total=len(members), members=members)
 
