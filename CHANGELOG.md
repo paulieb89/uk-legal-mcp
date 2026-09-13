@@ -2,6 +2,24 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [0.7.0] — 2026-09-13
+
+Source-fidelity fixes. Several output fields are now nullable where the
+upstream source does not establish a value, hence the minor version.
+
+### Fixed
+
+- **`hmrc_get_vat_rate` no longer fabricates rates** — unmatched or ambiguous queries return null `rate` / `rate_percentage` / `matched_category` instead of a guessed 20%; matching is whole-phrase and most-specific (`hot food` is standard-rated, not zero). Adds `matched_category`, `verified_on` and `source_url`; `effective_from` is only set where evidenced.
+- **Legislation provisions resolve exactly** — `legislation_get_section` returns the requested section/regulation/article's own heading and text, with no document preamble or enclosing Part title; unknown provisions return `not_found`.
+- **Parliament attribution is source-faithful** — `member_name` comes only from Hansard's `MemberName` (null on the debate-contributions path, which has no such field); `party` is no longer inferred from `AttributedTo` and `party_breakdown` is empty.
+- **`parliament_find_member` handles null membership status** — no longer crashes on ended memberships; `is_current` is true/false/null from the source.
+- **`committees_search_evidence` handles organisation witnesses** — rendered as `Organisation (Role)` instead of raising a validation error.
+- **`bills_get_bill` populates `royal_assent_date`** — only for enacted bills whose current stage is Royal Assent.
+
+### Changed
+
+- Release pipeline runs the non-live suite, verifies the built wheel and image, and publishes those exact artifacts.
+
 ## [0.6.1] — 2026-09-04
 
 Prepared 2026-06-29 but never released — no tag was cut, so PyPI and the MCP
