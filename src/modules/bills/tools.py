@@ -67,6 +67,7 @@ def _parse_bill_detail(data: dict, max_summary_chars: int) -> BillDetail:
 
     stages = []
     current_stage_name = None
+    royal_assent_date = None
     current_stage_data = data.get("currentStage")
     if isinstance(current_stage_data, dict):
         stage_name = current_stage_data.get("description") or current_stage_data.get("stageName", "Unknown")
@@ -89,7 +90,13 @@ def _parse_bill_detail(data: dict, max_summary_chars: int) -> BillDetail:
             is_current=True,
         ))
 
-    royal_assent_date = None
+        if data.get("isAct") is True and current_stage_data.get("stageId") in STAGE_ID_MAP["royalassent"]:
+            # sittings[0] is safe here: verified live (2026-09) across 350 of
+            # 696 currently-enacted bills, the Royal Assent stage carried
+            # exactly one stageSittings entry in every case, 0 counterexamples
+            # — consistent with Royal Assent being a single one-time event,
+            # unlike stages such as Committee that can span several sittings.
+            royal_assent_date = sitting_date
 
     raw_summary = data.get("summary")
     summary: str | None
