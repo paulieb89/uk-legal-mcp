@@ -2,6 +2,18 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [0.7.1] — 2026-09-14
+
+Paging and matching fixes across votes, committees, bills and HMRC.
+
+### Fixed
+
+- **`hmrc_get_vat_rate` matching is exact, not phrase-containment** — a qualified query like `pet food` no longer resolves via the broader `food` category. Extra words are never discarded, since a qualifier can change VAT treatment (pet food, over-the-counter medicine, animal cremation). Exempt entries now report `rate_percentage=None` rather than `0.0` — exemption is not a 0% taxable rate. Adds previously-missing categories (pet food, qualifying dispensed prescriptions, burial/cremation of the dead) with their own verified GOV.UK sourcing.
+- **`votes_search_divisions` paging is source-faithful** — Lords search now uses the Lords API's own `limit`/`offset` parameter names; Commons requests respect the API's 25-row cap; `offset` is no longer capped at 2000, so every result of a large query is reachable. `total` is the API's full match count, `returned` is the page length, `has_more` is `offset + returned < total`.
+- **`committees_search_evidence` `evidence_type="both"` paging is complete** — now all oral evidence followed by all written evidence, so continuing at `offset + returned` visits every item once. Adds `total`; `offset` is no longer capped at 2000.
+- **`bills_search_bills` filters by originating house correctly** — `house` now sends the Bills API's `OriginatingHouse` filter, as documented, instead of `CurrentHouse`. Adds `originating_house` to results so the filter can be checked.
+- **`bills_search_bills` paging is fully reachable** — `offset` is no longer capped at 2000; it is bounded only by the Bills API's int32 `Skip`.
+
 ## [0.7.0] — 2026-09-13
 
 Source-fidelity fixes. Several output fields are now nullable where the
