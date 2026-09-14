@@ -142,6 +142,7 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 ## Deployment
 
 - Production deploys only through `.github/workflows/release.yml`, which runs when a GitHub release is published: the non-live suite must pass, then PyPI publish, then `flyctl deploy`. Don't run `fly deploy` by hand (project settings deny it); it skips PyPI, so the published and live versions drift. Dockerfile copies `src/` only (tests excluded via `.dockerignore`).
+- Use the `/release` skill (`.claude/skills/release/SKILL.md`) to cut a release — it's the procedure around this machinery (version bump, CHANGELOG, release-prep PR, tag, `gh release create`, then verifying what actually shipped), not a replacement for it.
 - Two machines in `lhr`, auto-stop enabled, min 1 running.
 - The "not listening on expected address" warning during rolling deploy is transient — the machine reaches good state immediately after.
 - Secrets are set via `fly secrets set` and persist across deploys.
@@ -171,6 +172,7 @@ They are NOT loaded unless the relevant files are in scope — they don't bloat 
 |------------|----------------------------------------------------------------|
 | `/audit`   | Full conformance check — run before starting work              |
 | `/bug`     | Incident → test → invariant flywheel for fixing bugs           |
+| `/release` | Cut and ship a release — see Deployment above                  |
 
 ### Hooks (deterministic, not prompt-guidance)
 `.claude/hooks/post_edit_check.py` runs after every Write/Edit of a `.py` file and compiles it. A syntax error exits 2, which is how a PostToolUse hook gets its stderr in front of Claude; a hook that exits 0 is never seen. It does not run tests — run `uv run pytest -m "not live" -q` yourself. Behaviour is pinned by `tests/test_post_edit_hook.py`.
