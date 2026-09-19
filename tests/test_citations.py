@@ -410,3 +410,68 @@ class TestFormatOscolaGuard:
         )
         assert result.data["status"] == "upstream_validation"
         assert result.data["is_retryable"] is False
+
+
+# ---------------------------------------------------------------------------
+# Regression: OSCOLA neutral-citation string format
+# ---------------------------------------------------------------------------
+# OSCOLA — and TNA's own NCN guidance for the Find Case Law service
+# (nationalarchives.github.io/ds-caselaw-judiciary-guidance/ncn.html) — place
+# the division qualifier AFTER the judgment number:
+#
+#     [2026] EWHC 2355 (Comm)      correct
+#     [2026] EWHC (Comm) 2355      wrong
+#
+# The formatter previously emitted the second form for every division-bearing
+# court, because _COURT_DISPLAY stored court and division as one fused string
+# and _build_oscola had no slot to place the division last. The existing suite
+# missed it: test_neutral_citation_parsing asserts "expected_court in
+# c.court.upper()", which is order- and case-insensitive, and TestFormatOscolaGuard
+# only exercises the confidence-0.0 refusal — nothing asserted the output string.
+
+NEUTRAL_FORMAT_CASES = [
+    # (court, year, number, expected OSCOLA)
+    ("EWHC (COMM)", 2026, 2355, "[2026] EWHC 2355 (Comm)"),
+    ("EWHC (CH)", 2026, 2320, "[2026] EWHC 2320 (Ch)"),
+    ("EWHC (KB)", 2026, 2365, "[2026] EWHC 2365 (KB)"),   # acronym stays uppercase
+    ("EWHC (TCC)", 2026, 2319, "[2026] EWHC 2319 (TCC)"),  # ditto
+    ("EWHC (ADMIN)", 2026, 2337, "[2026] EWHC 2337 (Admin)"),
+    ("EWHC (IPEC)", 2026, 100, "[2026] EWHC 100 (IPEC)"),
+    ("UKFTT (GRC)", 2026, 1314, "[2026] UKFTT 1314 (GRC)"),
+    ("UKUT (TCC)", 2026, 351, "[2026] UKUT 351 (TCC)"),
+    ("UKUT (IAC)", 2019, 300, "[2019] UKUT 300 (IAC)"),
+    # No division — must be unchanged by the fix
+    ("UKSC", 2017, 5, "[2017] UKSC 5"),
+    ("EWCA CIV", 2024, 123, "[2024] EWCA Civ 123"),
+    ("EAT", 2020, 25, "[2020] EAT 25"),
+    ("UKPC", 2026, 9, "[2026] UKPC 9"),
+]
+
+
+class TestNeutralFormatOscola:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("court,year,number,expected", NEUTRAL_FORMAT_CASES)
+    async def test_division_follows_judgment_number(self, gw_client: Client, court, year, number, expected):
+        result = await gw_client.call_tool(
+            "citations_format_oscola",
+            {
+                "citation_type": "neutral",
+                "confidence": 1.0,
+                "resolved_url": "https://caselaw.nationalarchives.gov.uk/x",
+                "year": year,
+                "court": court,
+                "number": number,
+            },
+        )
+        assert result.data["oscola"] == expected
+
+    def test_division_acronym_not_titlecased(self):
+        """KB/TCC/GRC must survive parsing intact — .title() gave 'Kb'/'Tcc'/'Grc'."""
+        patterns = _compile_patterns()
+        confident, ambiguous = _extract_all_citations("[2026] EWHC 2365 (KB)", patterns)
+        c = (confident + ambiguous)[0]
+        assert c.court == "EWHC (KB)"
+        assert resolve_neutral_citation(c.year, c.court, c.number) == (
+            "https://caselaw.nationalarchives.gov.uk/ewhc/kb/2026/2365"
+        )
+

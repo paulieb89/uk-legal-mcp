@@ -2,6 +2,12 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [Unreleased]
+
+### Fixed
+
+- **`citations_format_oscola` placed the division qualifier before the judgment number** — every division-bearing neutral citation was rendered in the wrong order. `[2026] EWHC 2320 (Ch)` came back as `[2026] EWHC (Ch) 2320`, `[2026] UKFTT 1314 (GRC)` as `[2026] UKFTT (Grc) 1314`. Measured 72/72 failures across real, confidence-1.0 TNA judgments spanning the High Court (49), First-tier Tribunal (18) and Upper Tribunal (5); UKSC, EWCA, EAT and UKPC were unaffected because their citations carry no parenthetical qualifier. Two coupled causes: `_COURT_DISPLAY` stores court and division as one fused string and `_build_oscola` had no slot to place the division last; and the parser's `trailing_division.title()` produced `EWHC (Kb)`, which missed every `_COURT_DISPLAY` / `_TNA_COURT_SLUGS` key (all uppercase, deliberately preserving acronyms such as KB, TCC, GRC, IPEC) and silently fell through to the raw value. The formatter now splits the display form and re-attaches the division after the number, and the parser keeps the division uppercase so the lookup tables are hit. TNA URL resolution is unaffected — `resolve_neutral_citation` already uppercased before its lookup. Adds `TestNeutralFormatOscola`, which asserts the formatted output string; the previous suite only covered the confidence-0.0 refusal and compared courts with `in c.court.upper()`, so neither defect was observable.
+
 ## [0.7.1] — 2026-09-14
 
 Paging and matching fixes across votes, committees, bills and HMRC.

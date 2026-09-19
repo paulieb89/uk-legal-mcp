@@ -65,6 +65,13 @@ def _build_oscola(
 ) -> str:
     if citation_type == "neutral":
         display = _COURT_DISPLAY.get(court or "", court or "")
+        # OSCOLA (and TNA's own NCN guidance) place the division qualifier AFTER
+        # the judgment number: "[2026] EWHC 2355 (Comm)", never
+        # "[2026] EWHC (Comm) 2355". _COURT_DISPLAY stores the fused form, so
+        # split it and re-attach the division at the end.
+        base, sep, division = display.partition(" (")
+        if sep:
+            return f"[{year}] {base} {number} ({division.rstrip(')')})"
         return f"[{year}] {display} {number}"
     if citation_type == "law_report":
         if volume:
@@ -96,7 +103,11 @@ def _parse_citation_from_match(
         number = int(match.group(3))
         trailing_division = match.group(4)
         if trailing_division and court_raw in AMBIGUOUS_COURTS:
-            court_raw = f"{court_raw} ({trailing_division.title()})"
+            # .upper(), not .title(): _COURT_DISPLAY / _TNA_COURT_SLUGS keys are
+            # uppercase and deliberately preserve acronyms (KB, TCC, GRC, IPEC).
+            # .title() produced "EWHC (Kb)", which missed every lookup key and
+            # silently fell through to the raw value.
+            court_raw = f"{court_raw} ({trailing_division.upper()})"
         if court_is_ambiguous(court_raw):
             confidence = 0.5
         resolved = resolve_neutral_citation(year, court_raw, number)
