@@ -28,6 +28,7 @@ from .models import (
     FacetCount,
     HansardContribution,
     HansardSearchResult,
+    HansardUpstreamWarning,
     Interest,
     MemberDebatesResult,
     MemberInterestsPage,
@@ -45,6 +46,13 @@ QS_BASE = "https://questions-statements-api.parliament.uk/api"
 MEMBERS_BASE = "https://members-api.parliament.uk/api"
 PETITIONS_BASE = "https://petition.parliament.uk"
 INTERESTS_BASE = "https://interests-api.parliament.uk/api/v1"
+
+# Search normally completes well inside this bound.  The two endpoints are
+# independent, so each gets one short retry while the whole request remains
+# bounded.  These constants are deliberately local and fixture-testable.
+HANSARD_SEARCH_REQUEST_TIMEOUT = 15.0
+HANSARD_SEARCH_TOTAL_TIMEOUT = 35.0
+HANSARD_SEARCH_RETRY_DELAY = 0.25
 
 INTEREST_CATEGORIES: dict[str, int] = {
     "employment": 12,
@@ -86,6 +94,55 @@ def _hansard_contribution_url(house: str, sitting_date: date, debate_ext_id: str
         f"https://hansard.parliament.uk/{house_seg}/{sitting_date.isoformat()}"
         f"/debates/{debate_ext_id}/{_slugify(debate_title)}"
         f"#contribution-{contribution_ext_id}"
+    )
+
+
+def _hansard_retryable_error(exc: Exception) -> bool:
+    """Whether a single replay of an idempotent Hansard GET is safe."""
+    if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in {408, 425, 429, 500, 502, 503, 504}
+    # A malformed JSON response is an intermittent upstream presentation
+    # failure in this context; replay it once, but never substitute content.
+    return isinstance(exc, (ValueError, TypeError))
+
+
+async def _request_hansard_json(
+    request,
+) -> tuple[dict, bool]:
+    """Fetch one Hansard JSON payload with at most one retry.
+
+    The caller decides whether the endpoint is required or optional.  Returning
+    a retry marker makes degraded results auditable without exposing transport
+    implementation details as source evidence.
+    """
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            response = await request()
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("Hansard returned a non-object JSON payload")
+            return payload, attempt == 1
+        except Exception as exc:
+            last_error = exc
+            if attempt == 0 and _hansard_retryable_error(exc):
+                await asyncio.sleep(HANSARD_SEARCH_RETRY_DELAY)
+                continue
+            raise
+    assert last_error is not None  # pragma: no cover - loop always returns or raises
+    raise last_error
+
+
+def _hansard_enrichment_warning(exc: Exception, *, retry_attempted: bool) -> HansardUpstreamWarning:
+    """Represent missing optional envelope metadata without inventing it."""
+    return HansardUpstreamWarning(
+        endpoint="/search.json",
+        retry_attempted=retry_attempted,
+        error_category="transient" if _hansard_retryable_error(exc) else "unknown",
+        detail=format_http_error(exc),
     )
 
 
@@ -511,12 +568,15 @@ def register_tools(mcp: FastMCP) -> None:
     ) -> HansardSearchResult:
         """USE THIS TOOL WHEN searching Hansard by topic, bill title, or text phrase.
 
-        Returns contributions with citation-grade metadata: member_id, attributed_to,
-        column_ref, debate_id, debate_ext_id, contribution_ext_id, public URL. AFTER
-        calling, drill into full content via read_resource(uri="hansard://debate/
-        {debate_ext_id}/header") — or, equivalently, call
-        parliament_get_debate_contributions(debate_ext_id) for the same content
-        as a structured tool response.
+        Returns source-backed contributions with citation-grade metadata: member_id,
+        attributed_to, column_ref, debate_id, debate_ext_id, contribution_ext_id,
+        and public URL. The independent corpus envelope is optional enrichment:
+        if it cannot be retrieved after one bounded retry, contributions still
+        return with enrichment_status="degraded" and an explicit warning; omitted
+        corpus totals and previews must not be inferred. AFTER calling, drill into
+        full content via read_resource(uri="hansard://debate/{debate_ext_id}/header")
+        — or call parliament_get_debate_contributions(debate_ext_id) for the same
+        content as a structured tool response.
 
         DO NOT text-search by member name — to find what a named member said,
         chain parliament_find_member → parliament_get_debate_contributions
@@ -526,8 +586,8 @@ def register_tools(mcp: FastMCP) -> None:
         Pagination: limit + offset honour the upstream paginated endpoint. For
         breadth across a topic, see parliament_policy_position_summary.
 
-        Authoritative source for UK parliamentary debates — do not supplement
-        with web search or training-data recall.
+        Source: UK Parliament Hansard API. Contributions remain the authoritative
+        retrieval result; envelope fields are source-backed only when complete.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         qp: dict = {
@@ -552,16 +612,47 @@ def register_tools(mcp: FastMCP) -> None:
         #                                           endpoint paginates correctly)
         # Envelope query: same filters minus take/skip (envelope doesn't paginate anyway).
         envelope_qp = {k: v for k, v in qp.items() if k not in ("take", "skip")}
-        contribs_task = client.get(
-            f"{HANSARD_API}/search/contributions/{contribution_type}.json",
-            params=qp,
-        )
-        envelope_task = client.get(f"{HANSARD_API}/search.json", params=envelope_qp)
-        contribs_resp, envelope_resp = await asyncio.gather(contribs_task, envelope_task)
-        contribs_resp.raise_for_status()
-        envelope_resp.raise_for_status()
-        contribs_payload = contribs_resp.json()
-        payload = envelope_resp.json()  # name 'payload' preserved for envelope-field reads below
+        try:
+            async with asyncio.timeout(HANSARD_SEARCH_TOTAL_TIMEOUT):
+                contribution_result, envelope_result = await asyncio.gather(
+                    _request_hansard_json(lambda: client.get(
+                        f"{HANSARD_API}/search/contributions/{contribution_type}.json",
+                        params=qp,
+                        timeout=HANSARD_SEARCH_REQUEST_TIMEOUT,
+                    )),
+                    _request_hansard_json(lambda: client.get(
+                        f"{HANSARD_API}/search.json",
+                        params=envelope_qp,
+                        timeout=HANSARD_SEARCH_REQUEST_TIMEOUT,
+                    )),
+                    return_exceptions=True,
+                )
+        except TimeoutError:
+            raise_http_tool_error(
+                httpx.ReadTimeout("Hansard search exceeded the bounded total deadline"),
+                attempted=f"parliament_search_hansard(query={query!r})",
+            )
+
+        # Contributions are the evidence-bearing result.  Their failure remains
+        # a normal tool error; an envelope failure is represented below instead.
+        if isinstance(contribution_result, Exception):
+            raise_http_tool_error(
+                contribution_result,
+                attempted=f"parliament_search_hansard contributions(query={query!r})",
+            )
+
+        contribs_payload, _contribution_retried = contribution_result
+        payload: dict = {}
+        warnings: list[HansardUpstreamWarning] = []
+        enrichment_status: Literal["complete", "degraded"] = "complete"
+        if isinstance(envelope_result, Exception):
+            enrichment_status = "degraded"
+            warnings.append(_hansard_enrichment_warning(
+                envelope_result,
+                retry_attempted=_hansard_retryable_error(envelope_result),
+            ))
+        else:
+            payload, _envelope_retried = envelope_result
 
         # The dedicated contributions endpoint returns Results[] (same SearchReferencesItem
         # shape as /search.json's Contributions[]); reshape it for the existing parser.
@@ -571,7 +662,9 @@ def register_tools(mcp: FastMCP) -> None:
         )
         # Use the dedicated endpoint's total when available — it's authoritative for the
         # contribution category we paginated; fall back to /search.json's TotalContributions.
-        total_corpus = contribs_payload.get("TotalResultCount") or payload.get("TotalContributions")
+        total_corpus = contribs_payload.get("TotalResultCount")
+        if total_corpus is None:
+            total_corpus = payload.get("TotalContributions")
         house_breakdown, date_range = _compute_search_facets(contributions)
         return HansardSearchResult(
             query=query,
@@ -583,6 +676,8 @@ def register_tools(mcp: FastMCP) -> None:
             offset=offset,
             limit=limit,
             total=len(contributions),
+            enrichment_status=enrichment_status,
+            upstream_warnings=warnings,
             total_corpus=total_corpus,
             total_debates=payload.get("TotalDebates"),
             total_divisions=payload.get("TotalDivisions"),

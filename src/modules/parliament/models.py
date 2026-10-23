@@ -108,6 +108,21 @@ class HansardSearchResult(BaseModel):
     offset: int = Field(0, description="Skip applied to this page (Hansard API: skip)")
     limit: int = Field(20, description="Page size requested")
     total: int = Field(..., description="Number of contributions returned in this call")
+    enrichment_status: Literal["complete", "degraded"] = Field(
+        "complete",
+        description=(
+            "Whether the optional /search.json corpus envelope was retrieved. "
+            "'degraded' means contribution results are source-backed and usable, "
+            "but corpus totals and previews were unavailable."
+        ),
+    )
+    upstream_warnings: "list[HansardUpstreamWarning]" = Field(
+        default_factory=list,
+        description=(
+            "Explicit warnings for unavailable optional upstream enrichment. "
+            "Do not infer omitted corpus totals or previews when this is non-empty."
+        ),
+    )
     total_corpus: int | None = Field(None, description="Total contributions in Hansard matching this query (TotalContributions). Use to decide whether to paginate further or escalate to parliament_policy_position_summary.")
     # Corpus envelope from /search.json — informative integers, no extra HTTP.
     total_debates: int | None = Field(None, description="TotalDebates — distinct debates touching this topic.")
@@ -145,6 +160,19 @@ class HansardSearchResult(BaseModel):
         default_factory=list,
         description="Matching Hansard contributions with full citation metadata.",
     )
+
+
+class HansardUpstreamWarning(BaseModel):
+    """A failed optional Hansard upstream call retained with its provenance."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    endpoint: str = Field(..., description="Hansard endpoint whose optional enrichment was unavailable.")
+    retry_attempted: bool = Field(..., description="True when the bounded one-retry policy was used.")
+    error_category: Literal["transient", "unknown"] = Field(
+        ..., description="Safe failure category for the unavailable optional enrichment."
+    )
+    detail: str = Field(..., description="Bounded upstream failure detail; it does not describe contribution content.")
 
 
 class MemberDebatesResult(BaseModel):

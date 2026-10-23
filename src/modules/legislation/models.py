@@ -56,6 +56,22 @@ class LegislationResult(BaseModel):
 class LegislationSearchResult(BaseModel):
     """Container for legislation search results."""
 
+    search_mode: Literal["title", "fulltext", "fulltext_fallback"] = Field(
+        "title",
+        description=(
+            "Route that produced these results. fulltext_fallback means the title "
+            "route was unavailable because legislation.gov.uk returned a typed "
+            "WAF/non-XML failure, so the server retried once using the documented "
+            "full-text route; relevance may therefore be broader than title search."
+        ),
+    )
+    fallback_reason: str | None = Field(
+        None,
+        description=(
+            "Typed upstream reason that triggered the automatic full-text fallback, "
+            "or null when the requested route completed normally."
+        ),
+    )
     results: list[LegislationResult] = Field(..., description="Matching legislation items")
     total: int = Field(..., description="Total number of matches")
 

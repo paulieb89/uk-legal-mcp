@@ -1,6 +1,6 @@
 """Pydantic models for the hmrc module."""
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -116,3 +116,20 @@ class HMRCGuidanceSearchResult(BaseModel):
             "per the max_summary_chars input parameter."
         ),
     )
+
+
+class HMRCManualPage(BaseModel):
+    """Bounded content retrieved from one canonical HMRC internal-manual page."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    canonical_url: str = Field(..., description="Final allowlisted GOV.UK URL retrieved for this manual page")
+    manual_family: str = Field(..., description="GOV.UK manual-family slug, e.g. employment-income-manual")
+    reference: str = Field(..., description="Manual page reference from the canonical GOV.UK path, e.g. eim00500")
+    title: str = Field(..., description="Page heading supplied by GOV.UK")
+    breadcrumbs: list[str] = Field(default_factory=list, description="Source-supplied GOV.UK breadcrumb labels, in display order")
+    updated: date | None = Field(None, description="Source page update date where GOV.UK supplied one")
+    content: str = Field(..., description="Source-order main page text, bounded by max_chars; never an LLM summary")
+    content_truncated: bool = Field(..., description="True when content was cut to max_chars")
+    original_length: int = Field(..., ge=0, description="Main-text character length before any truncation")
+    retrieved_at: datetime = Field(..., description="UTC timestamp when this official GOV.UK page was retrieved")

@@ -2,6 +2,16 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [0.8.0] — 2026-10-23
+
+### Added
+
+- **Source-faithful HMRC and committee retrieval** — adds bounded official HMRC internal-manual reading, plus committee-business discovery and exact inquiry filtering with preserved evidence provenance.
+
+### Changed
+
+- **More resilient legal-source retrieval** — Hansard returns authoritative contributions when optional enrichment is unavailable; legislation search discloses a same-source full-text fallback after a classified WAF failure; and `read_resource` now explains that server resource URIs are not ordinary web URLs.
+
 ## [0.7.1] — 2026-09-14
 
 Paging and matching fixes across votes, committees, bills and HMRC.

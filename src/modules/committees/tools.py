@@ -14,7 +14,18 @@ from fastmcp import FastMCP, Context
 from pydantic import Field
 
 from ...deps import format_http_error, raise_http_tool_error, raise_tool_error
-from .models import CommitteeDetail, CommitteeEvidencePage, CommitteeMember, CommitteeSearchResult, CommitteeSummary, EvidenceItem
+from .models import (
+    CommitteeBusinessSearchResult,
+    CommitteeBusinessSummary,
+    CommitteeDetail,
+    CommitteeEvidencePage,
+    CommitteeMember,
+    CommitteeSearchResult,
+    CommitteeSummary,
+    EvidenceDocument,
+    EvidenceDocumentFile,
+    EvidenceItem,
+)
 
 COMMITTEES_BASE = "https://committees-api.parliament.uk/api"
 
@@ -96,6 +107,57 @@ def _parse_house(house_val) -> str | None:
     if isinstance(house_val, dict):
         return house_val.get("name")
     return None
+
+
+def _parse_date(raw) -> date | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+
+def _business_from_raw(raw: dict) -> CommitteeBusinessSummary:
+    kind = raw.get("type") if isinstance(raw.get("type"), dict) else {}
+    status = raw.get("status")
+    return CommitteeBusinessSummary(
+        id=raw.get("id", 0),
+        title=raw.get("title") or raw.get("name") or "Unknown committee business",
+        type=kind.get("name"),
+        is_inquiry=kind.get("isInquiry") if isinstance(kind.get("isInquiry"), bool) else None,
+        status=status if isinstance(status, str) else None,
+        open_date=_parse_date(raw.get("openDate")),
+        close_date=_parse_date(raw.get("closeDate")),
+        latest_report=raw.get("latestReport") if isinstance(raw.get("latestReport"), dict) else None,
+    )
+
+
+def _businesses_from_item(item: dict) -> list[CommitteeBusinessSummary]:
+    raw_businesses = item.get("committeeBusinesses")
+    if not isinstance(raw_businesses, list):
+        business = item.get("committeeBusiness")
+        raw_businesses = [business] if isinstance(business, dict) else []
+    return [_business_from_raw(raw) for raw in raw_businesses if isinstance(raw, dict)]
+
+
+def _document_from_item(item: dict) -> EvidenceDocument | None:
+    raw = item.get("document")
+    if not isinstance(raw, dict):
+        return None
+    files = raw.get("files") if isinstance(raw.get("files"), list) else []
+    return EvidenceDocument(
+        document_id=raw.get("documentId") if isinstance(raw.get("documentId"), int) else None,
+        files=[
+            EvidenceDocumentFile(
+                file_name=file.get("fileName") if isinstance(file.get("fileName"), str) else None,
+                format=file.get("fileDataFormat") if isinstance(file.get("fileDataFormat"), str) else None,
+                size_bytes=file.get("fileSize") if isinstance(file.get("fileSize"), int) else None,
+                url=file.get("url") if isinstance(file.get("url"), str) else None,
+            )
+            for file in files if isinstance(file, dict)
+        ],
+    )
 
 
 def register_tools(mcp: FastMCP) -> None:
@@ -221,19 +283,58 @@ def register_tools(mcp: FastMCP) -> None:
         )
 
     @mcp.tool(
+        name="search_businesses",
+        annotations={"title": "Search Committee Inquiries and Business", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    )
+    async def committees_search_businesses(
+        committee_id: Annotated[int, Field(description="Committee ID from committees_search_committees results.", ge=1)],
+        query: Annotated[str | None, Field(description="Optional official inquiry/business title search term. Returns source-supplied IDs; do not infer an ID from a title.", min_length=2, max_length=300)] = None,
+        limit: Annotated[int, Field(description="Maximum inquiry/business records to return (1–100).", ge=1, le=100)] = 50,
+        *,
+        ctx: Context,
+    ) -> CommitteeBusinessSearchResult:
+        """USE THIS TOOL WHEN identifying a committee inquiry or business before evidence retrieval.
+
+        Returns official business IDs, titles, types, dates, and report/status metadata.
+        AFTER calling, use an exact ID as committee_business_id in committees_search_evidence.
+        Source: UK Parliament Committees API CommitteeBusiness endpoint.
+        """
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        params: dict = {"CommitteeId": committee_id, "Take": limit}
+        if query:
+            params["SearchTerm"] = query
+        try:
+            resp = await client.get(f"{COMMITTEES_BASE}/CommitteeBusiness", params=params)
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise_http_tool_error(exc, attempted=f"committees_search_businesses(committee_id={committee_id}, query={query!r})")
+        data = resp.json()
+        items = data.get("items", []) if isinstance(data, dict) else []
+        businesses = [_business_from_raw(item) for item in items if isinstance(item, dict)]
+        return CommitteeBusinessSearchResult(
+            committee_id=committee_id,
+            query=query,
+            total=len(businesses),
+            businesses=businesses,
+        )
+
+    @mcp.tool(
         name="search_evidence",
         annotations={"title": "Search Committee Evidence", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def committees_search_evidence(
         committee_id: Annotated[int, Field(description="Committee ID from committees_search_committees results.", ge=1)],
         evidence_type: Annotated[Literal["oral", "written", "both"], Field(description="Type of evidence to search.")] = "both",
+        committee_business_id: Annotated[int | None, Field(description="Exact official inquiry/business ID from committees_search_businesses. Applies the source filter before pagination; do not infer this from a title.", ge=1)] = None,
+        published_from: Annotated[date | None, Field(description="Optional inclusive source publication-date lower bound (YYYY-MM-DD). Applied upstream before pagination.")] = None,
+        published_to: Annotated[date | None, Field(description="Optional inclusive source publication-date upper bound (YYYY-MM-DD). Applied upstream before pagination.")] = None,
         offset: Annotated[int, Field(description="Number of evidence items to skip before this page. Default 0. Re-call with offset=offset+returned while has_more is true. For evidence_type='both' this is a position in the combined sequence (all oral evidence, then all written evidence).", ge=0, le=UPSTREAM_SKIP_MAX)] = 0,
         limit: Annotated[int, Field(description="Maximum evidence items to return. Default 20. For evidence_type='both' a page may hold only oral, only written, or the last oral items followed by the first written items.", ge=1, le=100)] = 20,
         max_title_chars: Annotated[int, Field(description="Per-item cap on the free-text title field. Default 300 prevents context blow-up from verbose inquiry titles. Raise to 1000+ only when you need the full title text.", ge=50, le=2000)] = 300,
         *,
         ctx: Context,
     ) -> CommitteeEvidencePage:
-        """USE THIS TOOL WHEN you have a committee_id and want the oral and written evidence submitted to it.
+        """USE THIS TOOL WHEN retrieving committee evidence, especially for an identified inquiry.
 
         Returns ONE PAGE of evidence (default 20) plus `total`, the source's
         count of matching items. evidence_type='both' lists all oral evidence
@@ -243,11 +344,42 @@ def register_tools(mcp: FastMCP) -> None:
         named individual) is rendered as '<Organisation> (<Role>)'; a null
         entry means the source gave no name for that witness at all. For
         committees with many submissions, re-call with offset=offset+returned
-        while has_more is true.
+        while has_more is true. For inquiry-specific research, first call
+        committees_search_businesses and pass its exact committee_business_id;
+        this filters at the authoritative source before pagination.
 
-        Authoritative source for parliamentary committee evidence.
+        Source: UK Parliament Committees API oral and written evidence endpoints.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
+
+        if published_from and published_to and published_from > published_to:
+            raise_tool_error(
+                "validation",
+                is_retryable=False,
+                attempted="committees_search_evidence",
+                description="published_from must be on or before published_to.",
+            )
+
+        if committee_business_id:
+            try:
+                business_resp = await client.get(
+                    f"{COMMITTEES_BASE}/CommitteeBusiness",
+                    params={"CommitteeId": committee_id, "CommitteeBusinessIds": [committee_business_id], "Take": 1},
+                )
+                business_resp.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise_http_tool_error(
+                    exc,
+                    attempted=f"committees_search_evidence(committee_id={committee_id}, committee_business_id={committee_business_id})",
+                )
+            business_items = business_resp.json().get("items", [])
+            if not isinstance(business_items, list) or not business_items:
+                raise_tool_error(
+                    "validation",
+                    is_retryable=False,
+                    attempted=f"committees_search_evidence(committee_id={committee_id}, committee_business_id={committee_business_id})",
+                    description="The supplied committee_business_id is not associated with this committee. Use committees_search_businesses to obtain an exact source ID.",
+                )
 
         def _cap_title(t: str) -> str:
             if len(t) > max_title_chars:
@@ -265,11 +397,21 @@ def register_tools(mcp: FastMCP) -> None:
                 )
             return total
 
+        def _evidence_params(skip: int, take: int) -> dict:
+            params: dict = {"CommitteeId": committee_id, "Skip": skip, "Take": take}
+            if committee_business_id:
+                params["CommitteeBusinessId"] = committee_business_id
+            if published_from:
+                params["StartDate"] = published_from.isoformat()
+            if published_to:
+                params["EndDate"] = published_to.isoformat()
+            return params
+
         async def fetch_oral(skip: int, take: int) -> tuple[list[EvidenceItem], int]:
             try:
                 resp = await client.get(
                     f"{COMMITTEES_BASE}/OralEvidence",
-                    params={"CommitteeId": committee_id, "Skip": skip, "Take": take},
+                    params=_evidence_params(skip, take),
                 )
                 resp.raise_for_status()
             except httpx.HTTPError as e:
@@ -281,15 +423,22 @@ def register_tools(mcp: FastMCP) -> None:
                 return [], total
             results: list[EvidenceItem] = []
             for item in items:
-                ev_date = item.get("evidenceDate") or item.get("date")
+                meeting_date = _parse_date(item.get("meetingDate"))
+                publication_date = _parse_date(item.get("publicationDate"))
                 witnesses = _parse_witnesses(item.get("witnesses", []))
                 results.append(EvidenceItem(
                     id=item.get("id", 0),
                     type="oral",
-                    title=_cap_title(item.get("title", item.get("sessionTitle", "Oral evidence session"))),
-                    date=date.fromisoformat(ev_date[:10]) if ev_date else None,
+                    title=_cap_title(item.get("title") or item.get("sessionTitle") or "Oral evidence session"),
+                    date=meeting_date or publication_date,
+                    meeting_date=meeting_date,
+                    publication_date=publication_date,
+                    committee_businesses=_businesses_from_item(item),
                     witnesses=(witnesses[:10] or None),
                     url=item.get("url"),
+                    legacy_html_url=item.get("legacyHtmlUrl"),
+                    legacy_pdf_url=item.get("legacyPdfUrl"),
+                    document=_document_from_item(item),
                 ))
             return results, total
 
@@ -297,7 +446,7 @@ def register_tools(mcp: FastMCP) -> None:
             try:
                 resp = await client.get(
                     f"{COMMITTEES_BASE}/WrittenEvidence",
-                    params={"CommitteeId": committee_id, "Skip": skip, "Take": take},
+                    params=_evidence_params(skip, take),
                 )
                 resp.raise_for_status()
             except httpx.HTTPError as e:
@@ -309,14 +458,23 @@ def register_tools(mcp: FastMCP) -> None:
                 return [], total
             results: list[EvidenceItem] = []
             for item in items:
-                ev_date = item.get("dateReceived") or item.get("date")
+                publication_date = _parse_date(item.get("publicationDate"))
+                hc_number = item.get("hcNumber") if isinstance(item.get("hcNumber"), dict) else {}
                 results.append(EvidenceItem(
                     id=item.get("id", 0),
                     type="written",
-                    title=_cap_title(item.get("title", "Written evidence")),
-                    date=date.fromisoformat(ev_date[:10]) if ev_date else None,
+                    title=_cap_title(item.get("title") or item.get("internalReference") or "Written evidence"),
+                    date=publication_date,
+                    publication_date=publication_date,
+                    committee_businesses=_businesses_from_item(item),
+                    internal_reference=item.get("internalReference"),
+                    hc_number=hc_number.get("number") if isinstance(hc_number.get("number"), str) else None,
+                    session=hc_number.get("sessionDescription") if isinstance(hc_number.get("sessionDescription"), str) else None,
                     witnesses=None,
                     url=item.get("url"),
+                    legacy_html_url=item.get("legacyHtmlUrl"),
+                    legacy_pdf_url=item.get("legacyPdfUrl"),
+                    document=_document_from_item(item),
                 ))
             return results, total
 
