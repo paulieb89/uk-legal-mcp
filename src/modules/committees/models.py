@@ -1,7 +1,7 @@
 """Pydantic models for the committees module."""
 
 from datetime import date as Date
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -51,13 +51,62 @@ class CommitteeDetail(BaseModel):
     members: list[CommitteeMember] = Field(default_factory=list, description="Current committee members")
 
 
+class CommitteeBusinessSummary(BaseModel):
+    """Source-supplied parliamentary committee business or inquiry identity."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    id: int = Field(..., description="Official CommitteeBusiness ID; use as committee_business_id for exact evidence filtering")
+    title: str = Field(..., description="Source-supplied inquiry or business title")
+    type: str | None = Field(None, description="Source-supplied business type name, e.g. Inquiry")
+    is_inquiry: bool | None = Field(None, description="Source-supplied type flag; null when absent")
+    status: str | None = Field(None, description="Source-supplied business status where present")
+    open_date: Date | None = Field(None, description="Source-supplied business opening date")
+    close_date: Date | None = Field(None, description="Source-supplied business closing date")
+    latest_report: dict[str, Any] | None = Field(None, description="Source-supplied latest-report metadata, unmodified when present")
+
+
+class CommitteeBusinessSearchResult(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    committee_id: int = Field(..., description="Committee ID used to scope the discovery request")
+    query: str | None = Field(None, description="Source search term applied, if any")
+    total: int = Field(..., description="Number of businesses returned in this page")
+    businesses: list[CommitteeBusinessSummary] = Field(default_factory=list, description="Matching source-supplied committee businesses or inquiries")
+
+
+class EvidenceDocumentFile(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    file_name: str | None = Field(None, description="Source-supplied document filename")
+    format: str | None = Field(None, description="Source-supplied document file format")
+    size_bytes: int | None = Field(None, description="Source-supplied document file size in bytes")
+    url: str | None = Field(None, description="Source-supplied file URL; null means the source supplied no direct URL")
+
+
+class EvidenceDocument(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    document_id: int | None = Field(None, description="Source document ID")
+    files: list[EvidenceDocumentFile] = Field(default_factory=list, description="Source-supplied document file metadata")
+
+
 class EvidenceItem(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     id: int = Field(..., description="Evidence item ID")
     type: Literal["oral", "written"] = Field(..., description="Type of evidence")
     title: str = Field(..., description="Evidence title or session description (may be truncated per max_title_chars)")
-    date: Date | None = Field(None, description="Date the evidence was given or submitted")
+    date: Date | None = Field(None, description="Compatibility date: oral meeting_date when present, otherwise publication_date; use the source-specific fields for research")
+    meeting_date: Date | None = Field(None, description="Source oral-evidence meeting date; null for written evidence or absent source data")
+    publication_date: Date | None = Field(None, description="Source publication date; null only when the upstream record omits it")
+    committee_businesses: list[CommitteeBusinessSummary] = Field(default_factory=list, description="Source inquiry/business identities associated with this evidence item")
+    internal_reference: str | None = Field(None, description="Source internal submission reference, usually for written evidence")
+    hc_number: str | None = Field(None, description="Source HC paper number where supplied")
+    session: str | None = Field(None, description="Source parliamentary session description where supplied")
+    document: EvidenceDocument | None = Field(None, description="Source document metadata; null when no document is supplied")
+    legacy_html_url: str | None = Field(None, description="Source legacy HTML URL where supplied")
+    legacy_pdf_url: str | None = Field(None, description="Source legacy PDF URL where supplied")
     witnesses: list[str | None] | None = Field(None, description=(
         "Witness display names (oral evidence only, capped at 10 per item). "
         "An organisation witness (e.g. a regulator or company giving evidence "

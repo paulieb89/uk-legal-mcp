@@ -67,6 +67,7 @@ This is the compact public reference for the uk-legal-mcp tool surface. Tool des
 |---|---|
 | `committees_search_committees` | Select committees by keyword. |
 | `committees_get_committee` | Committee detail: membership and sub-committees. |
+| `committees_search_businesses` | A committee's inquiries and other business, including status and report context. |
 | `committees_search_evidence` | Oral and written evidence submissions. |
 
 ## Citations
@@ -85,9 +86,14 @@ Supported citation formats include neutral citations, law reports, legislation s
 |---|---|
 | `hmrc_get_vat_rate` | VAT rate lookup for a commodity or service. |
 | `hmrc_check_mtd_status` | Check Making Tax Digital VAT mandate status for a VRN. Requires HMRC OAuth. |
-| `hmrc_search_guidance` | Search GOV.UK for HMRC guidance documents. |
+| `hmrc_search_guidance` | Search GOV.UK for HMRC guidance documents; result snippets are discovery metadata. |
+| `hmrc_get_manual_page` | Retrieve bounded, cited content from a canonical GOV.UK HMRC internal-manual page. |
 
 `hmrc_check_mtd_status` requires `HMRC_CLIENT_ID` and `HMRC_CLIENT_SECRET`. The server defaults to sandbox; set `HMRC_API_BASE=https://api.service.hmrc.gov.uk` for production.
+
+## Resource bridge
+
+`read_resource` reads only the `judgment://`, `legislation://`, `hansard://`, and `server://` resource URIs exposed by this server. It does not fetch ordinary `https://` URLs. Use a source-specific tool for a cited web URL; canonical GOV.UK HMRC internal-manual URLs are retrieved with `hmrc_get_manual_page`.
 
 ## Prompts
 

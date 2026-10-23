@@ -439,6 +439,64 @@ def _parse_toc_xml(xml_text: str) -> list[str]:
     return items
 
 
+async def _search_legislation_feed(
+    client,
+    *,
+    query: str,
+    legislation_type: str | None,
+    year: int | None,
+    limit: int,
+    fulltext: bool,
+    search_mode: str,
+    fallback_reason: str | None = None,
+) -> LegislationSearchResult:
+    """Fetch and parse one declared legislation.gov.uk search route."""
+    path = f"/{legislation_type}" if legislation_type else "/search"
+    qp: dict = {"results-count": limit}
+    qp["text" if fulltext else "title"] = query
+    if year:
+        qp["year"] = year
+
+    resp = await client.get(f"{LEGISLATION_BASE}{path}", params=qp)
+    resp.raise_for_status()
+    root = parse_xml(resp.content)
+
+    total_el = root.findtext(".//os:totalResults", namespaces=ATOM_NS)
+    total = int(total_el) if total_el else 0
+
+    results = []
+    for entry in root.findall(".//a:entry", namespaces=ATOM_NS):
+        title = _entry_title(entry)
+        entry_id = entry.findtext("a:id", namespaces=ATOM_NS) or ""
+
+        m = _ID_RE.search(entry_id)
+        if m:
+            leg_type, yr, num = m.group(1), int(m.group(2)), int(m.group(3))
+        elif m2 := _REGNAL_ID_RE.search(entry_id):
+            leg_type, num = m2.group(1), int(m2.group(2))
+            yr_m = re.search(r"\b(\d{4})\b", title)
+            yr = int(yr_m.group(1)) if yr_m else 0
+        else:
+            leg_type, yr, num = "unknown", 0, 0
+
+        results.append(LegislationResult(
+            title=title, type=leg_type, year=yr, number=num,
+            score=None, url=f"{LEGISLATION_BASE}/{leg_type}/{yr}/{num}",
+            next_steps=({
+                "toc": f"legislation://{leg_type}/{yr}/{num}/toc",
+                "section_template": f"legislation://{leg_type}/{yr}/{num}/section/{{section}}",
+                "point_in_time_hint": "Append ?date=YYYY-MM-DD to either URI for historical research",
+            } if leg_type != "unknown" else {}),
+        ))
+
+    return LegislationSearchResult(
+        search_mode=search_mode,
+        fallback_reason=fallback_reason,
+        results=results,
+        total=total or len(results),
+    )
+
+
 def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
@@ -461,59 +519,59 @@ def register_tools(mcp: FastMCP) -> None:
         to legislation_get_toc then legislation_get_section for structural drill-in.
 
         Filter discipline: `type` and `year` are exact-match. Use only when you
-        already know the value. For currency-driven searches ("the recent
-        Renters' Rights Act"), query by phrase alone and read the year from the
-        results — guessing a year and filtering by it zeroes results when wrong.
-        For broader concept queries across content, set `fulltext=True`.
+        already know the value. For currency-driven searches, query by phrase
+        and read the returned year; guessing an exact year can zero results.
+        For broader concept queries across content, set `fulltext=True`. If the
+        default title route receives a typed legislation.gov.uk WAF/non-XML
+        failure, the tool automatically tries that documented full-text route
+        once and marks search_mode="fulltext_fallback"; its broader relevance
+        semantics must not be treated as a title-ranked result. Render-pending
+        and ordinary HTTP failures do not trigger this fallback.
 
-        Authoritative source for UK primary and secondary legislation
-        (legislation.gov.uk).
+        Source: legislation.gov.uk Atom search feed, with an explicit fallback
+        marker when the alternative official full-text route supplied results.
         """
         client = ctx.lifespan_context["legislation_http"]
-        path = f"/{type}" if type else "/search"
-        # Title search by default — best ranking for "find me Act X". `fulltext`
-        # opens up content search across every Act/SI, useful for concept queries.
-        qp: dict = {"results-count": limit}
-        qp["text" if fulltext else "title"] = query
-        if year:
-            qp["year"] = year
-
         try:
-            resp = await client.get(f"{LEGISLATION_BASE}{path}", params=qp)
-            resp.raise_for_status()
+            return await _search_legislation_feed(
+                client,
+                query=query,
+                legislation_type=type,
+                year=year,
+                limit=limit,
+                fulltext=fulltext,
+                search_mode="fulltext" if fulltext else "title",
+            )
+        except LegislationUpstreamError as exc:
+            if fulltext or exc.reason != "waf_or_non_xml":
+                raise_http_tool_error(exc, attempted=f"legislation_search(query={query!r})")
+
+            # This route is intentionally narrow: a declared, typed response
+            # failure from title search, not an empty result or a broad retry.
+            # The output records its changed retrieval semantics for callers.
+            try:
+                return await _search_legislation_feed(
+                    client,
+                    query=query,
+                    legislation_type=type,
+                    year=year,
+                    limit=limit,
+                    fulltext=True,
+                    search_mode="fulltext_fallback",
+                    fallback_reason=exc.reason,
+                )
+            except LegislationUpstreamError as fallback_exc:
+                raise_tool_error(
+                    "transient",
+                    is_retryable=True,
+                    attempted=f"legislation_search title_then_fulltext(query={query!r})",
+                    description=(
+                        "legislation.gov.uk did not provide a parseable title-search feed "
+                        f"({exc.reason}); the official full-text fallback also failed: {fallback_exc}"
+                    ),
+                )
         except Exception as exc:
             raise_http_tool_error(exc, attempted=f"legislation_search(query={query!r})")
-        root = parse_xml(resp.content)
-
-        total_el = root.findtext(".//os:totalResults", namespaces=ATOM_NS)
-        total = int(total_el) if total_el else 0
-
-        results = []
-        for entry in root.findall(".//a:entry", namespaces=ATOM_NS):
-            title = _entry_title(entry)
-            entry_id = entry.findtext("a:id", namespaces=ATOM_NS) or ""
-
-            m = _ID_RE.search(entry_id)
-            if m:
-                leg_type, yr, num = m.group(1), int(m.group(2)), int(m.group(3))
-            elif m2 := _REGNAL_ID_RE.search(entry_id):
-                leg_type, num = m2.group(1), int(m2.group(2))
-                yr_m = re.search(r"\b(\d{4})\b", title)
-                yr = int(yr_m.group(1)) if yr_m else 0
-            else:
-                leg_type, yr, num = "unknown", 0, 0
-
-            results.append(LegislationResult(
-                title=title, type=leg_type, year=yr, number=num,
-                score=None, url=f"{LEGISLATION_BASE}/{leg_type}/{yr}/{num}",
-                next_steps=({
-                    "toc": f"legislation://{leg_type}/{yr}/{num}/toc",
-                    "section_template": f"legislation://{leg_type}/{yr}/{num}/section/{{section}}",
-                    "point_in_time_hint": "Append ?date=YYYY-MM-DD to either URI for historical research",
-                } if leg_type != "unknown" else {}),
-            ))
-
-        return LegislationSearchResult(results=results, total=total or len(results))
 
     @mcp.tool(
         name="get_section",
@@ -530,27 +588,19 @@ def register_tools(mcp: FastMCP) -> None:
     ) -> LegislationSection:
         """USE THIS TOOL WHEN you have a known Act / SI and want the parsed text of a specific section, regulation, or article, with extent and in-force metadata.
 
-        Returns the provision's own text and its own heading — never a
-        neighbouring or enclosing Part/Chapter's content. Also returns
-        territorial extent, in-force status, and prospective flag. Content
-        capped per max_chars (default 10,000, ~2,500 tokens) — raise for
-        unusually long definition sections; check content_truncated in the
-        response.
+        Returns the provision's own text and heading, never a neighbouring
+        Part/Chapter. Also returns extent, in-force/prospective data, and
+        truncation metadata. Pass the bare number: the tool handles Act
+        sections and SI regulations/articles. A missing provision raises
+        not_found rather than returning a plausible neighbouring node.
 
-        Works uniformly across Act sections ('section-N'), SI regulations
-        ('regulation-N'), and SI articles ('article-N') — pass the bare
-        number regardless of which the document uses; you don't need to know
-        which noun applies. Raises a not_found error (rather than returning
-        a plausible but wrong node) if the number doesn't exist in this
-        document — check legislation_get_toc for valid numbers.
+        AFTER calling, check `extent` before relying on the provision and
+        inspect content_truncated for long text. Call legislation_get_toc to
+        discover valid numbers, or read_resource with a legislation:// URI
+        when raw CLML XML is required.
 
-        ALWAYS check `extent` — a section may apply to England & Wales but not
-        Scotland or Northern Ireland. Reciting a section without checking
-        extent is a recurring legal-research error.
-
-        Alternative: call read_resource(uri="legislation://{type}/{year}/{number}/
-        section/{section}") for raw CLML XML; use this tool when you want the
-        parsed structured response instead.
+        Source: legislation.gov.uk CLML, with an explicitly marked public-HTML
+        fallback only when CLML is unavailable.
         """
         client = ctx.lifespan_context["legislation_http"]
         section = _normalise_section_id(section)
@@ -608,23 +658,16 @@ def register_tools(mcp: FastMCP) -> None:
     ) -> LegislationTOC:
         """USE THIS TOOL WHEN you have a known Act / SI and want the structural table of contents (parts, chapters, individual sections/regulations/articles).
 
-        Returns structural elements with XML id and title, in document order,
-        e.g. 'section-47: Definitions' for an Act or 'regulation-4: Maximum
-        weekly working time' for an SI. Individual provisions are listed
-        alongside their enclosing Part/Chapter/crossheading headings — both
-        levels matter: the heading entries give you the document's shape,
-        the provision entries give you what to pass to legislation_get_section.
-        A provision with no heading in the source (rare) is listed as a bare
-        id with no title. AFTER calling, pass the numeric identifier (use
-        '47', NOT 'section-47') into legislation_get_section for full text.
+        Returns XML ids and titles in document order, including Parts,
+        chapters, crossheadings, and provisions; a rare untitled provision is
+        retained as its bare id. Results are paginated with offset/limit.
 
-        Large statutes (Companies Act 2006 has many hundreds of items) are
-        paginated via offset/limit. Check has_more and total_items.
+        AFTER calling, pass a provision's bare number (for example `47`, not
+        `section-47`) to legislation_get_section. Check has_more and
+        total_items for large statutes. Use read_resource with the
+        legislation:// toc URI for the full raw listing.
 
-        Alternative: call read_resource(uri="legislation://{type}/{year}/{number}/
-        toc") for the full TOC as a newline-separated `id: title` string (no
-        pagination). Use this tool when you need the structured response with
-        offset / limit / has_more for stepping through large statutes.
+        Source: legislation.gov.uk CLML table of contents.
         """
         client = ctx.lifespan_context["legislation_http"]
         url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/data.xml"

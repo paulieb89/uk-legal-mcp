@@ -18,8 +18,8 @@ hmrc_mcp = FastMCP(
         "  hmrc_check_mtd_status — Making Tax Digital VAT mandate status for a 9-digit "
         "VRN. REQUIRES HMRC_CLIENT_ID + HMRC_CLIENT_SECRET env vars (OAuth 2.0); raises "
         "auth_required envelope if not configured — do NOT infer status.\n"
-        "  hmrc_search_guidance — HMRC guidance documents on GOV.UK (titles, URLs, "
-        "summaries, last-updated dates).\n\n"
+        "  hmrc_search_guidance — HMRC GOV.UK search-result metadata; discovery only.\n"
+        "  hmrc_get_manual_page — bounded source text for a canonical HMRC internal-manual page.\n\n"
         "Workflow — 'what's the VAT rate on X?':\n"
         "  1. hmrc_get_vat_rate('X') → rate + percentage + notes (static lookup)\n"
         "  2. If time-sensitive: hmrc_search_guidance('X VAT rate') to verify against "
@@ -35,7 +35,14 @@ hmrc_mcp = FastMCP(
     ),
 )
 
-hmrc_mcp.add_middleware(ResponseCachingMiddleware(call_tool_settings=CallToolSettings(ttl=7776000)))
+# VAT reference data is intentionally long-lived, but a manual page is current
+# GOV.UK content and must be fetched afresh with its own retrieved_at metadata.
+hmrc_mcp.add_middleware(ResponseCachingMiddleware(
+    call_tool_settings=CallToolSettings(
+        ttl=7776000,
+        excluded_tools=["get_manual_page"],
+    )
+))
 
 register_tools(hmrc_mcp)
 

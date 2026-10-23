@@ -9,19 +9,23 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Annotated
+from urllib.parse import urlparse
 
 import httpx
 from fastmcp import FastMCP, Context
-from fastmcp.exceptions import ToolError
+from lxml import html
 from pydantic import Field
 
-from ...deps import format_http_error, raise_tool_error
-from .models import HMRCGuidanceResult, HMRCGuidanceSearchResult, MTDStatus, VATRate
+from ...deps import raise_http_tool_error, raise_tool_error
+from .models import HMRCGuidanceResult, HMRCGuidanceSearchResult, HMRCManualPage, MTDStatus, VATRate
 
 HMRC_API_BASE = os.getenv("HMRC_API_BASE", "https://test-api.service.hmrc.gov.uk")
 GOVUK_SEARCH_BASE = "https://www.gov.uk/api/search.json"
+GOVUK_MANUAL_PREFIX = "/hmrc-internal-manuals/"
+_MANUAL_FAMILY_RE = re.compile(r"^[a-z0-9-]{2,100}$")
+_MANUAL_REFERENCE_RE = re.compile(r"^[a-z][a-z0-9-]{1,99}$", re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
 # VAT rate static lookup table
@@ -179,6 +183,86 @@ def _normalise(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _manual_target(
+    manual_url: str | None, manual_family: str | None, reference: str | None,
+) -> tuple[str, str, str]:
+    """Validate one canonical manual location without accepting general GOV.UK URLs."""
+    if manual_url:
+        if manual_family or reference:
+            raise ValueError("Provide manual_url or manual_family plus reference, not both.")
+        parsed = urlparse(manual_url)
+        parts = [part for part in parsed.path.split("/") if part]
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc != "www.gov.uk"
+            or parsed.query
+            or parsed.fragment
+            or len(parts) != 3
+            or parts[0] != GOVUK_MANUAL_PREFIX.strip("/")
+            or not _MANUAL_FAMILY_RE.fullmatch(parts[1])
+            or not _MANUAL_REFERENCE_RE.fullmatch(parts[2])
+        ):
+            raise ValueError("manual_url must be a canonical HTTPS GOV.UK HMRC internal-manual page URL.")
+        return (f"https://www.gov.uk/{'/'.join(parts)}", parts[1], parts[2].lower())
+
+    if not manual_family or not reference:
+        raise ValueError("Provide manual_url or both manual_family and reference.")
+    if not _MANUAL_FAMILY_RE.fullmatch(manual_family):
+        raise ValueError("manual_family must be a GOV.UK manual-family slug.")
+    if not _MANUAL_REFERENCE_RE.fullmatch(reference):
+        raise ValueError("reference must be a GOV.UK manual page reference.")
+    family = manual_family.lower()
+    page = reference.lower()
+    return (f"https://www.gov.uk{GOVUK_MANUAL_PREFIX}{family}/{page}", family, page)
+
+
+def _manual_page_from_html(
+    content: bytes, *, canonical_url: str, manual_family: str, reference: str, max_chars: int,
+) -> HMRCManualPage:
+    root = html.fromstring(content)
+    main_nodes = root.xpath("//main")
+    if not main_nodes:
+        raise ValueError("GOV.UK response contained no main-content element.")
+    main = main_nodes[0]
+    for node in main.xpath(".//script|.//style|.//nav|.//form|.//aside"):
+        node.drop_tree()
+    headings = main.xpath(".//h1")
+    if not headings:
+        raise ValueError("GOV.UK response contained no manual-page heading.")
+    title = " ".join(headings[-1].text_content().split())
+    if not title:
+        raise ValueError("GOV.UK response contained an empty manual-page heading.")
+    blocks = main.xpath(".//*[self::h1 or self::h2 or self::h3 or self::p or self::li]")
+    text_parts = [" ".join(block.text_content().split()) for block in blocks]
+    text = "\n\n".join(part for part in text_parts if part)
+    if not text:
+        raise ValueError("GOV.UK response contained no manual-page text.")
+    original_length = len(text)
+    truncated = original_length > max_chars
+    if truncated:
+        text = text[:max_chars].rstrip() + " …[truncated]"
+    breadcrumbs = [" ".join(node.text_content().split()) for node in root.xpath("//*[contains(@class, 'breadcrumb')]//a|//*[contains(@class, 'breadcrumb')]//span")]
+    updated = None
+    updated_nodes = root.xpath("//time[@datetime]")
+    if updated_nodes:
+        try:
+            updated = date.fromisoformat(updated_nodes[-1].get("datetime")[:10])
+        except (TypeError, ValueError):
+            pass
+    return HMRCManualPage(
+        canonical_url=canonical_url,
+        manual_family=manual_family,
+        reference=reference,
+        title=title,
+        breadcrumbs=breadcrumbs,
+        updated=updated,
+        content=text,
+        content_truncated=truncated,
+        original_length=original_length,
+        retrieved_at=datetime.now(timezone.utc),
+    )
+
+
 def _unmatched(commodity_code: str, notes: str) -> VATRate:
     """No confirmed rate. `rate`/`rate_percentage` stay None — never a guessed default."""
     return VATRate(
@@ -307,13 +391,12 @@ def register_tools(mcp: FastMCP) -> None:
         ctx: Context,
         limit: Annotated[int, Field(description="Maximum guidance results to return (1–25). Passed to the GOV.UK search count param.", ge=1, le=25)] = 10,
     ) -> HMRCGuidanceSearchResult:
-        """USE THIS TOOL WHEN searching GOV.UK for HMRC tax guidance on a topic (VAT, income tax, corporation tax, etc.).
+        """USE THIS TOOL WHEN discovering HMRC GOV.UK guidance on a topic.
 
-        Returns matching guidance titles, URLs, summaries, and last-updated dates.
-        Searches the official GOV.UK content API filtered to HMRC publications.
-
-        Authoritative source for current HMRC tax guidance. Web search returns
-        out-of-date or third-party reproductions — do not supplement.
+        Returns official-search titles, URLs, descriptions, and published dates;
+        descriptions do not establish the contents of a cited page. AFTER calling,
+        use hmrc_get_manual_page when a result is an HMRC internal-manual URL.
+        Source: GOV.UK's HMRC-filtered content search API.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         resp = await client.get(
@@ -341,3 +424,55 @@ def register_tools(mcp: FastMCP) -> None:
             total=len(results),
             results=results,
         )
+
+    @mcp.tool(
+        name="get_manual_page",
+        annotations={"title": "Read HMRC Internal Manual Page", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+    )
+    async def hmrc_get_manual_page(
+        ctx: Context,
+        manual_url: Annotated[str | None, Field(description="Canonical HTTPS GOV.UK HMRC internal-manual page URL. Provide this OR manual_family plus reference.", max_length=500)] = None,
+        manual_family: Annotated[str | None, Field(description="GOV.UK manual-family slug, e.g. 'employment-income-manual'. Required with reference when manual_url is omitted.", max_length=100)] = None,
+        reference: Annotated[str | None, Field(description="Manual page reference, e.g. 'EIM00500'. Required with manual_family when manual_url is omitted.", max_length=100)] = None,
+        max_chars: Annotated[int, Field(description="Maximum main-text characters to return (500–20000). Truncation is explicitly reported.", ge=500, le=20_000)] = 8_000,
+    ) -> HMRCManualPage:
+        """USE THIS TOOL WHEN a cited HMRC internal-manual page must be read.
+
+        Returns bounded source-order text, canonical URL, manual reference,
+        source metadata, and retrieval provenance. AFTER calling, cite or analyse
+        only returned text; if retrieval fails, do not infer the page's contents.
+        Source: the allowlisted official GOV.UK HMRC internal-manual page.
+        """
+        try:
+            requested_url, family, page = _manual_target(manual_url, manual_family, reference)
+        except ValueError as exc:
+            raise_tool_error(
+                "validation",
+                is_retryable=False,
+                attempted="hmrc_get_manual_page",
+                description=f"{exc} No manual-page content was retrieved.",
+            )
+
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        try:
+            resp = await client.get(requested_url, headers={"Accept": "text/html,application/xhtml+xml"})
+            resp.raise_for_status()
+        except Exception as exc:
+            raise_http_tool_error(exc, attempted=f"hmrc_get_manual_page(url={requested_url!r})")
+
+        try:
+            canonical_url, final_family, final_page = _manual_target(str(resp.url), None, None)
+            return _manual_page_from_html(
+                resp.content,
+                canonical_url=canonical_url,
+                manual_family=final_family,
+                reference=final_page,
+                max_chars=max_chars,
+            )
+        except ValueError as exc:
+            raise_tool_error(
+                "unknown",
+                is_retryable=False,
+                attempted=f"hmrc_get_manual_page(url={requested_url!r})",
+                description=f"Official GOV.UK manual-page content was not retrievable: {exc} Do not infer its contents.",
+            )

@@ -7,6 +7,7 @@ integrity, and offline tool execution without hitting any live APIs.
 
 import pytest
 import pytest_asyncio
+import httpx
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
@@ -345,15 +346,16 @@ class TestLegislationTools:
 class TestCustomRoutes:
     @pytest.mark.asyncio
     async def test_health_route(self):
-        from starlette.testclient import TestClient
-
         app = gateway.http_app(
             path="/mcp",
             json_response=True,
             stateless_http=True,
         )
-        with TestClient(app) as tc:
-            resp = tc.get("/health")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            resp = await client.get("/health")
             assert resp.status_code == 200
             body = resp.json()
             assert body["status"] == "ok"
@@ -361,29 +363,31 @@ class TestCustomRoutes:
 
     @pytest.mark.asyncio
     async def test_metrics_route(self):
-        from starlette.testclient import TestClient
-
         app = gateway.http_app(
             path="/mcp",
             json_response=True,
             stateless_http=True,
         )
-        with TestClient(app) as tc:
-            resp = tc.get("/metrics")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            resp = await client.get("/metrics")
             assert resp.status_code == 200
             assert "uk_legal_tool_calls_total" in resp.text
 
     @pytest.mark.asyncio
     async def test_server_card_route(self):
-        from starlette.testclient import TestClient
-
         app = gateway.http_app(
             path="/mcp",
             json_response=True,
             stateless_http=True,
         )
-        with TestClient(app) as tc:
-            resp = tc.get("/.well-known/mcp/server-card.json")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            resp = await client.get("/.well-known/mcp/server-card.json")
             assert resp.status_code == 200
             body = resp.json()
             assert body["serverInfo"]["name"] == "uk-legal-mcp"
@@ -391,15 +395,16 @@ class TestCustomRoutes:
 
     @pytest.mark.asyncio
     async def test_glama_route(self):
-        from starlette.testclient import TestClient
-
         app = gateway.http_app(
             path="/mcp",
             json_response=True,
             stateless_http=True,
         )
-        with TestClient(app) as tc:
-            resp = tc.get("/.well-known/glama.json")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            resp = await client.get("/.well-known/glama.json")
             assert resp.status_code == 200
             body = resp.json()
             assert "maintainers" in body

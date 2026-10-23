@@ -25,6 +25,7 @@ import logging
 import os
 import time
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
+from urllib.parse import urlparse
 
 try:
     _PROJECT_VERSION = _pkg_version("uk-legal-mcp")
@@ -43,6 +44,8 @@ from fastmcp.server.middleware.logging import StructuredLoggingMiddleware
 from fastmcp.server.middleware.timing import DetailedTimingMiddleware
 from collections.abc import Sequence
 from fastmcp.server.transforms import PromptsAsTools, ResourcesAsTools, Transform
+from fastmcp.server.transforms.resources_as_tools import _format_result
+from fastmcp.server.dependencies import get_context
 from fastmcp.tools.tool import Tool
 from mcp.types import ToolAnnotations
 from prometheus_client import CONTENT_TYPE_LATEST, Counter as PromCounter, Histogram, generate_latest
@@ -52,6 +55,7 @@ from starlette.responses import JSONResponse, Response
 from curl_cffi.requests import AsyncSession as CurlAsyncSession
 
 from .deps import LegislationClient, LegislationUpstreamError, http_lifespan
+from .deps import raise_tool_error
 from typing import Annotated
 
 from pydantic import Field
@@ -209,7 +213,14 @@ gateway.add_middleware(DetailedTimingMiddleware())
 # horizontally.
 gateway.add_middleware(ResponseCachingMiddleware(
     read_resource_settings=ReadResourceSettings(ttl=3600),
-    call_tool_settings=CallToolSettings(ttl=3600),
+    # Hansard search may return a deliberately degraded response when its
+    # optional envelope is unavailable, and internal-manual pages are current
+    # guidance rather than immutable records. Neither is safe to retain in the
+    # generic hour-long cache.
+    call_tool_settings=CallToolSettings(
+        ttl=3600,
+        excluded_tools=["parliament_search_hansard", "hmrc_get_manual_page"],
+    ),
 ))
 gateway.add_transform(PromptsAsTools(gateway))
 # Expose resources as tools (list_resources, read_resource) so MCP clients
@@ -218,6 +229,82 @@ gateway.add_transform(PromptsAsTools(gateway))
 # legislation://, and server://about URIs. Native-resource clients (Claude,
 # Codex, Cowork, Inspector) see both surfaces; the duplication is harmless.
 gateway.add_transform(ResourcesAsTools(gateway))
+
+# `ResourcesAsTools` intentionally accepts any URI and delegates it to the
+# server resource provider. That is appropriate for a generic FastMCP server,
+# but this legal-research gateway must not make an opaque attempt to fetch an
+# arbitrary web URL when a client mistakes a cited HTTPS URL for a resource
+# URI. Keep the generated bridge's successful return shape while checking the
+# small, explicit URI scheme set before it reaches resource dispatch.
+_RESOURCE_URI_SCHEMES = frozenset({"judgment", "legislation", "hansard", "server"})
+
+
+class _ValidatedResourceBridgeTransform(Transform):
+    """Replace the generated resource reader with an allowlisted URI bridge."""
+
+    @staticmethod
+    def _make_read_resource_tool() -> Tool:
+        async def read_resource(
+            uri: Annotated[str, "A server resource URI such as judgment://..., legislation://..., hansard://..., or server://about"],
+        ) -> str:
+            """Read a registered server resource URI, not an ordinary web URL.
+
+            USE WHEN you have a judgment://, legislation://, hansard://, or
+            server:// URI returned by this server. Do not use for https:// URLs;
+            use the source-specific tool instead (for a canonical GOV.UK HMRC
+            internal-manual URL, call hmrc_get_manual_page).
+
+            Returns the resource content as a string. Binary content is
+            base64-encoded.
+
+            AFTER calling, use the returned primary-source content and URI in
+            citations; if the URI is rejected, follow the named source-specific
+            tool rather than treating the URL as retrieved evidence.
+
+            Source: registered UK Legal MCP resource providers.
+            """
+            scheme = urlparse(uri).scheme.lower()
+            if scheme not in _RESOURCE_URI_SCHEMES:
+                if scheme in {"http", "https"}:
+                    guidance = (
+                        "read_resource accepts only server resource URIs "
+                        "(judgment://, legislation://, hansard://, server://); it does not "
+                        "fetch ordinary http(s) URLs. For a canonical GOV.UK HMRC internal-manual "
+                        "URL, call hmrc_get_manual_page(manual_url=...). For other web URLs, use "
+                        "the relevant source-specific tool."
+                    )
+                else:
+                    guidance = (
+                        "read_resource accepts only server resource URIs "
+                        "(judgment://, legislation://, hansard://, server://). Supply a URI returned "
+                        "by this server, or use the relevant source-specific tool."
+                    )
+                raise_tool_error(
+                    "validation",
+                    is_retryable=False,
+                    attempted=f"read_resource(uri={uri!r})",
+                    description=guidance,
+                )
+
+            ctx = get_context()
+            result = await ctx.fastmcp.read_resource(uri)
+            return _format_result(result)
+
+        return Tool.from_function(fn=read_resource, annotations=_BRIDGE_ANNOTATIONS)
+
+    async def list_tools(self, tools: Sequence[Tool]) -> Sequence[Tool]:
+        return [
+            self._make_read_resource_tool() if tool.name == "read_resource" else tool
+            for tool in tools
+        ]
+
+    async def get_tool(self, name, call_next, *, version=None):
+        if name == "read_resource":
+            return self._make_read_resource_tool()
+        return await call_next(name, version=version)
+
+
+gateway.add_transform(_ValidatedResourceBridgeTransform())
 
 # The PromptsAsTools / ResourcesAsTools transforms above generate the four
 # bridge tools (list_prompts, get_prompt, list_resources, read_resource) with
