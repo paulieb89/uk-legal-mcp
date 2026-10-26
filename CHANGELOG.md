@@ -2,6 +2,19 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [0.8.1] — 2026-10-26
+
+Containment release for the legacy GET `/mcp` stream.
+
+### Fixed
+
+- **Bounded legacy GET `/mcp` streams** — held-open GET streams are capped at 20 per instance, expire after 5 minutes, send 25-second keep-alive pings and a retry hint, and evict the oldest stream at capacity. `/health` reports `open_streams`. `GET_STREAM_MODE=405` restores the previous 405 behaviour. DELETE still returns 405.
+- **Fly concurrency** — production and staging use soft 25 / hard 50 request limits, leaving headroom for POST traffic beside the held GET streams.
+
+### Added
+
+- Staging app config (`fly.staging.toml`) and a staging deploy workflow, plus a deployed/local `citations_parse` smoke test (`scripts/mcp_smoke_test.py`).
+
 ## [0.8.0] — 2026-10-23
 
 ### Added
