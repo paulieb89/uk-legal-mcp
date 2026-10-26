@@ -53,6 +53,17 @@ _COLUMN_SEARCH_RESPONSE = {
     "TotalResultCount": 1,
 }
 
+def _route_column_and_debate(debate_resp):
+    """Default 'both' searches Commons then Lords; only the Commons search holds the match."""
+    def _get(url, *, params=None, **kwargs):
+        if "debatebycolumn" in url:
+            house = (params or {}).get("house")
+            return _make_mock_response(_COLUMN_SEARCH_RESPONSE if house == "Commons" else {"Results": [], "TotalResultCount": 0})
+        return debate_resp
+    return _get
+
+
+
 
 @pytest.mark.asyncio
 async def test_debate_id_sourced_from_overview_id(monkeypatch):
@@ -71,10 +82,7 @@ async def test_debate_id_sourced_from_overview_id(monkeypatch):
     })
     monkeypatch.setattr(
         "httpx.AsyncClient.get",
-        AsyncMock(side_effect=[
-            _make_mock_response(_COLUMN_SEARCH_RESPONSE),
-            debate_resp,
-        ]),
+        AsyncMock(side_effect=_route_column_and_debate(debate_resp)),
     )
 
     async with Client(gateway) as client:
@@ -101,10 +109,7 @@ async def test_debate_id_defaults_to_zero_when_overview_absent(monkeypatch):
     })
     monkeypatch.setattr(
         "httpx.AsyncClient.get",
-        AsyncMock(side_effect=[
-            _make_mock_response(_COLUMN_SEARCH_RESPONSE),
-            debate_resp,
-        ]),
+        AsyncMock(side_effect=_route_column_and_debate(debate_resp)),
     )
 
     async with Client(gateway) as client:

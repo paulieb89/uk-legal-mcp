@@ -353,6 +353,15 @@ class ColumnLookupResult(BaseModel):
     volume_number: int = Field(..., description="Echo of the requested volume number.")
     house: Literal["Commons", "Lords", "both"] = Field(..., description="House filter applied.")
     total_results: int = Field(..., ge=0, description="Number of debate matches found.")
+    unparsed_results: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Upstream matches that could not be parsed and are omitted from `matches`. "
+            "When greater than zero, `matches` is incomplete and `total_results` is larger "
+            "than the number of matches returned."
+        ),
+    )
     matches: list[TopDebate] = Field(
         default_factory=list,
         description=(
