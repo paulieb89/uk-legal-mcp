@@ -4,6 +4,8 @@ All notable changes to `uk-legal-mcp` are documented here. Format loosely follow
 
 ## [0.8.5] — 2026-10-26
 
+This release also includes the 0.8.3 and 0.8.4 changes, which were merged but never published on their own.
+
 Source-integrity fix for Hansard column lookup.
 
 ### Fixed
