@@ -169,8 +169,12 @@ class HansardUpstreamWarning(BaseModel):
 
     endpoint: str = Field(..., description="Hansard endpoint whose optional enrichment was unavailable.")
     retry_attempted: bool = Field(..., description="True when the bounded one-retry policy was used.")
-    error_category: Literal["transient", "unknown"] = Field(
-        ..., description="Safe failure category for the unavailable optional enrichment."
+    error_category: Literal["transient", "unknown", "malformed"] = Field(
+        ...,
+        description=(
+            "Safe failure category for the unavailable optional enrichment. "
+            "'malformed' means the upstream answered but its aggregate totals were missing or invalid."
+        ),
     )
     detail: str = Field(..., description="Bounded upstream failure detail; it does not describe contribution content.")
 

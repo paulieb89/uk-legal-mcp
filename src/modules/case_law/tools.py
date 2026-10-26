@@ -9,6 +9,7 @@ Rate limit: 1,000 requests / 5 min per IP.
 import hashlib
 from datetime import date, datetime
 from typing import Annotated
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from fastmcp import FastMCP, Context
@@ -27,7 +28,7 @@ from .models import (
 TNA_BASE = "https://caselaw.nationalarchives.gov.uk"
 
 
-def _parse_atom_feed(xml_bytes: bytes, limit: int = 10) -> JudgmentSearchResult:
+def _parse_atom_feed(xml_bytes: bytes, limit: int = 10, page: int = 1) -> JudgmentSearchResult:
     """Parse TNA Atom feed into JudgmentSearchResult.
 
     Two TNA contract changes this parser now adopts:
@@ -52,17 +53,20 @@ def _parse_atom_feed(xml_bytes: bytes, limit: int = 10) -> JudgmentSearchResult:
             "tna": "https://caselaw.nationalarchives.gov.uk",
             "os": "http://a9.com/-/spec/opensearch/1.1/",
         }
-        total_el = root.find(".//os:totalResults", ns)
-        per_page_el = root.find(".//os:itemsPerPage", ns)
-        start_el = root.find(".//os:startIndex", ns)
-        total = int(total_el.text) if total_el is not None else 0
-        per_page = int(per_page_el.text) if per_page_el is not None else 10
-        start = int(start_el.text) if start_el is not None else 1
-        current_page = max(1, (start - 1) // per_page + 1) if per_page else 1
-        total_pages = (total + per_page - 1) // per_page if per_page else None
+        # The TNA feed carries rel="next" / rel="last" links, not OpenSearch counts.
+        # Absent values stay absent: a missing link never becomes zero pages.
+        def _link_page(rel: str) -> int | None:
+            link = root.find(f'atom:link[@rel="{rel}"]', ns)
+            if link is None:
+                return None
+            values = parse_qs(urlparse(link.get("href", "")).query).get("page", [])
+            return int(values[0]) if values and values[0].isdigit() and int(values[0]) >= 1 else None
+
+        next_link_present = root.find('atom:link[@rel="next"]', ns) is not None
+        total_pages = _link_page("last")
         all_entries = root.findall("atom:entry", ns)
         entries = all_entries[:limit]
-        has_more = len(all_entries) > limit
+        has_more = next_link_present or len(all_entries) > limit
         summaries = []
         for entry in entries:
             title_el = entry.find("atom:title", ns)
@@ -117,7 +121,7 @@ def _parse_atom_feed(xml_bytes: bytes, limit: int = 10) -> JudgmentSearchResult:
                 } if slug else {}),
             ))
         return JudgmentSearchResult(
-            results=summaries, page=current_page,
+            results=summaries, page=page,
             has_more=has_more, total_pages=total_pages,
         )
     except Exception:
@@ -172,7 +176,7 @@ def register_tools(mcp: FastMCP) -> None:
             resp.raise_for_status()
         except httpx.HTTPError as e:
             raise_http_tool_error(e, attempted=f"case_law_search(query={query!r})")
-        return _parse_atom_feed(resp.content, limit=limit)
+        return _parse_atom_feed(resp.content, limit=limit, page=page)
 
     @mcp.tool(
         name="grep_judgment",

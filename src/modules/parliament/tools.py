@@ -136,6 +136,47 @@ async def _request_hansard_json(
     raise last_error
 
 
+ENVELOPE_TOTAL_FIELDS = (
+    "TotalContributions",
+    "TotalDebates",
+    "TotalDivisions",
+    "TotalWrittenStatements",
+    "TotalWrittenAnswers",
+    "TotalCorrections",
+    "TotalPetitions",
+    "TotalCommittees",
+    "TotalMembers",
+)
+
+
+def _is_count(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _envelope_totals(payload: dict) -> tuple[dict, list[str]]:
+    """Keep only valid aggregate totals; report the fields that were missing or invalid.
+
+    An absent or invalid total is never reported as zero: it becomes None, and
+    its name is returned so the caller can mark the envelope as structurally partial.
+    """
+    totals = {field: (payload[field] if _is_count(payload.get(field)) else None) for field in ENVELOPE_TOTAL_FIELDS}
+    gaps = [field for field in ENVELOPE_TOTAL_FIELDS if totals[field] is None]
+    return totals, gaps
+
+
+def _hansard_structure_warning(gaps: list[str]) -> HansardUpstreamWarning:
+    return HansardUpstreamWarning(
+        endpoint="/search.json",
+        retry_attempted=False,
+        error_category="malformed",
+        detail=(
+            "Envelope aggregate totals missing or invalid: "
+            + ", ".join(gaps)
+            + ". Those totals are reported as null, not zero."
+        ),
+    )
+
+
 def _hansard_enrichment_warning(exc: Exception, *, retry_attempted: bool) -> HansardUpstreamWarning:
     """Represent missing optional envelope metadata without inventing it."""
     return HansardUpstreamWarning(
@@ -653,6 +694,11 @@ def register_tools(mcp: FastMCP) -> None:
             ))
         else:
             payload, _envelope_retried = envelope_result
+            envelope_totals, envelope_gaps = _envelope_totals(payload)
+            if envelope_gaps:
+                enrichment_status = "degraded"
+                warnings.append(_hansard_structure_warning(envelope_gaps))
+            payload = {**payload, **envelope_totals}
 
         # The dedicated contributions endpoint returns Results[] (same SearchReferencesItem
         # shape as /search.json's Contributions[]); reshape it for the existing parser.
