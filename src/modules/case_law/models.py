@@ -58,6 +58,14 @@ class JudgmentSearchResult(BaseModel):
     page: int = Field(..., description="Current page number (1-indexed)")
     has_more: bool = Field(..., description="Whether additional pages exist")
     total_pages: int | None = Field(None, description="Total page count if available from API")
+    unparsed_results: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Feed entries on this page that could not be parsed and are omitted from `results`. "
+            "When greater than zero, `results` is incomplete for this page."
+        ),
+    )
 
 
 class GrepHit(BaseModel):

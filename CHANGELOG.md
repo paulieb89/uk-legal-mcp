@@ -12,6 +12,7 @@ Source-integrity fix for Hansard column lookup.
 
 - **`parliament_lookup_by_column` no longer returns false zero matches** — with `house` omitted (the default), upstream answers no results even for a Lords citation, so a valid Lords citation such as HL Deb vol 849 col 200 reported zero matches. The default now searches the Commons and Lords separately and reports zero only when both are valid and empty.
 - **Incomplete column results are reported** — matches that cannot be parsed are counted in a new `unparsed_results` field, so `total_results` is no longer silently larger than the returned `matches`.
+- **Malformed case-law responses are errors, not empty results** — an unreadable XML body, a non-Atom body (including an HTML page returned with HTTP 200), or a page where no entry can be parsed is a retryable `transient` error. Individual unparseable entries are omitted and counted in a new `unparsed_results` field.
 - **Failure in either House fails the whole lookup** — a default search never returns a single-House result as if it were complete.
 - **Malformed or unparseable column responses are errors** — a page without `Results` or a valid `TotalResultCount` is replayed once, then returned as a retryable `transient` error. So is a page whose reported matches cannot be parsed.
 

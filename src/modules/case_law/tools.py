@@ -15,7 +15,7 @@ import httpx
 from fastmcp import FastMCP, Context
 from pydantic import Field
 
-from ...deps import raise_http_tool_error
+from ...deps import raise_http_tool_error, raise_tool_error
 from . import parsers
 from .models import (
     GrepHit,
@@ -48,6 +48,8 @@ def _parse_atom_feed(xml_bytes: bytes, limit: int = 10, page: int = 1) -> Judgme
     try:
         from ...xml_safe import parse_xml
         root = parse_xml(xml_bytes)
+        if root.tag != "{http://www.w3.org/2005/Atom}feed":
+            raise ValueError("TNA search response is not an Atom feed")
         ns = {
             "atom": "http://www.w3.org/2005/Atom",
             "tna": "https://caselaw.nationalarchives.gov.uk",
@@ -68,64 +70,70 @@ def _parse_atom_feed(xml_bytes: bytes, limit: int = 10, page: int = 1) -> Judgme
         entries = all_entries[:limit]
         has_more = next_link_present or len(all_entries) > limit
         summaries = []
+        unparsed = 0
         for entry in entries:
-            title_el = entry.find("atom:title", ns)
-            published_el = entry.find("atom:published", ns)
-            updated_el = entry.find("atom:updated", ns)
-            author_name_el = entry.find("atom:author/atom:name", ns)
+            try:
+                title_el = entry.find("atom:title", ns)
+                published_el = entry.find("atom:published", ns)
+                updated_el = entry.find("atom:updated", ns)
+                author_name_el = entry.find("atom:author/atom:name", ns)
 
-            ncn_ident_el = entry.find('tna:identifier[@type="ukncn"]', ns)
-            slug = ncn_ident_el.get("slug", "") if ncn_ident_el is not None else ""
-            if not slug:
+                ncn_ident_el = entry.find('tna:identifier[@type="ukncn"]', ns)
+                slug = ncn_ident_el.get("slug", "") if ncn_ident_el is not None else ""
+                if not slug:
+                    for link in entry.findall("atom:link", ns):
+                        if link.get("rel") == "alternate" and not link.get("type"):
+                            href = link.get("href", "")
+                            if href.startswith(f"{TNA_BASE}/"):
+                                slug = href[len(TNA_BASE) + 1 :].rstrip("/")
+                                break
+
+                identifiers = []
+                if ncn_ident_el is not None and ncn_ident_el.text:
+                    ncn_text = ncn_ident_el.text.strip()
+                    if ncn_text:
+                        identifiers.append(
+                            JudgmentIdentifier(type="ukncn", value=ncn_text, slug=slug)
+                        )
+
+                xml_url = f"{TNA_BASE}/{slug}/data.xml" if slug else None
+                pdf_url = f"{TNA_BASE}/{slug}/data.pdf" if slug else None
                 for link in entry.findall("atom:link", ns):
-                    if link.get("rel") == "alternate" and not link.get("type"):
-                        href = link.get("href", "")
-                        if href.startswith(f"{TNA_BASE}/"):
-                            slug = href[len(TNA_BASE) + 1 :].rstrip("/")
-                            break
+                    link_type = link.get("type", "")
+                    if link.get("rel") == "alternate" and "xml" in link_type:
+                        xml_url = link.get("href", xml_url)
+                    elif "pdf" in link_type:
+                        pdf_url = link.get("href", pdf_url)
 
-            identifiers = []
-            if ncn_ident_el is not None and ncn_ident_el.text:
-                ncn_text = ncn_ident_el.text.strip()
-                if ncn_text:
-                    identifiers.append(
-                        JudgmentIdentifier(type="ukncn", value=ncn_text, slug=slug)
-                    )
-
-            xml_url = f"{TNA_BASE}/{slug}/data.xml" if slug else None
-            pdf_url = f"{TNA_BASE}/{slug}/data.pdf" if slug else None
-            for link in entry.findall("atom:link", ns):
-                link_type = link.get("type", "")
-                if link.get("rel") == "alternate" and "xml" in link_type:
-                    xml_url = link.get("href", xml_url)
-                elif "pdf" in link_type:
-                    pdf_url = link.get("href", pdf_url)
-
-            title_text = title_el.text.strip() if title_el is not None and title_el.text else slug
-            published_text = (published_el.text or "1970-01-01T00:00:00Z").strip()
-            updated_text = (updated_el.text or published_text).strip()
-            court_text = author_name_el.text.strip() if author_name_el is not None and author_name_el.text else None
-            summaries.append(JudgmentSummary(
-                uri=slug, title=title_text,
-                court=court_text,
-                published=datetime.fromisoformat(published_text.replace("Z", "+00:00")),
-                updated=datetime.fromisoformat(updated_text.replace("Z", "+00:00")),
-                identifiers=identifiers,
-                content_hash=hashlib.sha256((xml_url or "").encode()).hexdigest() if xml_url else None,
-                xml_url=xml_url, pdf_url=pdf_url,
-                next_steps=({
-                    "header": f"judgment://{slug}/header",
-                    "index": f"judgment://{slug}/index",
-                    "paragraph_template": f"judgment://{slug}/para/{{eId}}",
-                    "grep_tool": f"case_law_grep_judgment(slug={slug!r}, pattern=...)",
-                } if slug else {}),
-            ))
+                title_text = title_el.text.strip() if title_el is not None and title_el.text else slug
+                published_text = (published_el.text or "1970-01-01T00:00:00Z").strip()
+                updated_text = (updated_el.text or published_text).strip()
+                court_text = author_name_el.text.strip() if author_name_el is not None and author_name_el.text else None
+                summaries.append(JudgmentSummary(
+                    uri=slug, title=title_text,
+                    court=court_text,
+                    published=datetime.fromisoformat(published_text.replace("Z", "+00:00")),
+                    updated=datetime.fromisoformat(updated_text.replace("Z", "+00:00")),
+                    identifiers=identifiers,
+                    content_hash=hashlib.sha256((xml_url or "").encode()).hexdigest() if xml_url else None,
+                    xml_url=xml_url, pdf_url=pdf_url,
+                    next_steps=({
+                        "header": f"judgment://{slug}/header",
+                        "index": f"judgment://{slug}/index",
+                        "paragraph_template": f"judgment://{slug}/para/{{eId}}",
+                        "grep_tool": f"case_law_grep_judgment(slug={slug!r}, pattern=...)",
+                    } if slug else {}),
+                ))
+            except (ValueError, TypeError, AttributeError):
+                unparsed += 1
+        if entries and not summaries:
+            raise ValueError("TNA feed reported entries but none could be parsed")
         return JudgmentSearchResult(
-            results=summaries, page=page,
+            results=summaries, page=page, unparsed_results=unparsed,
             has_more=has_more, total_pages=total_pages,
         )
-    except Exception:
-        return JudgmentSearchResult(results=[], page=1, has_more=False, total_pages=None)
+    except Exception as exc:
+        raise ValueError("TNA search response could not be parsed as an Atom feed") from exc
 
 
 def register_tools(mcp: FastMCP) -> None:
@@ -176,7 +184,14 @@ def register_tools(mcp: FastMCP) -> None:
             resp.raise_for_status()
         except httpx.HTTPError as e:
             raise_http_tool_error(e, attempted=f"case_law_search(query={query!r})")
-        return _parse_atom_feed(resp.content, limit=limit, page=page)
+        try:
+            return _parse_atom_feed(resp.content, limit=limit, page=page)
+        except ValueError as exc:
+            raise_tool_error(
+                "transient", is_retryable=True,
+                attempted=f"case_law_search(query={query!r})",
+                description=f"TNA response could not be read as a search result ({exc}); retry is safe.",
+            )
 
     @mcp.tool(
         name="grep_judgment",
