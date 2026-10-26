@@ -2,6 +2,18 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [0.8.2] — 2026-10-26
+
+Committee search correctness and stream observability.
+
+### Fixed
+
+- **`committees_search_committees` finds committees at small limits** — the name query was applied to the first `limit` committees returned upstream, so a match beyond that window was silently dropped (for example, "Public Accounts" at `limit=5` returned nothing). The query is now sent to the Committees API as `SearchTerm`, so `limit` applies after the search.
+
+### Added
+
+- **Eviction visibility for held-open GET `/mcp` streams** — each eviction logs the evicted stream id and cap, and increments `uk_legal_stream_evictions_total` on `/metrics`.
+
 ## [0.8.1] — 2026-10-26
 
 Containment release for the legacy GET `/mcp` stream.
