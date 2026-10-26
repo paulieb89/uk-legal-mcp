@@ -221,7 +221,7 @@ async def test_eviction_increments_counter_and_logs():
     assert budget.open == 1
     assert _evictions() == before + 1
     messages = [r.getMessage() for r in records]
-    assert f"evicted oldest GET /mcp stream id={first_id} at cap=1" in messages
+    assert f"evicted oldest GET /mcp stream id={first_id} family=unknown age=0.0s at cap=1 admitted_by=unknown" in messages
 
 
 @pytest.mark.asyncio
@@ -233,3 +233,125 @@ async def test_admit_below_cap_does_not_count_eviction():
     budget.admit()
 
     assert _evictions() == before
+
+
+def _family_evictions(evicted: str, admitting: str) -> float:
+    from prometheus_client import REGISTRY
+
+    from src.gateway import REGION
+
+    return REGISTRY.get_sample_value(
+        "uk_legal_stream_evictions_by_family_total",
+        {"evicted_family": evicted, "admitting_family": admitting, "region": REGION},
+    ) or 0.0
+
+
+@pytest.mark.asyncio
+async def test_eviction_is_counted_and_logged_by_family_pair():
+    import logging
+
+    from src.gateway import _stream_log
+
+    records: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = _Capture(level=logging.INFO)
+    _stream_log.addHandler(handler)
+    try:
+        budget = _GetStreamBudget(cap=1)
+        before = _family_evictions("chatgpt", "claude")
+        budget.admit("chatgpt")
+        budget.admit("claude")
+    finally:
+        _stream_log.removeHandler(handler)
+
+    assert _family_evictions("chatgpt", "claude") == before + 1
+    assert any("family=chatgpt" in r.getMessage() and "admitted_by=claude" in r.getMessage() for r in records)
+
+
+@pytest.mark.asyncio
+async def test_release_drops_family_for_closed_stream():
+    budget = _GetStreamBudget(cap=2)
+    stream_id, _ = budget.admit("codex")
+    budget.release(stream_id)
+
+    assert budget._families == {}
+
+
+def test_client_family_buckets_user_agents_without_keeping_raw_header():
+    from src.gateway import client_family
+
+    assert client_family("Claude-User/1.0 (+https://www.anthropic.com)") == "claude"
+    assert client_family("ChatGPT-User/1.0") == "chatgpt"
+    assert client_family("OpenAI-Codex/0.1 codex_cli") == "codex"
+    assert client_family("python-httpx/0.28.1") == "unknown"
+    assert client_family(None) == "unknown"
+    assert client_family("") == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_guard_records_client_family_from_user_agent():
+    budget = _GetStreamBudget(cap=5)
+    connection = _Connection()
+    scope = {
+        "type": "http", "method": "GET", "path": "/mcp",
+        "headers": [(b"user-agent", b"ChatGPT-User/1.0")],
+    }
+    task = asyncio.create_task(_guard(budget)(scope, connection.receive, connection.send))
+
+    await _wait_for(lambda: budget.open == 1)
+
+    assert list(budget._families.values()) == ["chatgpt"]
+    connection.disconnect()
+    await asyncio.wait_for(task, 2.0)
+
+
+def _sample(name: str, labels: dict) -> float:
+    from prometheus_client import REGISTRY
+
+    return REGISTRY.get_sample_value(name, labels) or 0.0
+
+
+@pytest.mark.asyncio
+async def test_admissions_are_counted_by_family():
+    from src.gateway import REGION
+
+    before = _sample("uk_legal_stream_admissions_total", {"family": "codex", "region": REGION})
+    budget = _GetStreamBudget(cap=5)
+    budget.admit("codex")
+    budget.admit("codex")
+
+    assert _sample("uk_legal_stream_admissions_total", {"family": "codex", "region": REGION}) == before + 2
+
+
+@pytest.mark.asyncio
+async def test_eviction_records_evicted_stream_age_by_family_pair():
+    import logging
+
+    from src.gateway import REGION, _stream_log
+
+    labels = {"evicted_family": "chatgpt", "admitting_family": "claude", "region": REGION}
+    count_before = _sample("uk_legal_stream_eviction_age_seconds_count", labels)
+    sum_before = _sample("uk_legal_stream_eviction_age_seconds_sum", labels)
+
+    records: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = _Capture(level=logging.INFO)
+    _stream_log.addHandler(handler)
+    try:
+        budget = _GetStreamBudget(cap=1)
+        budget.admit("chatgpt", now=100.0)
+        budget.admit("claude", now=112.5)
+    finally:
+        _stream_log.removeHandler(handler)
+
+    assert _sample("uk_legal_stream_eviction_age_seconds_count", labels) == count_before + 1
+    assert _sample("uk_legal_stream_eviction_age_seconds_sum", labels) == pytest.approx(sum_before + 12.5)
+    assert any("family=chatgpt age=12.5s" in r.getMessage() for r in records)

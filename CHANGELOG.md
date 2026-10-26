@@ -2,6 +2,17 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [0.8.3] — 2026-10-26
+
+Observability only. Admission policy is unchanged.
+
+### Added
+
+- **Client family on held GET `/mcp` streams** — each stream is tagged with a fixed family (`chatgpt`, `claude`, `codex`, `unknown`) derived from its User-Agent. The raw header is not stored or logged.
+- **Eviction logs and metric by family** — each eviction logs the evicted and admitting families and the evicted stream's age, and increments `uk_legal_stream_evictions_by_family_total{evicted_family, admitting_family, region}`.
+- **Eviction age** — `uk_legal_stream_eviction_age_seconds{evicted_family, admitting_family, region}` histogram of how long an evicted stream had been open.
+- **Incoming GET rate** — `uk_legal_stream_admissions_total{family, region}` counts every held stream admitted, so incoming volume can be told apart from churn.
+
 ## [0.8.2] — 2026-10-26
 
 Committee search correctness and stream observability.
