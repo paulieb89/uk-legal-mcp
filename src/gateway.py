@@ -100,6 +100,11 @@ client_connections_total = PromCounter(
     "Count of MCP client initialize handshakes.",
     labelnames=["client_name", "client_version", "transport", "region"],
 )
+stream_evictions_total = PromCounter(
+    "uk_legal_stream_evictions_total",
+    "Count of held-open GET /mcp streams closed early to admit a newer stream at capacity.",
+    labelnames=["region"],
+)
 
 _log = logging.getLogger("fastmcp.uk_legal_mcp.clients")
 _stream_log = logging.getLogger("fastmcp.uk_legal_mcp.streams")
@@ -521,6 +526,10 @@ class _GetStreamBudget:
         if len(self._streams) >= self.cap:
             oldest = next(iter(self._streams))
             self._streams.pop(oldest).set()
+            stream_evictions_total.labels(region=REGION).inc()
+            _stream_log.info(
+                "evicted oldest GET /mcp stream id=%d at cap=%d", oldest, self.cap,
+            )
         self._next_id += 1
         evicted = asyncio.Event()
         self._streams[self._next_id] = evicted

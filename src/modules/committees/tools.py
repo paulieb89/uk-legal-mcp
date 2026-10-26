@@ -167,7 +167,7 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Search Parliamentary Committees", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def committees_search_committees(
-        query: Annotated[str | None, Field(description="Search term for committee names, e.g. 'defence' or 'treasury'. Filtered client-side against committee names. Omit to list all committees.", max_length=300)] = None,
+        query: Annotated[str | None, Field(description="Search term for committee names, e.g. 'defence' or 'treasury'. Searched by the upstream API before `limit` is applied. Omit to list all committees.", max_length=300)] = None,
         house: Annotated[Literal["Commons", "Lords", "Joint"] | None, Field(description="Filter by house.")] = None,
         active_only: Annotated[bool, Field(description="If true, only return currently active committees.")] = True,
         limit: Annotated[int, Field(description="Maximum committees to return. Default 100 comfortably covers all currently-active UK select committees. Raise only for historical sweeps.", ge=1, le=500)] = 100,
@@ -187,6 +187,8 @@ def register_tools(mcp: FastMCP) -> None:
             qp["CommitteeStatus"] = "Current"
         if house:
             qp["House"] = HOUSE_MAP.get(house)
+        if query:
+            qp["SearchTerm"] = query
 
         try:
             resp = await client.get(f"{COMMITTEES_BASE}/Committees", params=qp)

@@ -184,3 +184,52 @@ async def test_wrapped_app_health_reports_open_stream_count_and_post_initializes
     assert health.json()["open_streams"] == 0
     assert initialize.status_code == 200
     assert initialize.json()["result"]["protocolVersion"]
+
+
+def _evictions() -> float:
+    from prometheus_client import REGISTRY
+
+    from src.gateway import REGION
+
+    return REGISTRY.get_sample_value("uk_legal_stream_evictions_total", {"region": REGION}) or 0.0
+
+
+@pytest.mark.asyncio
+async def test_eviction_increments_counter_and_logs():
+    import logging
+
+    from src.gateway import _stream_log
+
+    records: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    # FastMCP sets propagate=False on its "fastmcp" logger, so attach directly.
+    handler = _Capture(level=logging.INFO)
+    _stream_log.addHandler(handler)
+    try:
+        budget = _GetStreamBudget(cap=1)
+        before = _evictions()
+        first_id, first_evicted = budget.admit()
+        budget.admit()
+    finally:
+        _stream_log.removeHandler(handler)
+
+    assert first_evicted.is_set()
+    assert budget.open == 1
+    assert _evictions() == before + 1
+    messages = [r.getMessage() for r in records]
+    assert f"evicted oldest GET /mcp stream id={first_id} at cap=1" in messages
+
+
+@pytest.mark.asyncio
+async def test_admit_below_cap_does_not_count_eviction():
+    budget = _GetStreamBudget(cap=2)
+    before = _evictions()
+
+    budget.admit()
+    budget.admit()
+
+    assert _evictions() == before
