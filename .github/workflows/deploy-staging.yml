@@ -1,0 +1,67 @@
+name: Deploy staging
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or tag to deploy to staging
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # This token is scoped only to uk-legal-mcp-staging. Production release.yml
+  # retains its separate FLY_API_TOKEN and is never used by this workflow.
+  FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_STAGING }}
+
+jobs:
+  verify:
+    name: Test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: astral-sh/setup-uv@v6
+      - run: uv lock --check
+      - run: uv sync --frozen --group dev
+      - run: uv run pytest -m "not live" -q
+      - run: uv build
+
+  deploy:
+    name: Deploy to Fly staging
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://uk-legal-mcp-staging.fly.dev/health
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Deploy
+        run: >-
+          flyctl deploy --config fly.staging.toml --app uk-legal-mcp-staging
+          --remote-only --ha=false --wait-timeout 300 --image-label "${{ github.sha }}"
+      - name: Check health and MCP smoke test
+        run: |
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://uk-legal-mcp-staging.fly.dev/health)
+            if [ "$code" = "200" ]; then
+              uv run --frozen python scripts/mcp_smoke_test.py --url https://uk-legal-mcp-staging.fly.dev/mcp
+              exit 0
+            fi
+            echo "Health check attempt $i: HTTP $code — retrying in 5s..."
+            sleep 5
+          done
+          echo "Staging health check failed"
+          exit 1
