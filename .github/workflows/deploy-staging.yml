@@ -52,6 +52,7 @@ jobs:
         run: >-
           flyctl deploy --config fly.staging.toml --app uk-legal-mcp-staging
           --remote-only --ha=false --wait-timeout 300 --image-label "${{ github.sha }}"
+      - uses: astral-sh/setup-uv@v6
       - name: Check health and MCP smoke test
         run: |
           for i in $(seq 1 10); do
