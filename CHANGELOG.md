@@ -8,6 +8,7 @@ Response integrity fixes. No tool names, schemas or legal-research behaviour cha
 
 ### Fixed
 
+- **Hansard contributions with no valid result fields are an error, not an empty search** — a contributions page without a `Results` list and a valid `TotalResultCount` is replayed once, then returned as a retryable `transient` error. A valid zero-result page still returns an empty successful search.
 - **Hansard search reports a partial envelope as degraded** — the `/search.json` aggregate totals are checked. A response missing or invalid totals now returns `enrichment_status: "degraded"` with a `malformed` upstream warning, and the successful contribution results are kept. Absent or invalid totals are reported as null, never zero.
 - **Case-law pagination comes from the feed's links** — `has_more` is true when the feed has a `next` link (or more entries than `limit`). `total_pages` is read from the page number of the `last` link, and is null when that link is absent. Absent counts are no longer defaulted to zero.
 - **Case-law `page` reflects the requested page** — it was previously derived from an OpenSearch `startIndex` the feed does not supply, so page 2 reported page 1.

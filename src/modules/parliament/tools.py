@@ -19,7 +19,7 @@ from pydantic import Field
 
 from collections import Counter
 
-from ...deps import format_http_error, raise_http_tool_error
+from ...deps import format_http_error, raise_http_tool_error, raise_tool_error
 from .resources import _assign_columns, _item_is_contribution, _strip_html, hansard_source_label
 from .models import (
     ColumnLookupResult,
@@ -110,12 +110,16 @@ def _hansard_retryable_error(exc: Exception) -> bool:
 
 async def _request_hansard_json(
     request,
+    validate=None,
 ) -> tuple[dict, bool]:
     """Fetch one Hansard JSON payload with at most one retry.
 
-    The caller decides whether the endpoint is required or optional.  Returning
-    a retry marker makes degraded results auditable without exposing transport
-    implementation details as source evidence.
+    `validate`, when given, runs inside the retried attempt and raises ValueError
+    for a payload whose required fields are missing, so a malformed response is
+    replayed once and never mistaken for a valid empty result.  The caller decides
+    whether the endpoint is required or optional.  Returning a retry marker makes
+    degraded results auditable without exposing transport implementation details
+    as source evidence.
     """
     last_error: Exception | None = None
     for attempt in range(2):
@@ -125,6 +129,8 @@ async def _request_hansard_json(
             payload = response.json()
             if not isinstance(payload, dict):
                 raise ValueError("Hansard returned a non-object JSON payload")
+            if validate is not None:
+                validate(payload)
             return payload, attempt == 1
         except Exception as exc:
             last_error = exc
@@ -151,6 +157,16 @@ ENVELOPE_TOTAL_FIELDS = (
 
 def _is_count(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _require_contributions_shape(payload: dict) -> None:
+    """A contributions page is valid only with a Results list and a count.
+
+    A valid zero-result page has Results == [] and TotalResultCount == 0.  An
+    object without either field is a malformed response, not an empty search.
+    """
+    if not isinstance(payload.get("Results"), list) or not _is_count(payload.get("TotalResultCount")):
+        raise ValueError("Hansard contributions payload lacks Results or a valid TotalResultCount")
 
 
 def _envelope_totals(payload: dict) -> tuple[dict, list[str]]:
@@ -660,7 +676,7 @@ def register_tools(mcp: FastMCP) -> None:
                         f"{HANSARD_API}/search/contributions/{contribution_type}.json",
                         params=qp,
                         timeout=HANSARD_SEARCH_REQUEST_TIMEOUT,
-                    )),
+                    ), validate=_require_contributions_shape),
                     _request_hansard_json(lambda: client.get(
                         f"{HANSARD_API}/search.json",
                         params=envelope_qp,
@@ -677,10 +693,14 @@ def register_tools(mcp: FastMCP) -> None:
         # Contributions are the evidence-bearing result.  Their failure remains
         # a normal tool error; an envelope failure is represented below instead.
         if isinstance(contribution_result, Exception):
-            raise_http_tool_error(
-                contribution_result,
-                attempted=f"parliament_search_hansard contributions(query={query!r})",
-            )
+            attempted = f"parliament_search_hansard contributions(query={query!r})"
+            if isinstance(contribution_result, ValueError):
+                # Malformed after one replay: an intermittent upstream fault, so retry is safe.
+                raise_tool_error(
+                    "transient", is_retryable=True, attempted=attempted,
+                    description="Hansard returned a malformed contributions response twice; retry is safe.",
+                )
+            raise_http_tool_error(contribution_result, attempted=attempted)
 
         contribs_payload, _contribution_retried = contribution_result
         payload: dict = {}
