@@ -47,11 +47,15 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.ref }}
+      - id: deployed
+        # github.sha is the workflow's commit, not the deployed ref. A manual
+        # dispatch from an unchanged main reuses one image label across branches.
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
       - name: Deploy
         run: >-
           flyctl deploy --config fly.staging.toml --app uk-legal-mcp-staging
-          --remote-only --ha=false --wait-timeout 300 --image-label "${{ github.sha }}"
+          --remote-only --ha=false --wait-timeout 300 --image-label "${{ steps.deployed.outputs.sha }}"
       - uses: astral-sh/setup-uv@v6
       - name: Check health and MCP smoke test
         run: |
