@@ -142,3 +142,126 @@ async def test_contribution_timeout_is_a_retryable_error_not_a_degraded_result(m
     assert result.is_error is True
     assert '"error_category": "transient"' in result.content[0].text
     assert "contributions" in result.content[0].text
+
+
+PARTIAL_ENVELOPES = {
+    "absent_totals": {"Debates": [], "Divisions": []},
+    "null_and_invalid_totals": {**ENVELOPE, "TotalDebates": None, "TotalDivisions": "unknown", "TotalMembers": True},
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", sorted(PARTIAL_ENVELOPES))
+async def test_partial_envelope_is_degraded_not_complete(monkeypatch, shape):
+    async def get(_self, url, *, params, timeout):
+        if url.endswith("/search.json"):
+            return _response(url, PARTIAL_ENVELOPES[shape])
+        return _response(url, CONTRIBUTIONS)
+
+    monkeypatch.setattr("httpx.AsyncClient.get", get)
+    async with Client(gateway) as client:
+        result = await client.call_tool("parliament_search_hansard", {"query": f"partial {shape}"})
+
+    payload = result.structured_content
+    assert payload["enrichment_status"] == "degraded"
+    assert payload["contributions"][0]["attributed_to"] == "Example Member"
+    assert payload["total_debates"] is None
+    assert payload["total_divisions"] is None
+    assert payload["total_members"] is None
+    [warning] = payload["upstream_warnings"]
+    assert warning["endpoint"] == "/search.json"
+    assert warning["error_category"] == "malformed"
+    assert warning["retry_attempted"] is False
+    assert "TotalDebates" in warning["detail"]
+    assert "not zero" in warning["detail"]
+
+
+@pytest.mark.asyncio
+async def test_partial_envelope_totals_are_never_reported_as_zero(monkeypatch):
+    async def get(_self, url, *, params, timeout):
+        if url.endswith("/search.json"):
+            return _response(url, {"TotalDebates": 1})
+        return _response(url, CONTRIBUTIONS)
+
+    monkeypatch.setattr("httpx.AsyncClient.get", get)
+    async with Client(gateway) as client:
+        result = await client.call_tool("parliament_search_hansard", {"query": "zero check"})
+
+    payload = result.structured_content
+    assert payload["total_debates"] == 1
+    assert payload["total_divisions"] is None
+    assert payload["total_written_statements"] is None
+    assert payload["enrichment_status"] == "degraded"
+
+
+CONTRIBUTIONS_MALFORMED = [
+    ("empty_object", {}),
+    ("results_without_count", {"Results": CONTRIBUTIONS["Results"]}),
+    ("count_without_results", {"TotalResultCount": 1}),
+    ("null_count", {"Results": [], "TotalResultCount": None}),
+]
+
+
+def _contributions_fake(monkeypatch, sequence):
+    """Serve successive contribution payloads; the envelope is always valid and empty of concern."""
+    calls: Counter[str] = Counter()
+    monkeypatch.setattr(parliament_tools, "HANSARD_SEARCH_RETRY_DELAY", 0)
+
+    async def get(_self, url, *, params, timeout):
+        calls[url] += 1
+        if url.endswith("/search.json"):
+            return _response(url, ENVELOPE)
+        index = min(calls[url], len(sequence)) - 1
+        return _response(url, sequence[index])
+
+    monkeypatch.setattr("httpx.AsyncClient.get", get)
+    return calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", [name for name, _ in CONTRIBUTIONS_MALFORMED])
+async def test_malformed_contributions_are_an_error_never_an_empty_result(monkeypatch, shape):
+    payload = dict(CONTRIBUTIONS_MALFORMED)[shape]
+    calls = _contributions_fake(monkeypatch, [payload])
+
+    async with Client(gateway) as client:
+        result = await client.call_tool(
+            "parliament_search_hansard",
+            {"query": f"malformed {shape}", "from_date": "2025-01-01", "to_date": "2026-10-01"},
+            raise_on_error=False,
+        )
+
+    assert result.is_error
+    assert "transient" in str(result.content) and '"is_retryable": true' in str(result.content)
+    assert calls["https://hansard-api.parliament.uk/search/contributions/Spoken.json"] == 2
+
+
+@pytest.mark.asyncio
+async def test_malformed_contributions_recovered_by_one_retry_return_the_results(monkeypatch):
+    calls = _contributions_fake(monkeypatch, [{}, CONTRIBUTIONS])
+
+    async with Client(gateway) as client:
+        result = await client.call_tool("parliament_search_hansard", {"query": "recovers on retry"})
+
+    payload = result.structured_content
+    assert payload["total"] == 1
+    assert payload["contributions"][0]["attributed_to"] == "Example Member"
+    assert payload["enrichment_status"] == "complete"
+    assert calls["https://hansard-api.parliament.uk/search/contributions/Spoken.json"] == 2
+
+
+@pytest.mark.asyncio
+async def test_valid_zero_result_page_is_a_successful_empty_search(monkeypatch):
+    empty = {"Results": [], "TotalResultCount": 0}
+    calls = _contributions_fake(monkeypatch, [empty])
+
+    async with Client(gateway) as client:
+        result = await client.call_tool("parliament_search_hansard", {"query": "genuinely nothing here"})
+
+    payload = result.structured_content
+    assert not result.is_error
+    assert payload["total"] == 0
+    assert payload["contributions"] == []
+    assert payload["enrichment_status"] == "complete"
+    assert payload["total_corpus"] == 0
+    assert calls["https://hansard-api.parliament.uk/search/contributions/Spoken.json"] == 1
