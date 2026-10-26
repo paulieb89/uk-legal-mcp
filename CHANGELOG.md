@@ -2,6 +2,15 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [0.8.5] — 2026-10-26
+
+Source-integrity fix for Hansard column lookup.
+
+### Fixed
+
+- **`parliament_lookup_by_column` no longer returns false zero matches** — with `house` omitted (the default), upstream answers no results even for a Lords citation, so a valid Lords citation such as HL Deb vol 849 col 200 reported zero matches. The default now searches the Commons and Lords separately and reports zero only when both are valid and empty.
+- **Malformed or unparseable column responses are errors** — a page without `Results` or a valid `TotalResultCount` is replayed once, then returned as a retryable `transient` error. So is a page whose reported matches cannot be parsed.
+
 ## [0.8.4] — 2026-10-26
 
 Response integrity fixes. No tool names, schemas or legal-research behaviour changed.

@@ -159,8 +159,8 @@ def _is_count(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
-def _require_contributions_shape(payload: dict) -> None:
-    """A contributions page is valid only with a Results list and a count.
+def _require_result_page(payload: dict) -> None:
+    """A search page is valid only with a Results list and a TotalResultCount.
 
     A valid zero-result page has Results == [] and TotalResultCount == 0.  An
     object without either field is a malformed response, not an empty search.
@@ -676,7 +676,7 @@ def register_tools(mcp: FastMCP) -> None:
                         f"{HANSARD_API}/search/contributions/{contribution_type}.json",
                         params=qp,
                         timeout=HANSARD_SEARCH_REQUEST_TIMEOUT,
-                    ), validate=_require_contributions_shape),
+                    ), validate=_require_result_page),
                     _request_hansard_json(lambda: client.get(
                         f"{HANSARD_API}/search.json",
                         params=envelope_qp,
@@ -1237,24 +1237,31 @@ def register_tools(mcp: FastMCP) -> None:
         Authoritative source for OSCOLA Hansard column resolution.
         """
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
-        qp: dict = {
-            "columnNumber": column_number,
-            "volumeNumber": volume_number,
-        }
-        if house != "both":
-            qp["house"] = house
+        attempted = f"parliament_lookup_by_column(column_number={column_number!r}, volume_number={volume_number})"
 
-        try:
-            resp = await client.get(
-                f"{HANSARD_API}/search/debatebycolumn.json",
-                params=qp,
+        async def _search_house(one_house: str) -> dict:
+            params = {"columnNumber": column_number, "volumeNumber": volume_number, "house": one_house}
+            page, _retried = await _request_hansard_json(
+                lambda: client.get(f"{HANSARD_API}/search/debatebycolumn.json", params=params),
+                validate=_require_result_page,
             )
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
-            raise_http_tool_error(e, attempted=f"parliament_lookup_by_column(column_number={column_number!r}, volume_number={volume_number})")
+            return page
 
-        payload = resp.json() if resp.content else {}
-        results = payload.get("Results") or []
+        # Upstream returns no matches when `house` is omitted, even for a Lords citation,
+        # so 'both' is one explicit search per House. Zero is reported only when both are valid and empty.
+        houses = ("Commons", "Lords") if house == "both" else (house,)
+        try:
+            pages = [await _search_house(one_house) for one_house in houses]
+        except ValueError:
+            raise_tool_error(
+                "transient", is_retryable=True, attempted=attempted,
+                description="Hansard returned a malformed column-search response twice; retry is safe.",
+            )
+        except Exception as exc:
+            raise_http_tool_error(exc, attempted=attempted)
+
+        results = [item for page in pages for item in page["Results"]]
+        total_results = sum(page["TotalResultCount"] for page in pages)
         matches: list[TopDebate] = []
         for item in results:
             try:
@@ -1307,10 +1314,17 @@ def register_tools(mcp: FastMCP) -> None:
             except (ValueError, TypeError):
                 continue
 
+        if results and not matches:
+            # The upstream reported matches but none could be parsed: an error, not a zero result.
+            raise_tool_error(
+                "transient", is_retryable=True, attempted=attempted,
+                description="Hansard reported column matches but none had a usable debate identifier; retry is safe.",
+            )
+
         return ColumnLookupResult(
             column_number=column_number,
             volume_number=volume_number,
             house=house,
-            total_results=_safe_int(payload.get("TotalResultCount"), len(matches)),
+            total_results=total_results,
             matches=matches,
         )
