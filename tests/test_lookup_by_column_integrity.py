@@ -39,6 +39,9 @@ def _route(monkeypatch, by_house: dict):
     async def get(url, *, params=None, **kwargs):
         if SEARCH in url:
             calls.append(dict(params or {}))
+            value = by_house.get((params or {}).get("house"))
+            if isinstance(value, Exception):
+                raise value
             # Upstream answers an omitted house with an empty page, as observed live.
             return by_house.get((params or {}).get("house"), _response({"Results": [], "TotalResultCount": 0}))
         return _response({"Overview": {"Id": 1, "Source": 2}, "Items": []})
@@ -148,6 +151,43 @@ async def test_reported_results_none_parseable_is_an_error_not_zero(monkeypatch)
         result = await client.call_tool(
             "parliament_lookup_by_column",
             {"column_number": "306", "volume_number": 849},
+            raise_on_error=False,
+        )
+
+    assert result.is_error
+
+
+@pytest.mark.asyncio
+async def test_unparseable_match_is_reported_as_incomplete_not_silently_dropped(monkeypatch):
+    parseable = dict(LORDS_ITEM)
+    unparseable = {"House": "Lords", "Title": "No identifier"}  # no DebateSectionExtId
+    _route(monkeypatch, {
+        "Commons": _response({"Results": [], "TotalResultCount": 0}),
+        "Lords": _response({"Results": [parseable, unparseable], "TotalResultCount": 2}),
+    })
+
+    async with Client(gateway) as client:
+        result = await client.call_tool(
+            "parliament_lookup_by_column", {"column_number": "307", "volume_number": 849},
+        )
+
+    assert result.data.total_results == 2
+    assert len(result.data.matches) == 1
+    assert result.data.unparsed_results == 1
+
+
+@pytest.mark.asyncio
+async def test_failing_one_house_is_an_error_not_a_single_house_result(monkeypatch):
+    # Commons has the match and Lords fails: a Commons-only answer must not look complete.
+    _route(monkeypatch, {
+        "Commons": _response({"Results": [dict(LORDS_ITEM, House="Commons")], "TotalResultCount": 1}),
+        "Lords": httpx.ReadTimeout("lords search timed out"),
+    })
+
+    async with Client(gateway) as client:
+        result = await client.call_tool(
+            "parliament_lookup_by_column",
+            {"column_number": "308", "volume_number": 849},
             raise_on_error=False,
         )
 

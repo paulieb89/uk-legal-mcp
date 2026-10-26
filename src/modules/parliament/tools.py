@@ -1263,10 +1263,12 @@ def register_tools(mcp: FastMCP) -> None:
         results = [item for page in pages for item in page["Results"]]
         total_results = sum(page["TotalResultCount"] for page in pages)
         matches: list[TopDebate] = []
+        unparsed = 0
         for item in results:
             try:
                 ext_id = item.get("DebateSectionExtId") or ""
                 if not ext_id:
+                    unparsed += 1
                     continue
                 sitting_iso = (item.get("SittingDate") or "1970-01-01")[:10]
                 sitting_date = date.fromisoformat(sitting_iso)
@@ -1312,6 +1314,7 @@ def register_tools(mcp: FastMCP) -> None:
                     source=hansard_source_label(source_code),
                 ))
             except (ValueError, TypeError):
+                unparsed += 1
                 continue
 
         if results and not matches:
@@ -1326,5 +1329,6 @@ def register_tools(mcp: FastMCP) -> None:
             volume_number=volume_number,
             house=house,
             total_results=total_results,
+            unparsed_results=unparsed,
             matches=matches,
         )
