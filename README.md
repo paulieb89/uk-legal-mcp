@@ -142,7 +142,7 @@ fastmcp run
 fastmcp inspect
 ```
 
-`fastmcp run` is for inspection/dev only — it wraps the FastMCP runner directly and skips the production uvicorn shape (`_HttpGuard`, `_AcceptNormalizer`, `proxy_headers`) that `python -m src.gateway` wires for the Fly deployment. The `_HttpGuard` GET-SSE shim is required by claude.ai's web connector, so use `python -m src.gateway` for anything prod-like.
+`fastmcp run` is for inspection/dev only — it wraps the FastMCP runner directly and skips the production uvicorn shape (`_HttpGuard`, `_AcceptNormalizer`, `proxy_headers`) that `python -m src.gateway` wires for the Fly deployment. The server answers `GET /mcp` with a native 405 (stateless, POST-only), so use `python -m src.gateway` for anything prod-like.
 
 Use a local checkout over stdio:
 

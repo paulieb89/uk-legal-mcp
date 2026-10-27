@@ -12,9 +12,8 @@ primary_region = "lhr"
   min_machines_running = 1
 
   [http_service.concurrency]
-    # Twenty legacy GET streams may be held open.  At the hard limit, thirty
-    # request slots remain for POST MCP traffic, health checks, and metrics;
-    # the lower soft limit only deprioritises this single-machine app.
+    # Limits were sized for twenty held legacy GET streams, which this change removes.
+    # They are left unchanged here for review.
     type = "requests"
     hard_limit = 50
     soft_limit = 25
