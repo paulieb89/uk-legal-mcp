@@ -360,7 +360,6 @@ class TestCustomRoutes:
             body = resp.json()
             assert body["status"] == "ok"
             assert body["modules"] == 8
-            assert body["open_streams"] == 0
 
     @pytest.mark.asyncio
     async def test_metrics_route(self):

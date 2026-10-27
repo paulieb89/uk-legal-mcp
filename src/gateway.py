@@ -19,7 +19,6 @@ Transport: Streamable HTTP, port from $PORT (default 8080)
 Region:    lhr (London) — co-located with UK legal data sources
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -100,41 +99,7 @@ client_connections_total = PromCounter(
     "Count of MCP client initialize handshakes.",
     labelnames=["client_name", "client_version", "transport", "region"],
 )
-stream_evictions_total = PromCounter(
-    "uk_legal_stream_evictions_total",
-    "Count of held-open GET /mcp streams closed early to admit a newer stream at capacity.",
-    labelnames=["region"],
-)
-stream_evictions_by_family_total = PromCounter(
-    "uk_legal_stream_evictions_by_family_total",
-    "Held-open GET /mcp stream evictions by evicted and admitting client family.",
-    labelnames=["evicted_family", "admitting_family", "region"],
-)
-stream_evictions_age_seconds = Histogram(
-    "uk_legal_stream_eviction_age_seconds",
-    "Age of a held-open GET /mcp stream when it was evicted, by evicted and admitting client family.",
-    labelnames=["evicted_family", "admitting_family", "region"],
-    buckets=(1, 2, 5, 10, 30, 60, 120, 300),
-)
-stream_admissions_total = PromCounter(
-    "uk_legal_stream_admissions_total",
-    "Held-open GET /mcp streams admitted, by client family.",
-    labelnames=["family", "region"],
-)
-
 _log = logging.getLogger("fastmcp.uk_legal_mcp.clients")
-_stream_log = logging.getLogger("fastmcp.uk_legal_mcp.streams")
-
-GET_STREAM_CAP = 20
-GET_STREAM_TTL_SECONDS = 300.0
-GET_STREAM_PING_SECONDS = 25.0
-GET_STREAM_RETRY_MS = 5000
-GET_STREAM_MODE = os.environ.get("GET_STREAM_MODE", "bounded")
-if GET_STREAM_MODE not in {"bounded", "405"}:
-    raise SystemExit(
-        "GET_STREAM_MODE must be 'bounded' or '405', "
-        f"not {GET_STREAM_MODE!r}"
-    )
 
 
 class ClientTrackingMiddleware(Middleware):
@@ -526,70 +491,6 @@ CORS_HEADERS = {
 }
 
 
-CLIENT_FAMILIES = ("chatgpt", "claude", "codex", "unknown")
-
-
-def client_family(user_agent: str | None) -> str:
-    """Bucket a User-Agent into a fixed family. The raw header is never stored."""
-    ua = (user_agent or "").lower()
-    if "codex" in ua:
-        return "codex"
-    if "chatgpt" in ua or "openai" in ua:
-        return "chatgpt"
-    if "claude" in ua or "anthropic" in ua:
-        return "claude"
-    return "unknown"
-
-
-class _GetStreamBudget:
-    """Bounds held-open GET /mcp streams, evicting the oldest at capacity."""
-
-    def __init__(self, cap: int = GET_STREAM_CAP):
-        self.cap = cap
-        self._streams: dict[int, asyncio.Event] = {}
-        self._families: dict[int, str] = {}
-        self._admitted_at: dict[int, float] = {}
-        self._next_id = 0
-
-    @property
-    def open(self) -> int:
-        return len(self._streams)
-
-    def admit(self, family: str = "unknown", now: float | None = None) -> tuple[int, asyncio.Event]:
-        now = time.monotonic() if now is None else now
-        stream_admissions_total.labels(family=family, region=REGION).inc()
-        if len(self._streams) >= self.cap:
-            oldest = next(iter(self._streams))
-            self._streams.pop(oldest).set()
-            evicted_family = self._families.pop(oldest, "unknown")
-            age = now - self._admitted_at.pop(oldest, now)
-            stream_evictions_total.labels(region=REGION).inc()
-            stream_evictions_by_family_total.labels(
-                evicted_family=evicted_family, admitting_family=family, region=REGION,
-            ).inc()
-            stream_evictions_age_seconds.labels(
-                evicted_family=evicted_family, admitting_family=family, region=REGION,
-            ).observe(age)
-            _stream_log.info(
-                "evicted oldest GET /mcp stream id=%d family=%s age=%.1fs at cap=%d admitted_by=%s",
-                oldest, evicted_family, age, self.cap, family,
-            )
-        self._next_id += 1
-        evicted = asyncio.Event()
-        self._streams[self._next_id] = evicted
-        self._families[self._next_id] = family
-        self._admitted_at[self._next_id] = now
-        return self._next_id, evicted
-
-    def release(self, stream_id: int) -> None:
-        self._streams.pop(stream_id, None)
-        self._families.pop(stream_id, None)
-        self._admitted_at.pop(stream_id, None)
-
-
-GET_STREAMS = _GetStreamBudget()
-
-
 @gateway.custom_route("/health", methods=["GET", "OPTIONS"])
 async def health(request: Request) -> Response:
     if request.method == "OPTIONS":
@@ -598,7 +499,6 @@ async def health(request: Request) -> Response:
         "status": "ok",
         "server": "uk-legal-mcp",
         "modules": len(MOUNTED_MODULES),
-        "open_streams": GET_STREAMS.open,
     }, headers=CORS_HEADERS)
 
 
@@ -627,104 +527,6 @@ async def glama_connector_manifest(request: Request) -> Response:
 # Entrypoint
 # ---------------------------------------------------------------------------
 
-class _HttpGuard:
-    """Serve a bounded legacy GET stream while preserving stateless POST MCP."""
-
-    def __init__(
-        self,
-        app,
-        mcp_path: bytes = b"/mcp",
-        budget: _GetStreamBudget | None = None,
-        ttl: float = GET_STREAM_TTL_SECONDS,
-        ping: float = GET_STREAM_PING_SECONDS,
-        retry_ms: int = GET_STREAM_RETRY_MS,
-        clock=time.monotonic,
-        mode: str = GET_STREAM_MODE,
-    ):
-        self.app = app
-        self._mcp_path = mcp_path.rstrip(b"/")
-        self._budget = budget or GET_STREAMS
-        self._ttl = ttl
-        self._ping = ping
-        self._retry_ms = retry_ms
-        self._clock = clock
-        self._mode = mode
-
-    @staticmethod
-    async def _wait_for_disconnect(receive) -> None:
-        while (await receive())["type"] != "http.disconnect":
-            pass
-
-    async def _hold_stream(self, receive, send, family: str = "unknown") -> None:
-        stream_id, evicted = self._budget.admit(family)
-        disconnect = asyncio.ensure_future(self._wait_for_disconnect(receive))
-        evict_wait = asyncio.ensure_future(evicted.wait())
-        try:
-            await send({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [
-                    (b"content-type", b"text/event-stream"),
-                    (b"cache-control", b"no-cache"),
-                    (b"connection", b"keep-alive"),
-                ],
-            })
-            await send({
-                "type": "http.response.body",
-                "body": f"retry: {self._retry_ms}\n\n".encode(),
-                "more_body": True,
-            })
-            deadline = self._clock() + self._ttl
-            while True:
-                remaining = deadline - self._clock()
-                if remaining <= 0:
-                    break
-                done, _ = await asyncio.wait(
-                    {disconnect, evict_wait},
-                    timeout=min(self._ping, remaining),
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if disconnect in done or evict_wait in done:
-                    break
-                if not done:
-                    await send({
-                        "type": "http.response.body",
-                        "body": b": ping\n\n",
-                        "more_body": True,
-                    })
-            await send({"type": "http.response.body", "body": b"", "more_body": False})
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            _stream_log.debug("GET /mcp stream closed while sending", exc_info=True)
-        finally:
-            disconnect.cancel()
-            evict_wait.cancel()
-            self._budget.release(stream_id)
-
-    async def __call__(self, scope, receive, send):
-        if scope.get("type") == "http":
-            path = scope.get("path", "").rstrip("/").encode()
-            method = scope.get("method", "").upper().encode()
-            if path == self._mcp_path:
-                if method == b"GET" and self._mode == "bounded":
-                    user_agent = next(
-                        (v.decode("latin-1") for k, v in scope.get("headers", []) if k == b"user-agent"),
-                        None,
-                    )
-                    await self._hold_stream(receive, send, client_family(user_agent))
-                    return
-                if method == b"DELETE":
-                    from starlette.responses import Response as StarletteResponse
-                    await StarletteResponse(
-                        "Method Not Allowed",
-                        status_code=405,
-                        headers={"Allow": "POST"},
-                    )(scope, receive, send)
-                    return
-        await self.app(scope, receive, send)
-
-
 class _AcceptNormalizer:
     """Stamp Accept to the MCP-spec value on /mcp only, so json_response=True never 406s.
 
@@ -748,8 +550,8 @@ class _AcceptNormalizer:
         await self.app(scope, receive, send)
 
 
-def create_http_app(mode: str = GET_STREAM_MODE):
-    """Build the production HTTP stack: guard, Accept normalizer, then FastMCP."""
+def create_http_app():
+    """Build the production HTTP stack: Accept normalizer, then FastMCP."""
     # stateless_http=True: Lesson 2 — without it, clients hit "Missing
     # session ID" on any request not preceded by initialize on the same
     # machine. Required for safe deploys (machine restart drops sessions)
@@ -760,7 +562,7 @@ def create_http_app(mode: str = GET_STREAM_MODE):
         stateless_http=True,
         transport="streamable-http",
     )
-    return _HttpGuard(_AcceptNormalizer(app), mode=mode)
+    return _AcceptNormalizer(app)
 
 
 def main() -> None:

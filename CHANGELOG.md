@@ -2,6 +2,12 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [Unreleased]
+
+### Removed
+
+- **Synthetic legacy `GET /mcp` stream** — the held-open `200 text/event-stream` shim, its eviction, TTL and ping machinery, the `GET_STREAM_MODE` setting, the stream admission and eviction metrics, and `open_streams` on `/health` are removed. `GET /mcp` now returns the native 405. Interoperability runs on staging (claude.ai web, ChatGPT web, Claude Code, Codex) completed their handshake, tool discovery and tool calls with a native 405, and none needed the synthetic stream. The `Accept` normaliser is unchanged.
+
 ## [0.8.5] — 2026-10-26
 
 This release also includes the 0.8.3 and 0.8.4 changes, which were merged but never published on their own.
