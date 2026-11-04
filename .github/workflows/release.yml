@@ -13,6 +13,11 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv lock --check
       - run: uv sync --frozen --group dev
+      # Self-consistent files pinned to the wrong version are still drift: the
+      # tag the release was cut from must match what is about to be published.
+      - run: uv run python scripts/check_version_sync.py --expect "$TAG"
+        env:
+          TAG: ${{ github.event.release.tag_name }}
       # No live-marked test runs here, so nothing should reach the network. The
       # dead proxy turns an accidental request into a failure instead of a
       # silent pass; it is a regression guard, not proof that egress is closed.
