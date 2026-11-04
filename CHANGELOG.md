@@ -2,6 +2,26 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [0.9.1] — 2026-11-04
+
+Hardening follow-ups to 0.9.0. No tool names, schemas or legal-research behaviour changed.
+
+### Changed
+
+- **Response caches are bounded** — every response cache used an in-memory store with no entry limit, so a long-running process kept growing towards its memory budget. Caches now keep at most `CACHE_MAX_ENTRIES` entries per collection (default 300; the least recently used are evicted first) and do not cache any single response over 256 KB. Typical tool-call responses are about 12 KB.
+- **Metric labels are bounded** — the `tool` label is the registered tool name, or `unknown` for a name that is not a tool (probe traffic had created series for made-up names), and `client_name` keeps the first `CLIENT_LABEL_MAX` (default 40) distinct client names before folding the rest into `other`. The exact client name is still written to the `client_connected` log line.
+- **The latency histogram now reaches 60 s** — it stopped at 10 s, which hid how slow the slowest calls were. `uk_legal_tool_duration_seconds` gains 30 s and 60 s buckets.
+
+### Fixed
+
+- **A blocked legislation.gov.uk request fails in about 1 s instead of 7 s** — a `202` with an empty body is the site's WAF silently blocking the request, not a document still rendering. The client now retries once after 1 s and then returns the existing retryable upstream-block error. A `202` that carries a body is a real render in progress and still polls for up to 7 s.
+
+- **Client connections are attributed to the right client again** — since 0.9.0 (FastMCP 4, MCP SDK 2.x) every `initialize` client was logged and counted as `unknown`, because the SDK renamed `clientInfo` to `client_info`, and clients that open with the sessionless `server/discover` handshake were not counted at all. Both handshakes are now read and counted, in the `client_connected` log line and in `uk_legal_client_connections_total`.
+
+### Added
+
+- **`uk_legal_upstream_blocks_total{upstream,kind}`** — counts requests legislation.gov.uk answered with a WAF challenge page, an empty body, or an empty `202`, so a recurrence is visible in metrics instead of looking like random tool errors.
+
 ## [0.9.0] — 2026-11-04
 
 Upgrades the server to FastMCP 4 and fixes legislation.gov.uk fetches from the production IP. The tool, prompt, resource and route surface is unchanged: a parity test compares it against a FastMCP 3 baseline (37 tools, 4 prompts, 1 resource, 8 templates).
