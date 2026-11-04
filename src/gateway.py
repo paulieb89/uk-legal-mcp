@@ -136,18 +136,40 @@ async def _tool_label(name: str) -> str:
     except Exception:
         return "unknown"
 
+# Handshake-era clients open with "initialize". The sessionless protocol opens with
+# "server/discover" instead and carries clientInfo in params._meta, so counting only
+# "initialize" leaves FastMCP 4 clients out of the metric entirely.
+_HANDSHAKE_METHODS = ("initialize", "server/discover")
+_META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"
+
+
+def _field(obj, key: str):
+    return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
+
+def _client_identity(context: MiddlewareContext) -> tuple[str, str]:
+    """(name, version) of the connecting client, "unknown" when it sent none.
+
+    The MCP SDK renamed InitializeRequestParams.clientInfo to client_info in 2.x;
+    reading only the old name silently reported every client as "unknown".
+    """
+    params = context.message.params
+    if context.method == "initialize":
+        info = _field(params, "client_info") or _field(params, "clientInfo")
+    else:
+        info = _field(_field(params, "meta") or {}, _META_CLIENT_INFO)
+    return (_field(info, "name") or "unknown", _field(info, "version") or "unknown")
+
+
 class ClientTrackingMiddleware(Middleware):
-    """Log clientInfo and increment connection counter on every initialize."""
+    """Log clientInfo and increment the connection counter on every handshake."""
 
     async def on_request(self, context: MiddlewareContext, call_next):
         result = await call_next(context)
-        if context.method == "initialize":
-            params = context.message.params
-            info = getattr(params, "clientInfo", None)
-            client_name = getattr(info, "name", "unknown") or "unknown"
-            client_version = getattr(info, "version", "unknown") or "unknown"
-            caps = getattr(params, "capabilities", None)
-            cap_keys = [k for k, v in (caps.model_dump().items() if caps else []) if v is not None]
+        if context.method in _HANDSHAKE_METHODS:
+            client_name, client_version = _client_identity(context)
+            caps = _field(context.message.params, "capabilities")
+            cap_keys = [k for k, v in (caps.model_dump().items() if hasattr(caps, "model_dump") else []) if v is not None]
             _log.info("client_connected client=%s version=%s capabilities=%s transport=%s region=%s",
                       client_name, client_version, cap_keys, TRANSPORT, REGION)
             label = _client_labels.resolve(client_name)
