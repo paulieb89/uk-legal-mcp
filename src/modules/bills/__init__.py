@@ -3,10 +3,13 @@
 from fastmcp import FastMCP
 from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
 
+from ...deps import inherited_http_lifespan
 from .tools import register_tools
 
 bills_mcp = FastMCP(
     name="bills",
+    lifespan=inherited_http_lifespan,
+    mask_error_details=True,
     instructions=(
         "UK parliamentary bills via bills-api.parliament.uk. Returns bill metadata, "
         "sponsors, current stage, and progress through both houses. Does not interpret "

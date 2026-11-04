@@ -3,10 +3,13 @@
 from fastmcp import FastMCP
 from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
 
+from ...deps import inherited_http_lifespan
 from .tools import register_tools
 
 hmrc_mcp = FastMCP(
     name="hmrc",
+    lifespan=inherited_http_lifespan,
+    mask_error_details=True,
     instructions=(
         "UK tax information via HMRC APIs and GOV.UK. Returns VAT rates, Making Tax "
         "Digital status, and HMRC guidance documents. Does not give tax advice — the "

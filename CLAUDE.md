@@ -2,7 +2,7 @@
 
 ## What this is
 
-UK legal research MCP server. Eight namespaced modules (case_law, legislation, parliament, bills, votes, committees, citations, hmrc) plus gateway companion + resource-bridge tools, mounted into a single FastMCP v3 gateway. For the live tool count run `fastmcp inspect` or `len(await client.list_tools())` — don't hardcode it (Obs 217). Deployed to Fly.io (London region). Streamable HTTP transport.
+UK legal research MCP server. Eight namespaced modules (case_law, legislation, parliament, bills, votes, committees, citations, hmrc) plus gateway companion + resource-bridge tools, mounted into a single FastMCP 4 gateway. For the live tool count run `fastmcp inspect` or `len(await client.list_tools())` — don't hardcode it (Obs 217). Deployed to Fly.io (London region). Streamable HTTP transport.
 
 Live endpoint: `https://uk-legal-mcp.fly.dev/mcp`
 Repo: `https://github.com/paulieb89/uk-legal-mcp`
@@ -59,7 +59,7 @@ fly secrets set HMRC_CLIENT_ID=xxx HMRC_CLIENT_SECRET=xxx --app uk-legal-mcp
 
 ## Architecture rules
 
-- **Gateway owns the lifespan.** The httpx client pool is created in `gateway.py` via `lifespan=http_lifespan`. Sub-modules do NOT declare their own lifespan — they inherit from the gateway via `mount()`. Tools access clients via `ctx.lifespan_context["http"]` (v3 API, NOT the removed v2 `ctx.request_context.lifespan_state`).
+- **Gateway owns the real lifespan.** The httpx client pool is created in `gateway.py` via `lifespan=http_lifespan`. FastMCP 4 starts mounted lifespans independently, so every sub-module declares `lifespan=inherited_http_lifespan`; it receives the gateway-owned context and must never create its own client pool. Tools access clients via `ctx.lifespan_context["http"]`.
 
 - **Each module is a standalone FastMCP instance** mounted with `namespace=` prefix. Tools are registered via `register_tools(mcp)` pattern. Models, resources, and prompts are separate files within each module.
 
@@ -126,7 +126,7 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 
 ## Adding a new module
 
-1. Create `src/modules/<name>/__init__.py` with a `FastMCP` instance (no lifespan)
+1. Create `src/modules/<name>/__init__.py` with a `FastMCP` instance using `lifespan=inherited_http_lifespan` (never an independent client-owning lifespan)
 2. Create `tools.py`, `models.py`, optionally `resources.py` and `prompts.py`
 3. Import and mount in `gateway.py`: `gateway.mount(<name>_mcp, namespace="<name>")`
 4. Add caching middleware in `__init__.py` if the upstream is stable

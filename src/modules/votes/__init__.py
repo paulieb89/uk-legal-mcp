@@ -3,10 +3,13 @@
 from fastmcp import FastMCP
 from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
 
+from ...deps import inherited_http_lifespan
 from .tools import register_tools
 
 votes_mcp = FastMCP(
     name="votes",
+    lifespan=inherited_http_lifespan,
+    mask_error_details=True,
     instructions=(
         "UK parliamentary divisions (formal votes) — Commons via commonsvotes-api, Lords "
         "via lordsvotes-api. Returns division records with aye/no counts, individual member "

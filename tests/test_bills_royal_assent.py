@@ -315,10 +315,9 @@ class TestBillsGetBillViaMcpTool:
     async def test_enacted_bill_royal_assent_date_on_the_wire(self, client: Client, monkeypatch):
         result = await self._call_with_stubbed_response(client, RENTERS_RIGHTS_ACT_2025, monkeypatch)
         assert not result.is_error, f"Tool error: {result.data}"
-        # fastmcp's Python Client materialises this dynamic model's date
-        # field as a plain string, not a datetime.date — the ISO string is
-        # what's actually on the wire, which is what matters here.
-        assert result.data.royal_assent_date == "2025-10-27"
+        # FastMCP 4 materialises the JSON date as datetime.date. The stable
+        # external representation remains the ISO date string.
+        assert result.data.royal_assent_date.isoformat() == "2025-10-27"
         assert result.data.is_act is True
 
     @pytest.mark.asyncio

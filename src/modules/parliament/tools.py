@@ -1086,30 +1086,29 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="get_debate_divisions",
+        description=(
+            "USE THIS TOOL WHEN you have a debate_ext_id and want the divisions (formal votes) held within it.\n\n"
+            "Most debates contain no divisions — Business of the House sittings,\n"
+            "statements, urgent questions, debates without a vote. A populated list\n"
+            "typically appears around bill stages, motions, and contested amendments.\n"
+            "Empty list is the honest result, not a failure mode.\n\n"
+            "Each returned division carries TWO IDs:\n"
+            "  - `id` — Hansard-side reference. Useful for cross-referencing in Hansard.\n"
+            "  - `votes_id` — Lords/Commons Votes API ID (cross-resolved by date+number).\n"
+            "    AFTER calling, pass `votes_id` as `division_id` into votes_get_division\n"
+            "    for the full member-by-member voting record.\n\n"
+            "The two upstreams use distinct ID-spaces (Hansard Number=3 might be\n"
+            "Votes-API divisionId=3392). The cross-resolve runs once per (date, house)\n"
+            "group — typically one extra HTTP per debate. `votes_id` is None when the\n"
+            "cross-resolve found no match."
+        ),
         annotations={"title": "Get Divisions Held In A Debate", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def parliament_get_debate_divisions(
         debate_ext_id: Annotated[str, Field(description="Debate GUID (DebateSectionExtId). Chain from parliament_search_hansard contribution.debate_ext_id, top_debates[].debate_ext_id, or parliament_policy_position_summary top_debates[].debate_ext_id.", min_length=8)],
         ctx: Context,
     ) -> DebateDivisions:
-        """USE THIS TOOL WHEN you have a debate_ext_id and want the divisions (formal votes) held within it.
-
-        Most debates contain no divisions — Business of the House sittings,
-        statements, urgent questions, debates without a vote. A populated list
-        typically appears around bill stages, motions, and contested amendments.
-        Empty list is the honest result, not a failure mode.
-
-        Each returned division carries TWO IDs:
-          - `id` — Hansard-side reference. Useful for cross-referencing in Hansard.
-          - `votes_id` — Lords/Commons Votes API ID (cross-resolved by date+number).
-            AFTER calling, pass `votes_id` as `division_id` into votes_get_division
-            for the full member-by-member voting record.
-
-        The two upstreams use distinct ID-spaces (Hansard Number=3 might be
-        Votes-API divisionId=3392). The cross-resolve runs once per (date, house)
-        group — typically one extra HTTP per debate. `votes_id` is None when the
-        cross-resolve found no match.
-        """
+        """Return the formal divisions held within one known debate."""
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         try:
             resp = await client.get(
@@ -1208,6 +1207,23 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="lookup_by_column",
+        description=(
+            "USE THIS TOOL WHEN you have an OSCOLA-style Hansard citation (column + volume + house) and need the debate.\n\n"
+            "Example input: 'HL Deb 14 Oct 2025, vol 849, col 200'. AFTER calling, read\n"
+            "the contribution at the cited column via\n"
+            "read_resource(uri=\"hansard://debate/{debate_ext_id}/header\") — or,\n"
+            "equivalently, call parliament_get_debate_contributions(debate_ext_id) for\n"
+            "the full list as a structured tool response.\n\n"
+            "Each match carries:\n"
+            "  - `contribution_count` — real contribution count from the debate's Items\n"
+            "  - `source` / `source_code` — citation finality (1=Rolling, 2=Daily,\n"
+            "    3=BoundVolume, 4=Historic). Resolution is NOT gated on publication state.\n\n"
+            "Empty `matches` typically means the volume_number is wrong (opposing\n"
+            "counsel sometimes cites running-volume rather than bound-volume) or the\n"
+            "column is in a Written Statement (use the 'W'-suffixed column as-is).\n"
+            "It does NOT mean the citation is fabricated — surface the failure.\n\n"
+            "Authoritative source for OSCOLA Hansard column resolution."
+        ),
         annotations={"title": "Resolve A Hansard Column Citation", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def parliament_lookup_by_column(
@@ -1216,26 +1232,7 @@ def register_tools(mcp: FastMCP) -> None:
         ctx: Context,
         house: Annotated[Literal["Commons", "Lords", "both"], Field(description="Restrict to one House. Default 'both' searches across both Houses.")] = "both",
     ) -> ColumnLookupResult:
-        """USE THIS TOOL WHEN you have an OSCOLA-style Hansard citation (column + volume + house) and need the debate.
-
-        Example input: 'HL Deb 14 Oct 2025, vol 849, col 200'. AFTER calling, read
-        the contribution at the cited column via
-        read_resource(uri="hansard://debate/{debate_ext_id}/header") — or,
-        equivalently, call parliament_get_debate_contributions(debate_ext_id) for
-        the full list as a structured tool response.
-
-        Each match carries:
-          - `contribution_count` — real contribution count from the debate's Items
-          - `source` / `source_code` — citation finality (1=Rolling, 2=Daily,
-            3=BoundVolume, 4=Historic). Resolution is NOT gated on publication state.
-
-        Empty `matches` typically means the volume_number is wrong (opposing
-        counsel sometimes cites running-volume rather than bound-volume) or the
-        column is in a Written Statement (use the 'W'-suffixed column as-is).
-        It does NOT mean the citation is fabricated — surface the failure.
-
-        Authoritative source for OSCOLA Hansard column resolution.
-        """
+        """Resolve an OSCOLA-style Hansard column citation to its debate."""
         client: httpx.AsyncClient = ctx.lifespan_context["http"]
         attempted = f"parliament_lookup_by_column(column_number={column_number!r}, volume_number={volume_number})"
 

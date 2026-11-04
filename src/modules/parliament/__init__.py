@@ -2,11 +2,14 @@
 
 from fastmcp import FastMCP
 
+from ...deps import inherited_http_lifespan
 from .tools import register_tools
 from .prompts import register_prompts
 
 parliament_mcp = FastMCP(
     name="parliament",
+    lifespan=inherited_http_lifespan,
+    mask_error_details=True,
     instructions=(
         "UK Parliament data: Hansard debates, member registers, petitions. Returns "
         "primary sources with citation metadata. Does not interpret, classify positions, "

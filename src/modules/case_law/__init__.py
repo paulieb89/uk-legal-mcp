@@ -3,10 +3,13 @@
 from fastmcp import FastMCP
 from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
 
+from ...deps import inherited_http_lifespan
 from .tools import register_tools
 
 case_law_mcp = FastMCP(
     name="case_law",
+    lifespan=inherited_http_lifespan,
+    mask_error_details=True,
     instructions=(
         "UK court judgments via The National Archives Find Case Law database. Returns "
         "primary-source judgments with neutral citations, party names, court, dates. Does "

@@ -3,11 +3,14 @@
 from fastmcp import FastMCP
 from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
 
+from ...deps import inherited_http_lifespan
 from .tools import register_tools
 from .prompts import register_prompts
 
 legislation_mcp = FastMCP(
     name="legislation",
+    lifespan=inherited_http_lifespan,
+    mask_error_details=True,
     instructions=(
         "UK legislation — Acts of Parliament and Statutory Instruments — via "
         "legislation.gov.uk + the i.AI Lex API. Returns primary-source statute text with "
