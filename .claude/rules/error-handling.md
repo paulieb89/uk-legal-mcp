@@ -104,11 +104,18 @@ and a wrong `is_retryable` is worse than none, because agents obey it. Reserve
 `unknown` for exceptions carrying no status at all.
 
 ## LegislationClient specifics (src/deps.py)
-- 437 from CloudFront = JA3 fingerprint — already handled by curl_cffi
+- 437 from CloudFront was once attributed to a JA3 fingerprint check on raw httpx.
+  Probed 2026-11-04 from the production IP: identified httpx and plain curl_cffi
+  clients are served, while Chrome impersonation drew a silent block. The client
+  therefore identifies itself (fair use policy) instead of impersonating a
+  browser. If 437s reappear, revisit this.
 - 438 from CloudFront = observed while legislation.gov.uk's documented fair-use
   limit (1,500 requests / 5 minutes) was in force. Classified `transient`.
-- 202 = render-pending — already handled by poll loop in LegislationClient
+- 202 with a body = render-pending — poll loop in LegislationClient (1+2+4 s)
+- 202 with an empty body = the WAF's silent block — one 1 s retry, then
+  `LegislationUpstreamError`; counted in `uk_legal_upstream_blocks_total{kind="empty_202"}`
 - JS challenge page = `LegislationUpstreamError` — raise it, don't parse the HTML
+  (counted as `kind="waf_challenge"`)
 - There is still **no retry/backoff** on this client. Classification tells the
   caller a retry is safe; it does not perform one. See
   `uk-due-diligence-mcp/http_client.py::_request_with_retry` for the fleet

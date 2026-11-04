@@ -1,9 +1,9 @@
 """case_law sub-module — TNA Find Case Law search and retrieval."""
 
 from fastmcp import FastMCP
-from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
+from fastmcp.server.middleware.caching import CallToolSettings
 
-from ...deps import inherited_http_lifespan
+from ...deps import inherited_http_lifespan, response_cache
 from .tools import register_tools
 
 case_law_mcp = FastMCP(
@@ -42,7 +42,7 @@ case_law_mcp = FastMCP(
     ),
 )
 
-case_law_mcp.add_middleware(ResponseCachingMiddleware(call_tool_settings=CallToolSettings(ttl=3600)))
+case_law_mcp.add_middleware(response_cache(call_tool_settings=CallToolSettings(ttl=3600)))
 
 register_tools(case_law_mcp)
 # Resources are registered on the gateway, not here — see resources.py and issue #3

@@ -37,5 +37,5 @@ API-specific context belongs in the tool's except block before calling format_ht
 1. ErrorHandlingMiddleware
 2. StructuredLoggingMiddleware
 3. DetailedTimingMiddleware
-4. ResponseCachingMiddleware (per-module config)
+4. Response caching (per-module config) — build it with `deps.response_cache(...)`, never `ResponseCachingMiddleware(...)` directly: the default store is unbounded (`tests/test_response_cache_bounds.py` enforces this)
 Do not reorder. Adding middleware at the wrong position silently breaks error propagation.

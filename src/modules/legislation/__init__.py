@@ -1,9 +1,9 @@
 """legislation sub-module — Acts of Parliament and Statutory Instruments."""
 
 from fastmcp import FastMCP
-from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
+from fastmcp.server.middleware.caching import CallToolSettings
 
-from ...deps import inherited_http_lifespan
+from ...deps import inherited_http_lifespan, response_cache
 from .tools import register_tools
 from .prompts import register_prompts
 
@@ -39,7 +39,7 @@ legislation_mcp = FastMCP(
     ),
 )
 
-legislation_mcp.add_middleware(ResponseCachingMiddleware(call_tool_settings=CallToolSettings(ttl=86400)))
+legislation_mcp.add_middleware(response_cache(call_tool_settings=CallToolSettings(ttl=86400)))
 
 register_tools(legislation_mcp)
 register_prompts(legislation_mcp)

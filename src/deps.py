@@ -26,6 +26,7 @@ Usage in tools:
 
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import Literal
@@ -37,9 +38,39 @@ from curl_cffi.requests.exceptions import HTTPError as CurlHTTPError
 from curl_cffi.requests.exceptions import Timeout as CurlTimeout
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.server.middleware.caching import ResponseCachingMiddleware
+from key_value.aio.stores.memory import MemoryStore
+from prometheus_client import Counter as PromCounter
 
 
 _gateway_lifespan_context: dict[str, object] | None = None
+
+# ---------------------------------------------------------------------------
+# Bounded response cache
+# ---------------------------------------------------------------------------
+# A bare ResponseCachingMiddleware() uses an in-memory store with no entry cap,
+# and this process has a fixed memory budget (480 MB). Measured on 2026-11-04,
+# tool-call entries average ~12 KB (max ~35 KB); 300 entries per collection keeps
+# the realistic footprint near 50 MB across the gateway and six module caches.
+# MemoryStore counts entries (its getsizeof is 1), not bytes, so the per-item
+# ceiling is what stops a rare huge document from being retained.
+CACHE_MAX_ENTRIES = int(os.getenv("CACHE_MAX_ENTRIES", "300"))
+CACHE_MAX_ITEM_BYTES = 256 * 1024
+
+
+def response_cache(*, max_entries: int | None = None, **settings) -> ResponseCachingMiddleware:
+    """Build a ResponseCachingMiddleware over a bounded store.
+
+    Always use this instead of ResponseCachingMiddleware(...): the default store
+    is unbounded (enforced by tests/test_response_cache_bounds.py).
+    """
+    limit = CACHE_MAX_ENTRIES if max_entries is None else max_entries
+    return ResponseCachingMiddleware(
+        cache_storage=MemoryStore(max_entries_per_collection=limit),
+        max_item_size=CACHE_MAX_ITEM_BYTES,
+        **settings,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Shared headers
@@ -68,6 +99,13 @@ XML_HEADERS = {
 # ---------------------------------------------------------------------------
 # legislation.gov.uk wrapper — curl_cffi with 202-async retry
 # ---------------------------------------------------------------------------
+
+upstream_blocks_total = PromCounter(
+    "uk_legal_upstream_blocks_total",
+    "Requests an upstream answered with a WAF challenge or an empty body.",
+    labelnames=["upstream", "kind"],
+)
+
 
 class LegislationUpstreamError(Exception):
     """Upstream gave us a WAF challenge or non-XML page — not parseable."""
@@ -109,6 +147,10 @@ class LegislationClient:
     """
 
     POLL_DELAYS = (1.0, 2.0, 4.0)  # ~7s total before giving up
+    # An empty 202 is the WAF's silent block, not a render in progress (probed
+    # 2026-11-04). One short retry covers a transient; render-pending 202s carry
+    # a body and keep the full poll above.
+    EMPTY_202_DELAYS = (1.0,)
 
     WAF_MARKERS = (
         "awsWafCookieDomainList",
@@ -119,24 +161,32 @@ class LegislationClient:
     def __init__(self, session: CurlAsyncSession) -> None:
         self._session = session
 
+    @staticmethod
+    def _blocked(kind: str) -> None:
+        upstream_blocks_total.labels("legislation", kind).inc()
+
     async def get(self, url: str, **kwargs):
         """GET with 202-async retry + WAF-challenge detection."""
         resp = await self._session.get(url, **kwargs)
 
         # 202: wait for async render, then re-request
         if resp.status_code == 202 and "html" in (resp.headers.get("content-type") or "").lower():
-            for delay in self.POLL_DELAYS:
+            empty = not resp.content.strip()
+            delays = self.EMPTY_202_DELAYS if empty else self.POLL_DELAYS
+            for delay in delays:
                 await asyncio.sleep(delay)
                 resp = await self._session.get(url, **kwargs)
                 if resp.status_code != 202:
                     break
             else:
-                # Polls exhausted — AWS WAF is silently blocking the XML endpoint
-                # (Companies Act 2006 returns 202 + empty body for all polls).
-                # The HTML Accept variant returns the JS challenge; XML gets nothing.
+                # Retries exhausted — AWS WAF is silently blocking the XML endpoint
+                # (an empty 202 on every attempt). The HTML Accept variant returns
+                # the JS challenge; XML gets nothing.
+                if empty:
+                    self._blocked("empty_202")
                 raise LegislationUpstreamError(
                     f"legislation.gov.uk did not serve XML for {url} after "
-                    f"{sum(self.POLL_DELAYS):.0f}s. AWS WAF is blocking the XML "
+                    f"{sum(delays):.0f}s. AWS WAF is blocking the XML "
                     f"endpoint for this Act (known: Companies Act 2006, ukpga/2006/46). "
                     f"Use legislation.gov.uk directly or legislation_search with fulltext=True.",
                     reason="waf_or_non_xml",
@@ -154,6 +204,7 @@ class LegislationClient:
         # WAF JS challenge — 200 + HTML "please solve this challenge" page
         ct = (resp.headers.get("content-type") or "").lower()
         if "html" in ct and any(m in resp.text for m in self.WAF_MARKERS):
+            self._blocked("waf_challenge")
             raise LegislationUpstreamError(
                 f"legislation.gov.uk returned an AWS WAF JavaScript challenge "
                 f"for {url}. This affects the heaviest Acts (notably Companies "
@@ -164,6 +215,7 @@ class LegislationClient:
 
         # Empty body — WAF blocking without a challenge page (XML Accept header path)
         if not resp.content.strip():
+            self._blocked("empty_body")
             raise LegislationUpstreamError(
                 f"legislation.gov.uk returned an empty response for {url}. "
                 f"The XML endpoint for this Act is blocked. "
@@ -186,12 +238,14 @@ class LegislationClient:
         resp = await self._session.get(url, headers=headers, **kwargs)
         ct = (resp.headers.get("content-type") or "").lower()
         if "html" in ct and any(m in resp.text for m in self.WAF_MARKERS):
+            self._blocked("waf_challenge")
             raise LegislationUpstreamError(
                 f"legislation.gov.uk returned an AWS WAF JavaScript challenge "
                 f"for {url}. XML and HTML fallback are both unavailable. "
                 f"Retry later or use legislation_search(fulltext=True)."
             )
         if not resp.content.strip():
+            self._blocked("empty_body")
             raise LegislationUpstreamError(
                 f"legislation.gov.uk returned an empty HTML response for {url}. "
                 f"Retry later or use legislation_search(fulltext=True)."

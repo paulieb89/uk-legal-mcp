@@ -19,6 +19,7 @@ Transport: Streamable HTTP, port from $PORT (default 8080)
 Region:    lhr (London) — co-located with UK legal data sources
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -31,7 +32,6 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.middleware.caching import (
     CallToolSettings,
     ReadResourceSettings,
-    ResponseCachingMiddleware,
 )
 from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 from fastmcp.server.middleware.logging import StructuredLoggingMiddleware
@@ -51,6 +51,7 @@ from curl_cffi.requests import AsyncSession as CurlAsyncSession
 from .deps import LegislationClient, LegislationUpstreamError, http_lifespan
 from .deps import PROJECT_VERSION as _PROJECT_VERSION
 from .deps import raise_tool_error
+from .deps import response_cache
 from typing import Annotated
 
 from pydantic import Field
@@ -88,7 +89,7 @@ tool_duration_seconds = Histogram(
     "uk_legal_tool_duration_seconds",
     "Tool invocation latency in seconds.",
     labelnames=["tool", "transport", "region"],
-    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0),
 )
 client_connections_total = PromCounter(
     "uk_legal_client_connections_total",
@@ -96,6 +97,44 @@ client_connections_total = PromCounter(
     labelnames=["client_name", "client_version", "transport", "region"],
 )
 _log = logging.getLogger("fastmcp.uk_legal_mcp.clients")
+
+
+class _BoundedLabel:
+    """First-come bound on how many distinct values a metric label can take.
+
+    Client names are chosen by whoever connects (239 distinct names, 303 series in
+    a fortnight), and every distinct value is a permanent series. The first
+    `limit` distinct values keep their own label; later ones fold into "other".
+    The exact name is still in the client_connected log line.
+    """
+
+    def __init__(self, limit: int) -> None:
+        self._limit = limit
+        self._seen: set[str] = set()
+
+    def resolve(self, value: str) -> str:
+        if value in self._seen:
+            return value
+        if len(self._seen) < self._limit:
+            self._seen.add(value)
+            return value
+        return "other"
+
+
+CLIENT_LABEL_MAX = int(os.getenv("CLIENT_LABEL_MAX", "40"))
+_client_labels = _BoundedLabel(CLIENT_LABEL_MAX)
+
+
+async def _tool_label(name: str) -> str:
+    """The tool's own name when registered, else "unknown".
+
+    Called only after a failed call: a successful call proves the name exists, and
+    an arbitrary name from a client must not become a permanent series.
+    """
+    try:
+        return name if await gateway.get_tool(name) is not None else "unknown"
+    except Exception:
+        return "unknown"
 
 class ClientTrackingMiddleware(Middleware):
     """Log clientInfo and increment connection counter on every initialize."""
@@ -111,7 +150,10 @@ class ClientTrackingMiddleware(Middleware):
             cap_keys = [k for k, v in (caps.model_dump().items() if caps else []) if v is not None]
             _log.info("client_connected client=%s version=%s capabilities=%s transport=%s region=%s",
                       client_name, client_version, cap_keys, TRANSPORT, REGION)
-            client_connections_total.labels(client_name, client_version, TRANSPORT, REGION).inc()
+            label = _client_labels.resolve(client_name)
+            client_connections_total.labels(
+                label, client_version if label != "other" else "other", TRANSPORT, REGION
+            ).inc()
         return result
 
 
@@ -120,16 +162,19 @@ class PrometheusMiddleware(Middleware):
 
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         tool_name = context.message.name
+        label = tool_name
         t0 = time.perf_counter()
         try:
             result = await call_next(context)
-            tool_calls_total.labels(tool_name, TRANSPORT, REGION, "ok").inc()
+            tool_calls_total.labels(label, TRANSPORT, REGION, "ok").inc()
             return result
-        except BaseException:
-            tool_calls_total.labels(tool_name, TRANSPORT, REGION, "error").inc()
+        except BaseException as exc:
+            if not isinstance(exc, asyncio.CancelledError):
+                label = await _tool_label(tool_name)
+            tool_calls_total.labels(label, TRANSPORT, REGION, "error").inc()
             raise
         finally:
-            tool_duration_seconds.labels(tool_name, TRANSPORT, REGION).observe(
+            tool_duration_seconds.labels(label, TRANSPORT, REGION).observe(
                 time.perf_counter() - t0
             )
 
@@ -206,7 +251,7 @@ gateway.add_middleware(DetailedTimingMiddleware())
 # windows. 1-hour TTL is the sweet spot — balances freshness with upstream
 # load. In-memory only (single Fly machine); move to Redis if we scale
 # horizontally.
-gateway.add_middleware(ResponseCachingMiddleware(
+gateway.add_middleware(response_cache(
     read_resource_settings=ReadResourceSettings(ttl=3600),
     # Hansard search may return a deliberately degraded response when its
     # optional envelope is unavailable, and internal-manual pages are current
