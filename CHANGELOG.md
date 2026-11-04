@@ -2,6 +2,23 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [0.9.0] — 2026-11-04
+
+Upgrades the server to FastMCP 4 and fixes legislation.gov.uk fetches from the production IP. The tool, prompt, resource and route surface is unchanged: a parity test compares it against a FastMCP 3 baseline (37 tools, 4 prompts, 1 resource, 8 templates).
+
+### Changed
+
+- **FastMCP 3.2.3 → 4.1.3** — FastMCP 4 starts each mounted server's lifespan separately, so every module now inherits the gateway-owned HTTP client context instead of opening a second pool. Two `parliament_*` tool docstrings moved to explicit `description=` arguments. `ErrorHandlingMiddleware` is configured with `transform_errors=False`. `GET /mcp` and `DELETE /mcp` still return the native 405.
+
+### Fixed
+
+- **Legislation tools no longer fail from the production IP** — the legislation client impersonated Chrome, which legislation.gov.uk's fair use policy does not allow for non-browser clients. From the production Fly IP that drew a silent `202` with an empty body, which the client polled for about 7 s before failing, so most uncached `legislation_get_section` calls errored or ran into the 10 s histogram cap. The client now sends an identifying `User-Agent` and no longer impersonates a browser. Probed from the production machine with the same IP and URLs, identified clients succeeded 3 of 3 and Chrome impersonation 0 of 3. A nonexistent section now returns a non-retryable `not_found` instead of a retryable upstream block.
+- **The `User-Agent` carries the real package version** — it was hardcoded at `0.3`. The version is declared once (`PROJECT_VERSION` in `deps.py`) and the gateway reuses it.
+
+### Added
+
+- **Version consistency checks** — `scripts/check_version_sync.py` asserts `pyproject.toml`, `[tool.bumpversion]` and both `server.json` entries agree. It runs in CI, and in the release workflow with `--expect <tag>`, so a release cut from the wrong version cannot publish. `scripts/check-deploy-drift.sh` reports whether production, PyPI and the latest tag agree.
+
 ## [0.8.6] — 2026-10-27
 
 ### Removed
