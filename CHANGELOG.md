@@ -2,6 +2,15 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [0.8.7] — 2026-11-04
+
+Reliability fix for legislation.gov.uk fetches. No tool names or schemas changed.
+
+### Fixed
+
+- **`legislation_get_section` and the other legislation tools no longer fail from the production IP** — the legislation client impersonated Chrome, which legislation.gov.uk's fair use policy does not allow for non-browser clients. From the production Fly IP that drew a silent `202` with an empty body, which the client polled for about 7 s before failing, so most uncached section fetches errored or ran into the 10 s histogram cap. The client now sends an identifying `User-Agent` and no longer impersonates a browser. Probed from the production machine with the same IP and URLs, identified clients succeeded 3 of 3 and Chrome impersonation 0 of 3. A nonexistent section now returns a non-retryable `not_found` instead of a retryable upstream block.
+- **The `User-Agent` carries the real package version** — it was hardcoded at `0.3`. The version is now declared once (`PROJECT_VERSION` in `deps.py`) and the gateway reuses it.
+
 ## [0.8.6] — 2026-10-27
 
 ### Removed
