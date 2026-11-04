@@ -353,7 +353,7 @@ class TestGetVatRateTool:
         assert not result.is_error
         assert result.data.rate == "zero"
         assert result.data.rate_percentage == 0.0
-        assert result.data.effective_from == "2022-04-01"
+        assert result.data.effective_from.isoformat() == "2022-04-01"
 
     @pytest.mark.asyncio
     async def test_fuel_via_mcp_tool_has_no_rate(self, client: Client):
@@ -398,7 +398,7 @@ class TestGetVatRateTool:
         effective_from as nullable, since a real response can null all three."""
         tools = await client.list_tools()
         tool = next(t for t in tools if t.name == "hmrc_get_vat_rate")
-        props = tool.outputSchema["properties"]
+        props = tool.output_schema["properties"]
 
         def allows_null(schema: dict) -> bool:
             if schema.get("type") == "null":

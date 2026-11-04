@@ -7,10 +7,13 @@ This is the primary differentiator of uk-legal-mcp.
 
 from fastmcp import FastMCP
 
+from ...deps import inherited_http_lifespan
 from .tools import register_tools
 
 citations_mcp = FastMCP(
     name="citations",
+    lifespan=inherited_http_lifespan,
+    mask_error_details=True,
     instructions=(
         "OSCOLA legal citation parser and resolver — pure regex, no external API "
         "dependency. Supports: neutral citations ([2024] UKSC 12), law reports "

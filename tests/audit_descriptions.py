@@ -68,7 +68,7 @@ def _format_tool_block(tool) -> str:
     name = tool.name
     description = (tool.description or "").strip()
     wc = _word_count(description)
-    param_count, param_names = _format_params(tool.inputSchema)
+    param_count, param_names = _format_params(tool.input_schema)
     params_str = ", ".join(param_names) if param_names else "(none)"
     return (
         f"### `{name}` ({wc} words)\n\n"

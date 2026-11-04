@@ -40,7 +40,7 @@ from collections.abc import Sequence
 from fastmcp.server.transforms import PromptsAsTools, ResourcesAsTools, Transform
 from fastmcp.server.transforms.resources_as_tools import _format_result
 from fastmcp.server.dependencies import get_context
-from fastmcp.tools.tool import Tool
+from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
 from prometheus_client import CONTENT_TYPE_LATEST, Counter as PromCounter, Histogram, generate_latest
 from starlette.requests import Request
@@ -96,7 +96,6 @@ client_connections_total = PromCounter(
     labelnames=["client_name", "client_version", "transport", "region"],
 )
 _log = logging.getLogger("fastmcp.uk_legal_mcp.clients")
-
 
 class ClientTrackingMiddleware(Middleware):
     """Log clientInfo and increment connection counter on every initialize."""
@@ -177,7 +176,9 @@ gateway = FastMCP(
 # ---------------------------------------------------------------------------
 
 # Error handling (outermost — catches unhandled exceptions, tracks error counts)
-gateway.add_middleware(ErrorHandlingMiddleware(include_traceback=False))
+gateway.add_middleware(
+    ErrorHandlingMiddleware(include_traceback=False, transform_errors=False)
+)
 
 # Structured JSON logging — every tool call logged with duration, payload size, token estimate
 gateway.add_middleware(StructuredLoggingMiddleware(

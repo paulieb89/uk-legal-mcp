@@ -29,7 +29,7 @@ async def test_legislation_resource_templates_registered():
     Case-law resource templates are covered by tests/test_phase4_drilldown.py.
     """
     async with Client(gateway) as client:
-        templates = {t.uriTemplate for t in await client.list_resource_templates()}
+        templates = {t.uri_template for t in await client.list_resource_templates()}
 
     assert "legislation://{type}/{year}/{number}/section/{section}{?date}" in templates
     assert "legislation://{type}/{year}/{number}/toc{?date}" in templates
@@ -165,7 +165,7 @@ async def test_whole_act_resources_removed():
     the capability available via /toc + /section/{n}. Point-in-time is now
     a ?date query param on the bounded resources."""
     async with Client(gateway) as client:
-        templates = {t.uriTemplate for t in await client.list_resource_templates()}
+        templates = {t.uri_template for t in await client.list_resource_templates()}
     # Deleted templates
     assert "legislation://{type}/{year}/{number}" not in templates
     assert "legislation://{type}/{year}/{number}/{date}" not in templates

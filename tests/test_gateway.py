@@ -11,7 +11,7 @@ import httpx
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
-from src.gateway import gateway, _PROJECT_VERSION
+from src.gateway import _PROJECT_VERSION, create_http_app, gateway
 
 
 EXPECTED_MODULES = [
@@ -40,15 +40,13 @@ async def client():
 class TestServerIdentity:
     @pytest.mark.asyncio
     async def test_server_name(self, client: Client):
-        result = client.initialize_result
-        assert result is not None
-        assert result.serverInfo.name == "uk-legal-mcp"
+        assert client.server_info is not None
+        assert client.server_info.name == "uk-legal-mcp"
 
     @pytest.mark.asyncio
     async def test_server_version(self, client: Client):
-        result = client.initialize_result
-        assert result is not None
-        assert result.serverInfo.version == _PROJECT_VERSION
+        assert client.server_info is not None
+        assert client.server_info.version == _PROJECT_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +78,7 @@ class TestToolListing:
     async def test_tool_schemas_valid(self, client: Client):
         tools = await client.list_tools()
         for tool in tools:
-            schema = tool.inputSchema
+            schema = tool.input_schema
             assert schema.get("type") == "object", (
                 f"Tool '{tool.name}' schema type is not 'object'"
             )
@@ -102,7 +100,7 @@ class TestResources:
     @pytest.mark.asyncio
     async def test_resource_templates_listed(self, client: Client):
         templates = await client.list_resource_templates()
-        uris = [t.uriTemplate for t in templates]
+        uris = [t.uri_template for t in templates]
         assert any("judgment" in u for u in uris), (
             f"No judgment resource template found in {uris}"
         )
@@ -234,16 +232,10 @@ class TestCitationTools:
 
 class TestHmrcTools:
     @pytest.mark.asyncio
-    async def test_check_mtd_status_missing_credentials_raises_tool_error(
+    async def test_check_mtd_status_missing_credentials_preserves_error_envelope(
         self, client: Client, monkeypatch
     ):
-        """ToolError (not RuntimeError) must be raised when HMRC credentials are absent.
-
-        RuntimeError causes FastMCP to double-wrap the message as
-        "Internal error: Error calling tool '<name>': <original>".
-        ToolError surfaces the original message directly (no inner
-        "Error calling tool" re-wrap). Assert the clean form.
-        """
+        """The FastMCP 4 client must preserve the actionable error envelope."""
         monkeypatch.delenv("HMRC_CLIENT_ID", raising=False)
         monkeypatch.delenv("HMRC_CLIENT_SECRET", raising=False)
         with pytest.raises(ToolError) as exc_info:
@@ -251,8 +243,8 @@ class TestHmrcTools:
         msg = str(exc_info.value)
         assert "HMRC OAuth credentials not configured" in msg
         assert "Error calling tool" not in msg, (
-            "RuntimeError was raised instead of ToolError — message contains double-wrap "
-            f"'Error calling tool ...:'. Got: {msg!r}"
+            "The ToolError was wrapped again before reaching the client. "
+            f"Got: {msg!r}"
         )
 
 
@@ -346,11 +338,7 @@ class TestLegislationTools:
 class TestCustomRoutes:
     @pytest.mark.asyncio
     async def test_health_route(self):
-        app = gateway.http_app(
-            path="/mcp",
-            json_response=True,
-            stateless_http=True,
-        )
+        app = create_http_app()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://testserver",
@@ -363,11 +351,7 @@ class TestCustomRoutes:
 
     @pytest.mark.asyncio
     async def test_metrics_route(self):
-        app = gateway.http_app(
-            path="/mcp",
-            json_response=True,
-            stateless_http=True,
-        )
+        app = create_http_app()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://testserver",
@@ -378,11 +362,7 @@ class TestCustomRoutes:
 
     @pytest.mark.asyncio
     async def test_server_card_route(self):
-        app = gateway.http_app(
-            path="/mcp",
-            json_response=True,
-            stateless_http=True,
-        )
+        app = create_http_app()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://testserver",

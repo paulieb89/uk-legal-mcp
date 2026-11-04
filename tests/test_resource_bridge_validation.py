@@ -14,7 +14,7 @@ async def test_bridge_description_and_schema_explain_uri_only_contract():
     tool = tools["read_resource"]
     assert "not an ordinary web URL" in tool.description
     assert "hmrc_get_manual_page" in tool.description
-    assert tool.inputSchema["properties"]["uri"]["type"] == "string"
+    assert tool.input_schema["properties"]["uri"]["type"] == "string"
 
 
 @pytest.mark.asyncio

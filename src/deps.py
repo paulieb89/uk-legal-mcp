@@ -1,8 +1,10 @@
 """
 Shared dependencies for uk-legal-mcp.
 
-FastMCP v3 uses a lifespan pattern for shared resources. The HTTP clients
-are created once per server lifespan and accessed via
+The gateway owns the shared HTTP-client lifespan. FastMCP 4 runs each mounted
+server's lifespan separately, so mounted modules receive the gateway's context
+through a lightweight inheriting lifespan rather than opening duplicate pools.
+Tools access that context via
 ctx.lifespan_context — never exposed in LLM tool schemas.
 
 Three clients available:
@@ -35,6 +37,9 @@ from curl_cffi.requests.exceptions import HTTPError as CurlHTTPError
 from curl_cffi.requests.exceptions import Timeout as CurlTimeout
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+
+
+_gateway_lifespan_context: dict[str, object] | None = None
 
 # ---------------------------------------------------------------------------
 # Shared headers
@@ -201,6 +206,7 @@ class LegislationClient:
 @asynccontextmanager
 async def http_lifespan(server: FastMCP):
     """Provide shared async HTTP clients for the lifespan of the server."""
+    global _gateway_lifespan_context
     async with httpx.AsyncClient(
         timeout=30.0,
         headers=SHARED_HEADERS,
@@ -225,11 +231,24 @@ async def http_lifespan(server: FastMCP):
             "Accept": "application/atom+xml, application/xml, text/xml",
         },
     ) as legislation_session:
-        yield {
+        context = {
             "http": http,
             "xml_http": xml_http,
             "legislation_http": LegislationClient(legislation_session),
         }
+        _gateway_lifespan_context = context
+        try:
+            yield context
+        finally:
+            _gateway_lifespan_context = None
+
+
+@asynccontextmanager
+async def inherited_http_lifespan(server: FastMCP):
+    """Give a mounted module the gateway-owned clients without duplicating them."""
+    if _gateway_lifespan_context is None:
+        raise RuntimeError("Mounted Legal MCP module started before the gateway lifespan")
+    yield _gateway_lifespan_context
 
 
 # ---------------------------------------------------------------------------

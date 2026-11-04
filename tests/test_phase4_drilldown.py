@@ -113,7 +113,7 @@ def test_grep_falls_back_to_literal_on_invalid_regex():
 @pytest.mark.asyncio
 async def test_three_resource_templates_registered():
     async with Client(gateway) as c:
-        templates = {t.uriTemplate for t in await c.list_resource_templates()}
+        templates = {t.uri_template for t in await c.list_resource_templates()}
     assert "judgment://{slug*}/header" in templates
     assert "judgment://{slug*}/index" in templates
     assert "judgment://{slug*}/para/{eId}" in templates
