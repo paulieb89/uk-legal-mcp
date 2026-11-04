@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.middleware.caching import (
     CallToolSettings,
@@ -83,7 +84,7 @@ REGION = os.getenv("FLY_REGION", "local")
 tool_calls_total = PromCounter(
     "uk_legal_tool_calls_total",
     "Count of MCP tool invocations.",
-    labelnames=["tool", "transport", "region", "status"],
+    labelnames=["tool", "transport", "region", "status", "error_category"],
 )
 tool_duration_seconds = Histogram(
     "uk_legal_tool_duration_seconds",
@@ -179,6 +180,30 @@ class ClientTrackingMiddleware(Middleware):
         return result
 
 
+_ERROR_CATEGORIES = frozenset(
+    {"transient", "validation", "not_found", "auth_required", "configuration", "unknown"}
+)
+
+
+def _error_category(exc: BaseException) -> str:
+    """Bounded error_category for a failed tool call.
+
+    Tool errors raised through raise_tool_error()/raise_http_tool_error() carry a
+    JSON payload with `error_category`; anything else (an unregistered tool, a
+    crash, a cancellation) is "unknown". Values outside the known set fold to
+    "unknown" so the label can never grow.
+    """
+    if isinstance(exc, ToolError):
+        try:
+            payload = json.loads(str(exc))
+        except ValueError:
+            return "unknown"
+        category = payload.get("error_category") if isinstance(payload, dict) else None
+        if category in _ERROR_CATEGORIES:
+            return category
+    return "unknown"
+
+
 class PrometheusMiddleware(Middleware):
     """Emit fleet-standard Prometheus metrics on every tool call."""
 
@@ -188,12 +213,12 @@ class PrometheusMiddleware(Middleware):
         t0 = time.perf_counter()
         try:
             result = await call_next(context)
-            tool_calls_total.labels(label, TRANSPORT, REGION, "ok").inc()
+            tool_calls_total.labels(label, TRANSPORT, REGION, "ok", "").inc()
             return result
         except BaseException as exc:
             if not isinstance(exc, asyncio.CancelledError):
                 label = await _tool_label(tool_name)
-            tool_calls_total.labels(label, TRANSPORT, REGION, "error").inc()
+            tool_calls_total.labels(label, TRANSPORT, REGION, "error", _error_category(exc)).inc()
             raise
         finally:
             tool_duration_seconds.labels(label, TRANSPORT, REGION).observe(

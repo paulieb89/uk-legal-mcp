@@ -2,6 +2,12 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [Unreleased]
+
+### Added
+
+- **`error_category` on `uk_legal_tool_calls_total`** — failed tool calls now carry the category from the tool's error payload (`transient`, `validation`, `not_found`, `auth_required`, `configuration`, `unknown`); successful calls carry an empty value. It is a closed set, so it adds at most a handful of series per tool. This makes it possible to tell, from metrics alone, whether failures such as `legislation_get_section` are upstream timeouts or caller errors. Queries that filter by `tool` and `status` keep working; sum over the new label if you used exact matches on the full label set.
+
 ## [0.9.1] — 2026-11-04
 
 Hardening follow-ups to 0.9.0. No tool names, schemas or legal-research behaviour changed.
