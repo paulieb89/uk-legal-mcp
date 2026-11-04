@@ -17,6 +17,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv lock --check
       - run: uv sync --frozen --group dev
+      - run: uv run python scripts/check_version_sync.py
       # No live-marked test runs here, so nothing should reach the network. The
       # dead proxy turns an accidental request into a failure instead of a
       # silent pass; it is a regression guard, not proof that egress is closed.

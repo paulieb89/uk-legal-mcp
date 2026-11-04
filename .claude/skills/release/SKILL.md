@@ -31,7 +31,8 @@ never run `fly deploy` by hand.
 8. Confirm with the user, then `gh release create vX.Y.Z`. From here
    `release.yml` owns everything — watch it with `gh run watch --exit-status`
    rather than re-running any of its steps by hand.
-9. Verify what actually shipped, not just that CI is green: the PyPI JSON
+9. Verify what actually shipped, not just that CI is green: run
+   `scripts/check-deploy-drift.sh` (prod, PyPI and the latest tag must agree), the PyPI JSON
    API for the new version, `fly status`/`/health` for the deployed machine,
    and one or two live semantic probes of whatever the release changed (call
    the actual tool against production, not just a health check) — a shipped
