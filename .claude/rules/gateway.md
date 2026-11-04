@@ -15,7 +15,7 @@ NEVER use the removed v2 `ctx.request_context.lifespan_state`.
 |-------------------|--------------------|--------------------------------------------|
 | `http`            | httpx.AsyncClient  | All JSON APIs                              |
 | `xml_http`        | httpx.AsyncClient  | XML/Atom APIs (TNA)                        |
-| `legislation_http`| LegislationClient  | legislation.gov.uk (curl_cffi + Chrome JA3)|
+| `legislation_http`| LegislationClient  | legislation.gov.uk (curl_cffi, identified UA)|
 
 ## Module registration pattern
 Each module is a standalone FastMCP instance, mounted with `namespace=` prefix.

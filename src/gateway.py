@@ -23,13 +23,8 @@ import json
 import logging
 import os
 import time
-from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from urllib.parse import urlparse
 
-try:
-    _PROJECT_VERSION = _pkg_version("uk-legal-mcp")
-except PackageNotFoundError:
-    _PROJECT_VERSION = "0.0.0+dev"
 
 from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware, MiddlewareContext
@@ -54,6 +49,7 @@ from starlette.responses import JSONResponse, Response
 from curl_cffi.requests import AsyncSession as CurlAsyncSession
 
 from .deps import LegislationClient, LegislationUpstreamError, http_lifespan
+from .deps import PROJECT_VERSION as _PROJECT_VERSION
 from .deps import raise_tool_error
 from typing import Annotated
 
