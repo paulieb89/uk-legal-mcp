@@ -1,9 +1,9 @@
 """committees sub-module — UK Parliament select committees and evidence."""
 
 from fastmcp import FastMCP
-from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
+from fastmcp.server.middleware.caching import CallToolSettings
 
-from ...deps import inherited_http_lifespan
+from ...deps import inherited_http_lifespan, response_cache
 from .tools import register_tools
 
 committees_mcp = FastMCP(
@@ -35,7 +35,7 @@ committees_mcp = FastMCP(
     ),
 )
 
-committees_mcp.add_middleware(ResponseCachingMiddleware(call_tool_settings=CallToolSettings(ttl=3600)))
+committees_mcp.add_middleware(response_cache(call_tool_settings=CallToolSettings(ttl=3600)))
 
 register_tools(committees_mcp)
 

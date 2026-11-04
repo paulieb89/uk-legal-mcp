@@ -1,9 +1,9 @@
 """hmrc sub-module — VAT rates, MTD status, and HMRC guidance search."""
 
 from fastmcp import FastMCP
-from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
+from fastmcp.server.middleware.caching import CallToolSettings
 
-from ...deps import inherited_http_lifespan
+from ...deps import inherited_http_lifespan, response_cache
 from .tools import register_tools
 
 hmrc_mcp = FastMCP(
@@ -40,7 +40,7 @@ hmrc_mcp = FastMCP(
 
 # VAT reference data is intentionally long-lived, but a manual page is current
 # GOV.UK content and must be fetched afresh with its own retrieved_at metadata.
-hmrc_mcp.add_middleware(ResponseCachingMiddleware(
+hmrc_mcp.add_middleware(response_cache(
     call_tool_settings=CallToolSettings(
         ttl=7776000,
         excluded_tools=["get_manual_page"],

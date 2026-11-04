@@ -1,9 +1,9 @@
 """bills sub-module — UK Parliament Bills API."""
 
 from fastmcp import FastMCP
-from fastmcp.server.middleware.caching import ResponseCachingMiddleware, CallToolSettings
+from fastmcp.server.middleware.caching import CallToolSettings
 
-from ...deps import inherited_http_lifespan
+from ...deps import inherited_http_lifespan, response_cache
 from .tools import register_tools
 
 bills_mcp = FastMCP(
@@ -29,7 +29,7 @@ bills_mcp = FastMCP(
     ),
 )
 
-bills_mcp.add_middleware(ResponseCachingMiddleware(call_tool_settings=CallToolSettings(ttl=3600)))
+bills_mcp.add_middleware(response_cache(call_tool_settings=CallToolSettings(ttl=3600)))
 
 register_tools(bills_mcp)
 

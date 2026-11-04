@@ -67,12 +67,14 @@ fly secrets set HMRC_CLIENT_ID=xxx HMRC_CLIENT_SECRET=xxx --app uk-legal-mcp
 
 - **Errors raise through one helper.** `deps.py:raise_http_tool_error(exc, attempted=...)` converts any upstream exception into a structured `ToolError` carrying `error_category` / `is_retryable` / `attempted` / `description`. It handles httpx AND curl_cffi (the legislation client is curl_cffi — an httpx-only match silently drops every legislation error into `unknown`). `deps.py:format_http_error()` is LEGACY, returns a prose string, and must not be used in new code. Do not put API-specific error messages in generic handlers — the 403 message used to blame TNA for all 403s including Hansard.
 
+- **Caches and metric labels are bounded.** Build response caches with `deps.response_cache(...)`, never `ResponseCachingMiddleware(...)` directly: the default store is unbounded and this process has a fixed memory budget (`CACHE_MAX_ENTRIES`, default 300 per collection; `tests/test_response_cache_bounds.py` enforces it). Metric labels that take client-controlled values are capped: `tool` is the registered name or `unknown`, `client_name` keeps the first `CLIENT_LABEL_MAX` (40) distinct values then `other`.
+
 ## Upstream APIs
 
 | Module | API | Notes |
 |--------|-----|-------|
 | case_law | `caselaw.nationalarchives.gov.uk` | Atom/XML. 1,000 req/5 min. |
-| legislation | `legislation.gov.uk` + `lex.lab.i.ai.gov.uk` | CLML XML + JSON. |
+| legislation | `legislation.gov.uk` + `lex.lab.i.ai.gov.uk` | CLML XML + JSON. Fair use policy: non-browser clients must send an identifying `User-Agent` (`deps.USER_AGENT`); never impersonate a browser. Limit 1,500 req / 5 min. |
 | parliament | `hansard-api.parliament.uk` | **NOT** `hansard.parliament.uk` (Cloudflare blocked). |
 | parliament | `members-api.parliament.uk` | JSON. Public, no auth. |
 | parliament | `petition.parliament.uk` | JSON. Public, no auth. |
@@ -144,7 +146,7 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 - Production deploys only through `.github/workflows/release.yml`, which runs when a GitHub release is published: the non-live suite must pass, then PyPI publish, then `flyctl deploy`. Don't run `fly deploy` by hand (project settings deny it); it skips PyPI, so the published and live versions drift. Dockerfile copies `src/` only (tests excluded via `.dockerignore`).
 - Version consistency is asserted, not trusted: `scripts/check_version_sync.py` checks `pyproject.toml`, `[tool.bumpversion]` and both `server.json` entries agree, in `ci.yml` and (with `--expect <tag>`) in `release.yml`, so a release cut from the wrong version cannot publish. `scripts/check-deploy-drift.sh` reports whether production, PyPI and the latest tag agree.
 - Use the `/release` skill (`.claude/skills/release/SKILL.md`) to cut a release — it's the procedure around this machinery (version bump, CHANGELOG, release-prep PR, tag, `gh release create`, then verifying what actually shipped), not a replacement for it.
-- Two machines in `lhr`, auto-stop enabled, min 1 running.
+- One machine in `lhr` (deployed with `--ha=false`); `fly.toml` sets `auto_stop_machines = "off"` and `min_machines_running = 1`.
 - The "not listening on expected address" warning during rolling deploy is transient — the machine reaches good state immediately after.
 - Secrets are set via `fly secrets set` and persist across deploys.
 
