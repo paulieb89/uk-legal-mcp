@@ -8,10 +8,10 @@ ctx.lifespan_context — never exposed in LLM tool schemas.
 Three clients available:
     http              JSON APIs (Hansard, Members, etc) — httpx
     xml_http          XML/Atom APIs that don't fingerprint TLS — httpx
-    legislation_http  legislation.gov.uk specifically — curl_cffi with Chrome
-                      impersonation. CloudFront WAF rule blocks raw httpx
-                      with status 437; Chrome JA3 fingerprint passes through.
-                      See issue #4.
+    legislation_http  legislation.gov.uk specifically — curl_cffi with an
+                      identifying User-Agent (fair use policy). Chrome
+                      impersonation was dropped: it drew a silent WAF block
+                      from the production IP. See issue #4.
 
 Usage in tools:
     @mcp.tool()
@@ -25,6 +25,7 @@ Usage in tools:
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import Literal
 
 import httpx
@@ -39,13 +40,22 @@ from fastmcp.exceptions import ToolError
 # Shared headers
 # ---------------------------------------------------------------------------
 
+try:
+    PROJECT_VERSION = _pkg_version("uk-legal-mcp")
+except PackageNotFoundError:
+    PROJECT_VERSION = "0.0.0+dev"
+
+# Declared once, built from the package version. legislation.gov.uk's fair use
+# policy requires non-browser clients to send an identifying User-Agent.
+USER_AGENT = f"uk-legal-mcp/{PROJECT_VERSION} (contact@bouch.dev)"
+
 SHARED_HEADERS = {
-    "User-Agent": "uk-legal-mcp/0.3 (contact@bouch.dev)",
+    "User-Agent": USER_AGENT,
     "Accept": "application/json",
 }
 
 XML_HEADERS = {
-    "User-Agent": "uk-legal-mcp/0.3 (contact@bouch.dev)",
+    "User-Agent": USER_AGENT,
     "Accept": "application/atom+xml, application/xml, text/xml",
 }
 
@@ -73,8 +83,10 @@ class LegislationClient:
 
     Three reasons it exists:
 
-    1. CloudFront blocks raw httpx with status 437 (JA3 fingerprint check).
-       Chrome impersonation via curl_cffi gets past this layer.
+    1. It identifies itself with USER_AGENT, as the site's fair use policy
+       requires of non-browser clients. Browser impersonation was removed: from
+       the production IP it drew a silent 202/empty WAF block that identified
+       clients did not (probed 2026-11-04).
 
     2. AWS WAF returns a JS challenge page (`awsWafCookieDomainList` /
        `challenge-container`) for some heavy Acts (notably Companies Act
@@ -198,14 +210,20 @@ async def http_lifespan(server: FastMCP):
         headers=XML_HEADERS,
         follow_redirects=True,
     ) as xml_http, CurlAsyncSession(
-        impersonate="chrome",
+        # No browser impersonation: the fair use policy requires a non-browser
+        # client to identify itself, and impersonating Chrome gets a silent
+        # 202/empty WAF block from production (probed 2026-11-04: identified
+        # clients 3/3 OK, Chrome impersonation 0/3, same Fly IP).
         timeout=30.0,
         allow_redirects=True,
-        # Without an explicit Accept, legislation.gov.uk's /search endpoint
-        # returns the HTML search page, not the Atom feed our parser needs.
-        # Real-world Codex test caught this — legislation_search returned 0 hits
-        # for "Housing Act 1988". See PR comment on issue #4.
-        headers={"Accept": "application/atom+xml, application/xml, text/xml"},
+        headers={
+            "User-Agent": USER_AGENT,
+            # Without an explicit Accept, legislation.gov.uk's /search endpoint
+            # returns the HTML search page, not the Atom feed our parser needs.
+            # Real-world Codex test caught this — legislation_search returned 0 hits
+            # for "Housing Act 1988". See PR comment on issue #4.
+            "Accept": "application/atom+xml, application/xml, text/xml",
+        },
     ) as legislation_session:
         yield {
             "http": http,
