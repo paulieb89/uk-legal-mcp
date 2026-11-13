@@ -2,15 +2,15 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
-## [Unreleased]
+## [0.9.2] — 2026-11-13
 
 ### Added
 
-- **`error_category` on `uk_legal_tool_calls_total`** — failed tool calls now carry the category from the tool's error payload (`transient`, `validation`, `not_found`, `auth_required`, `configuration`, `unknown`); successful calls carry an empty value. It is a closed set, so it adds at most a handful of series per tool. This makes it possible to tell, from metrics alone, whether failures such as `legislation_get_section` are upstream timeouts or caller errors. Queries that filter by `tool` and `status` keep working; sum over the new label if you used exact matches on the full label set.
+- **`error_category` label on `uk_legal_tool_calls_total`** — failed calls now carry the category from the error (`transient`, `validation`, `not_found`, `auth_required`, `configuration`, `unknown`); successful calls leave it empty. Queries that match the full label set need to sum over it.
 
 ### Fixed
 
-- **`citations_format_oscola` put the division before the judgment number** — `[2026] EWHC 2320 (Ch)` was rendered `[2026] EWHC (Ch) 2320`. The parser also title-cased divisions (`(Kb)`, `(Grc)`), so they missed the display table. The division now follows the number, written as The National Archives writes it (`(Ch)`, `(Comm)`, `(Admin)`, `(KB)`, `(TCC)`, `(GRC)`). Citations with no division (UKSC, EWCA Civ, EAT) are unchanged. Checked against TNA's published example citations; fix contributed by ATM-guess in #79. Known gap, tracked in #99: the QB, Admlty and BP divisions are not in the court tables.
+- **`citations_format_oscola` put the division before the number** — `[2026] EWHC 2320 (Ch)` came out as `[2026] EWHC (Ch) 2320`, and divisions were title-cased (`(Kb)`, `(Grc)`). Output now follows The National Archives' form, e.g. `(Ch)`, `(KB)`, `(GRC)`. Thanks to ATM-guess (#79). The QB, Admlty and BP divisions are still missing from the court tables (#99).
 
 ## [0.9.1] — 2026-11-04
 
