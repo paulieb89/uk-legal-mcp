@@ -2134,7 +2134,7 @@ wheels = [
 
 [[package]]
 name = "uk-legal-mcp"
-version = "0.9.1"
+version = "0.9.2"
 source = { editable = "." }
 dependencies = [
     { name = "curl-cffi" },
