@@ -8,6 +8,10 @@ All notable changes to `uk-legal-mcp` are documented here. Format loosely follow
 
 - **`error_category` on `uk_legal_tool_calls_total`** — failed tool calls now carry the category from the tool's error payload (`transient`, `validation`, `not_found`, `auth_required`, `configuration`, `unknown`); successful calls carry an empty value. It is a closed set, so it adds at most a handful of series per tool. This makes it possible to tell, from metrics alone, whether failures such as `legislation_get_section` are upstream timeouts or caller errors. Queries that filter by `tool` and `status` keep working; sum over the new label if you used exact matches on the full label set.
 
+### Fixed
+
+- **`citations_format_oscola` put the division before the judgment number** — `[2026] EWHC 2320 (Ch)` was rendered `[2026] EWHC (Ch) 2320`. The parser also title-cased divisions (`(Kb)`, `(Grc)`), so they missed the display table. The division now follows the number, written as The National Archives writes it (`(Ch)`, `(Comm)`, `(Admin)`, `(KB)`, `(TCC)`, `(GRC)`). Citations with no division (UKSC, EWCA Civ, EAT) are unchanged. Checked against TNA's published example citations; fix contributed by ATM-guess in #79. Known gap, tracked in #99: the QB, Admlty and BP divisions are not in the court tables.
+
 ## [0.9.1] — 2026-11-04
 
 Hardening follow-ups to 0.9.0. No tool names, schemas or legal-research behaviour changed.
