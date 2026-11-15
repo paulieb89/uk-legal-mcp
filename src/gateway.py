@@ -19,17 +19,13 @@ Transport: Streamable HTTP, port from $PORT (default 8080)
 Region:    lhr (London) — co-located with UK legal data sources
 """
 
-import asyncio
 import json
 import logging
 import os
-import time
 from urllib.parse import urlparse
 
 
 from fastmcp import FastMCP
-from fastmcp.exceptions import ToolError
-from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.middleware.caching import (
     CallToolSettings,
     ReadResourceSettings,
@@ -43,7 +39,7 @@ from fastmcp.server.transforms.resources_as_tools import _format_result
 from fastmcp.server.dependencies import get_context
 from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
-from prometheus_client import CONTENT_TYPE_LATEST, Counter as PromCounter, Histogram, generate_latest
+from mcpfleet_obs import install
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -73,157 +69,6 @@ from .modules.legislation.resources import (
 from .modules.parliament import parliament_mcp
 from .modules.parliament.resources import register_parliament_resources
 from .modules.votes import votes_mcp
-
-# ---------------------------------------------------------------------------
-# Prometheus metrics
-# ---------------------------------------------------------------------------
-
-TRANSPORT = os.getenv("FASTMCP_TRANSPORT", "http")
-REGION = os.getenv("FLY_REGION", "local")
-
-tool_calls_total = PromCounter(
-    "uk_legal_tool_calls_total",
-    "Count of MCP tool invocations.",
-    labelnames=["tool", "transport", "region", "status", "error_category"],
-)
-tool_duration_seconds = Histogram(
-    "uk_legal_tool_duration_seconds",
-    "Tool invocation latency in seconds.",
-    labelnames=["tool", "transport", "region"],
-    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0),
-)
-client_connections_total = PromCounter(
-    "uk_legal_client_connections_total",
-    "Count of MCP client initialize handshakes.",
-    labelnames=["client_name", "client_version", "transport", "region"],
-)
-_log = logging.getLogger("fastmcp.uk_legal_mcp.clients")
-
-
-class _BoundedLabel:
-    """First-come bound on how many distinct values a metric label can take.
-
-    Client names are chosen by whoever connects (239 distinct names, 303 series in
-    a fortnight), and every distinct value is a permanent series. The first
-    `limit` distinct values keep their own label; later ones fold into "other".
-    The exact name is still in the client_connected log line.
-    """
-
-    def __init__(self, limit: int) -> None:
-        self._limit = limit
-        self._seen: set[str] = set()
-
-    def resolve(self, value: str) -> str:
-        if value in self._seen:
-            return value
-        if len(self._seen) < self._limit:
-            self._seen.add(value)
-            return value
-        return "other"
-
-
-CLIENT_LABEL_MAX = int(os.getenv("CLIENT_LABEL_MAX", "40"))
-_client_labels = _BoundedLabel(CLIENT_LABEL_MAX)
-
-
-async def _tool_label(name: str) -> str:
-    """The tool's own name when registered, else "unknown".
-
-    Called only after a failed call: a successful call proves the name exists, and
-    an arbitrary name from a client must not become a permanent series.
-    """
-    try:
-        return name if await gateway.get_tool(name) is not None else "unknown"
-    except Exception:
-        return "unknown"
-
-# Handshake-era clients open with "initialize". The sessionless protocol opens with
-# "server/discover" instead and carries clientInfo in params._meta, so counting only
-# "initialize" leaves FastMCP 4 clients out of the metric entirely.
-_HANDSHAKE_METHODS = ("initialize", "server/discover")
-_META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"
-
-
-def _field(obj, key: str):
-    return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
-
-
-def _client_identity(context: MiddlewareContext) -> tuple[str, str]:
-    """(name, version) of the connecting client, "unknown" when it sent none.
-
-    The MCP SDK renamed InitializeRequestParams.clientInfo to client_info in 2.x;
-    reading only the old name silently reported every client as "unknown".
-    """
-    params = context.message.params
-    if context.method == "initialize":
-        info = _field(params, "client_info") or _field(params, "clientInfo")
-    else:
-        info = _field(_field(params, "meta") or {}, _META_CLIENT_INFO)
-    return (_field(info, "name") or "unknown", _field(info, "version") or "unknown")
-
-
-class ClientTrackingMiddleware(Middleware):
-    """Log clientInfo and increment the connection counter on every handshake."""
-
-    async def on_request(self, context: MiddlewareContext, call_next):
-        result = await call_next(context)
-        if context.method in _HANDSHAKE_METHODS:
-            client_name, client_version = _client_identity(context)
-            caps = _field(context.message.params, "capabilities")
-            cap_keys = [k for k, v in (caps.model_dump().items() if hasattr(caps, "model_dump") else []) if v is not None]
-            _log.info("client_connected client=%s version=%s capabilities=%s transport=%s region=%s",
-                      client_name, client_version, cap_keys, TRANSPORT, REGION)
-            label = _client_labels.resolve(client_name)
-            client_connections_total.labels(
-                label, client_version if label != "other" else "other", TRANSPORT, REGION
-            ).inc()
-        return result
-
-
-_ERROR_CATEGORIES = frozenset(
-    {"transient", "validation", "not_found", "auth_required", "configuration", "unknown"}
-)
-
-
-def _error_category(exc: BaseException) -> str:
-    """Bounded error_category for a failed tool call.
-
-    Tool errors raised through raise_tool_error()/raise_http_tool_error() carry a
-    JSON payload with `error_category`; anything else (an unregistered tool, a
-    crash, a cancellation) is "unknown". Values outside the known set fold to
-    "unknown" so the label can never grow.
-    """
-    if isinstance(exc, ToolError):
-        try:
-            payload = json.loads(str(exc))
-        except ValueError:
-            return "unknown"
-        category = payload.get("error_category") if isinstance(payload, dict) else None
-        if category in _ERROR_CATEGORIES:
-            return category
-    return "unknown"
-
-
-class PrometheusMiddleware(Middleware):
-    """Emit fleet-standard Prometheus metrics on every tool call."""
-
-    async def on_call_tool(self, context: MiddlewareContext, call_next):
-        tool_name = context.message.name
-        label = tool_name
-        t0 = time.perf_counter()
-        try:
-            result = await call_next(context)
-            tool_calls_total.labels(label, TRANSPORT, REGION, "ok", "").inc()
-            return result
-        except BaseException as exc:
-            if not isinstance(exc, asyncio.CancelledError):
-                label = await _tool_label(tool_name)
-            tool_calls_total.labels(label, TRANSPORT, REGION, "error", _error_category(exc)).inc()
-            raise
-        finally:
-            tool_duration_seconds.labels(label, TRANSPORT, REGION).observe(
-                time.perf_counter() - t0
-            )
 
 # ---------------------------------------------------------------------------
 # Gateway server
@@ -279,11 +124,10 @@ gateway.add_middleware(StructuredLoggingMiddleware(
     estimate_payload_tokens=True,
 ))
 
-# Client tracking — logs clientInfo + increments client_connections_total on initialize
-gateway.add_middleware(ClientTrackingMiddleware())
-
-# Prometheus metrics — fleet-standard tool_calls_total + tool_duration_seconds
-gateway.add_middleware(PrometheusMiddleware())
+# Fleet observability (mcpfleet-obs): client tracking, tool_calls_total,
+# tool_duration_seconds, build_info and /metrics. Adds ClientTrackingMiddleware
+# then FleetMetricsMiddleware — same position the local copies occupied.
+install(gateway, prefix="uk_legal")
 
 # Per-tool timing — logs "Tool 'X' completed in Y ms"
 gateway.add_middleware(DetailedTimingMiddleware())
@@ -589,11 +433,6 @@ async def health(request: Request) -> Response:
         "server": "uk-legal-mcp",
         "modules": len(MOUNTED_MODULES),
     }, headers=CORS_HEADERS)
-
-
-@gateway.custom_route("/metrics", methods=["GET"])
-async def metrics_endpoint(request: Request) -> Response:
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @gateway.custom_route("/.well-known/mcp/server-card.json", methods=["GET"])

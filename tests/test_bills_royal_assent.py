@@ -345,9 +345,9 @@ class TestBillsGetBillLive:
         assert not result.is_error, f"Tool error: {result.data}"
         assert result.data.is_act is True
         # fastmcp's Python Client materialises this dynamic model's date
-        # field as a plain string, not a datetime.date — see the wire-level
-        # tests above for the same caveat.
-        assert result.data.royal_assent_date == "2025-10-27"
+        # field as a datetime.date — see the wire-level tests above for the
+        # same caveat.
+        assert str(result.data.royal_assent_date) == "2025-10-27"
 
     @pytest.mark.live
     @pytest.mark.asyncio

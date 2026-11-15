@@ -2,6 +2,13 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [Unreleased]
+
+### Changed
+
+- **Python 3.11 or later is now required** (3.10 reached end of life in October 2026).
+- **Metrics now come from the shared `mcpfleet-obs` package** instead of a local copy. Metric names are unchanged, and `uk_legal_tool_calls_total` gains a `source` label (`tool` or `middleware`) so calls rejected by input validation can be told apart from tool failures. Calls to tool names that do not exist are now labelled `tool="_unknown_"` (previously `"unknown"`), and the latency histogram uses the same label instead of one series per made-up name.
+
 ## [0.9.2] — 2026-11-13
 
 ### Added

@@ -3,25 +3,22 @@
 from types import SimpleNamespace
 
 import pytest
-from prometheus_client import REGISTRY
+from prometheus_client import REGISTRY, CollectorRegistry
 from starlette.testclient import TestClient
 
-import src.gateway as gw
-from src.gateway import REGION, TRANSPORT, ClientTrackingMiddleware, _client_identity, create_http_app
+from mcpfleet_obs.clients import ClientTrackingMiddleware, _client_identity
+from mcpfleet_obs.metrics import REGION, TRANSPORT, make_metrics
+
+from src.gateway import create_http_app
 
 H = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
 
 
-def _count(name, version):
-    return REGISTRY.get_sample_value(
+def _count(name, version, registry=REGISTRY):
+    return registry.get_sample_value(
         "uk_legal_client_connections_total",
         {"client_name": name, "client_version": version, "transport": TRANSPORT, "region": REGION},
     ) or 0.0
-
-
-@pytest.fixture(autouse=True)
-def fresh_labels(monkeypatch):
-    monkeypatch.setattr(gw, "_client_labels", gw._BoundedLabel(40))
 
 
 def test_initialize_over_http_is_attributed_to_the_named_client():
@@ -51,7 +48,10 @@ def test_a_client_that_sends_nothing_is_unknown():
 
 @pytest.mark.asyncio
 async def test_discover_handshake_is_counted_not_ignored():
-    before = _count("modern-client", "9")
+    # Fresh registry: install() already owns uk_legal_* on the default one.
+    registry = CollectorRegistry()
+    middleware = ClientTrackingMiddleware(
+        make_metrics("uk_legal", registry=registry), logger_name="uk_legal_mcp.clients")
     ctx = SimpleNamespace(
         method="server/discover",
         message=SimpleNamespace(params={"meta": {"io.modelcontextprotocol/clientInfo": {"name": "modern-client", "version": "9"}}}),
@@ -60,5 +60,5 @@ async def test_discover_handshake_is_counted_not_ignored():
     async def call_next(_):
         return "ok"
 
-    assert await ClientTrackingMiddleware().on_request(ctx, call_next) == "ok"
-    assert _count("modern-client", "9") == before + 1
+    assert await middleware.on_request(ctx, call_next) == "ok"
+    assert _count("modern-client", "9", registry) == 1.0
