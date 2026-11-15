@@ -56,8 +56,11 @@ NEUTRAL_CASES = [
     ("[2022] EWCA Civ 1234", "EWCA CIV", 2022, 1234, 1.0),
     ("[2021] EWCA Crim 99", "EWCA CRIM", 2021, 99, 1.0),
     ("[2024] EWHC (KB) 500", "EWHC (KB)", 2024, 500, 1.0),
+    ("[2024] EWHC (QB) 510", "EWHC (QB)", 2024, 510, 1.0),
     ("[2024] EWHC (Ch) 200", "EWHC (CH)", 2024, 200, 1.0),
     ("[2024] EWHC (Comm) 300", "EWHC (COMM)", 2024, 300, 1.0),
+    ("[2024] EWHC (Admlty) 77", "EWHC (ADMLTY)", 2024, 77, 1.0),
+    ("[2026] EWHC (BP) 1500", "EWHC (BP)", 2026, 1500, 1.0),
     ("[2020] EAT 25", "EAT", 2020, 25, 1.0),
     ("[2019] UKUT (IAC) 300", "UKUT (IAC)", 2019, 300, 1.0),
     # Ambiguous
@@ -160,6 +163,14 @@ class TestResolution:
     def test_ewhc_kb_resolves(self):
         url = resolve_neutral_citation(2024, "EWHC (KB)", 100)
         assert url == "https://caselaw.nationalarchives.gov.uk/ewhc/kb/2024/100"
+
+    def test_ewhc_qb_admlty_bp_resolve(self):
+        assert resolve_neutral_citation(2020, "EWHC (QB)", 20) == \
+            "https://caselaw.nationalarchives.gov.uk/ewhc/qb/2020/20"
+        assert resolve_neutral_citation(2021, "EWHC (ADMLTY)", 15) == \
+            "https://caselaw.nationalarchives.gov.uk/ewhc/admlty/2021/15"
+        assert resolve_neutral_citation(2026, "EWHC (BP)", 3000) == \
+            "https://caselaw.nationalarchives.gov.uk/ewhc/bp/2026/3000"
 
     def test_bare_ewhc_returns_none(self):
         url = resolve_neutral_citation(2024, "EWHC", 200)
@@ -286,6 +297,9 @@ def test_legislation_lowercase_connector(text, expected_section, expected_title_
     ("[2025] EWHC 200 (KB)", "EWHC (KB)", 200, True),
     ("[2024] EWHC 301 (Comm)", "EWHC (COMM)", 301, True),
     ("[2023] EWHC 99 (Admin)", "EWHC (ADMIN)", 99, True),
+    ("[2020] EWHC 20 (QB)", "EWHC (QB)", 20, True),
+    ("[2021] EWHC 15 (Admlty)", "EWHC (ADMLTY)", 15, True),
+    ("[2026] EWHC 3000 (BP)", "EWHC (BP)", 3000, True),
     ("[2024] EWHC 400", "EWHC", 400, False),  # bare — still ambiguous
 ])
 def test_ewhc_trailing_division_qualifier(text, expected_court, expected_number, expect_resolved):
@@ -437,6 +451,9 @@ NEUTRAL_FORMAT_CASES = [
     ("EWHC (TCC)", 2026, 2319, "[2026] EWHC 2319 (TCC)"),  # ditto
     ("EWHC (ADMIN)", 2026, 2337, "[2026] EWHC 2337 (Admin)"),
     ("EWHC (IPEC)", 2026, 100, "[2026] EWHC 100 (IPEC)"),
+    ("EWHC (QB)", 2020, 20, "[2020] EWHC 20 (QB)"),
+    ("EWHC (ADMLTY)", 2021, 15, "[2021] EWHC 15 (Admlty)"),
+    ("EWHC (BP)", 2026, 3000, "[2026] EWHC 3000 (BP)"),
     ("UKFTT (GRC)", 2026, 1314, "[2026] UKFTT 1314 (GRC)"),
     ("UKUT (TCC)", 2026, 351, "[2026] UKUT 351 (TCC)"),
     ("UKUT (IAC)", 2019, 300, "[2019] UKUT 300 (IAC)"),

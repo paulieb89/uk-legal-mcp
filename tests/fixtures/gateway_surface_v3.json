@@ -899,7 +899,7 @@
               }
             ],
             "default": null,
-            "description": "Filter by court slug. Values: 'uksc', 'ukpc', 'ewca/civ', 'ewca/crim', 'ewhc/kb', 'ewhc/ch', 'ewhc/comm', 'ewhc/fam', 'ewhc/pat', 'ewhc/ipec', 'ewhc/admin', 'ewhc/tcc', 'ewhc/costs', 'ewfc', 'ewcop', 'eat', 'ukut/iac', 'ukut/aac', 'ukut/tcc', 'ukut/lc', 'ukftt/tc', 'ukftt/grc', 'nica', 'niqb'."
+            "description": "Filter by court slug. Values: 'uksc', 'ukpc', 'ewca/civ', 'ewca/crim', 'ewhc/kb', 'ewhc/qb', 'ewhc/ch', 'ewhc/comm', 'ewhc/fam', 'ewhc/pat', 'ewhc/ipec', 'ewhc/admin', 'ewhc/tcc', 'ewhc/costs', 'ewhc/admlty', 'ewhc/bp', 'ewfc', 'ewcop', 'eat', 'ukut/iac', 'ukut/aac', 'ukut/tcc', 'ukut/lc', 'ukftt/tc', 'ukftt/grc', 'nica', 'niqb'."
           },
           "from_date": {
             "anyOf": [
