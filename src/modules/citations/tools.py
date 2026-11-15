@@ -41,6 +41,8 @@ _COURT_DISPLAY: dict[str, str] = {
     "EWHC (PAT)": "EWHC (Pat)", "EWHC (IPEC)": "EWHC (IPEC)",
     "EWHC (ADMIN)": "EWHC (Admin)", "EWHC (TCC)": "EWHC (TCC)",
     "EWHC (COSTS)": "EWHC (Costs)",
+    "EWHC (QB)": "EWHC (QB)", "EWHC (ADMLTY)": "EWHC (Admlty)",
+    "EWHC (BP)": "EWHC (BP)",
     "UKUT": "UKUT",
     "UKUT (IAC)": "UKUT (IAC)", "UKUT (TCC)": "UKUT (TCC)",
     "UKUT (AAC)": "UKUT (AAC)", "UKUT (LC)": "UKUT (LC)",
@@ -170,17 +172,18 @@ async def _disambiguate_citation(ctx: Context, citation: ParsedCitation) -> Pars
         return citation
     prompt = (
         f"The neutral citation '{citation.raw}' uses '{citation.court}' without a division qualifier.\n"
-        f"Respond with ONLY one abbreviation from: KB, Ch, Comm, Fam, Pat, IPEC, Admin, TCC, Costs, unknown\n"
+        f"Respond with ONLY one abbreviation from: KB, QB, Ch, Comm, Fam, Pat, IPEC, Admin, TCC, Costs, Admlty, BP, unknown\n"
         f"No explanation, no other text."
     )
     try:
         result = await ctx.sample(prompt, result_type=str)
         division = result.text.strip().upper()
-        if division not in {"KB", "CH", "COMM", "FAM", "PAT", "IPEC", "ADMIN", "TCC", "COSTS", "UNKNOWN"}:
+        if division not in {"KB", "QB", "CH", "COMM", "FAM", "PAT", "IPEC", "ADMIN", "TCC", "COSTS", "ADMLTY", "BP", "UNKNOWN"}:
             return citation
         if division == "UNKNOWN":
             return citation
-        new_court = f"{citation.court} ({division.title()})"
+        # Tables are keyed by uppercase division; .title() would produce "Kb"/"Bp".
+        new_court = f"{citation.court} ({division.upper()})"
         new_url = resolve_neutral_citation(citation.year, new_court, citation.number) if citation.year and citation.number else None
         return citation.model_copy(update={"court": new_court, "resolved_url": new_url, "confidence": 0.75})
     except Exception:
