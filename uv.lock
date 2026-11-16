@@ -971,7 +971,7 @@ wheels = [
 
 [[package]]
 name = "mcpfleet-obs"
-version = "0.5.0"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastmcp" },
@@ -980,9 +980,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "starlette" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f3/9e/8fff9fb9989b1b039cfc45c46954d47db3c3f9ef84d278a4105ad9535b6b/mcpfleet_obs-0.5.0.tar.gz", hash = "sha256:61418adacc09491a2c9039ef1a22e130984d3643035395fd23656d71aa67bf21", size = 109754, upload-time = "2026-11-15T16:27:13.2Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c1/23/cb770e9a67cf72979343e26e32218f596cd0dba01a29e9fc25de523e555d/mcpfleet_obs-0.6.0.tar.gz", hash = "sha256:fb911d23e715a31b43fa408b61992b30fb3a15d16f98df9bdd19cde9dfa0c166", size = 114292, upload-time = "2026-11-16T01:14:57.996Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/69/48/7d8ed71c8b7ebc47f6bf2a2c0d04bd87fcec62f068eab8c995074bbdde80/mcpfleet_obs-0.5.0-py3-none-any.whl", hash = "sha256:9e82bf5e8c50bf37c6b822376dbfd472d1bdba9e9eb1e66956b124a32fb3d6cb", size = 8976, upload-time = "2026-11-15T16:27:11.868Z" },
+    { url = "https://files.pythonhosted.org/packages/81/3e/d7fde96efca83352105585abe0fa39089e0c3c1383c85110c9a74c155d71/mcpfleet_obs-0.6.0-py3-none-any.whl", hash = "sha256:e4d3f18b6c94a3b4390d3b6099458ae06654bd1f6beca36ceeb76057cb139b37", size = 11874, upload-time = "2026-11-16T01:14:56.303Z" },
 ]
 
 [[package]]
@@ -1845,7 +1845,7 @@ wheels = [
 
 [[package]]
 name = "uk-legal-mcp"
-version = "0.10.0"
+version = "0.10.1"
 source = { editable = "." }
 dependencies = [
     { name = "curl-cffi" },
@@ -1879,7 +1879,7 @@ requires-dist = [
     { name = "httpx", specifier = "==0.28.1" },
     { name = "lxml", specifier = "==6.0.4" },
     { name = "mcp", specifier = "==2.3.0" },
-    { name = "mcpfleet-obs", specifier = "==0.5.0" },
+    { name = "mcpfleet-obs", specifier = "==0.6.0" },
     { name = "prometheus-client", specifier = "==0.24.1" },
     { name = "pydantic", specifier = "==2.13.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0.0" },
