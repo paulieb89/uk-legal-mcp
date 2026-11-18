@@ -26,9 +26,16 @@ These two tools have a mandatory call order:
 Calling `format_oscola` on an unresolved citation is a protocol violation.
 Agents downstream in BOUCH enforce this; do not add shortcuts that skip resolve.
 
-## Self-contained module — no external HTTP in pure regex paths
-The citations module uses `httpx` only for TNA HEAD probes in the resolver.
-Pure parsing (citations_parse) has `openWorldHint=False` and no external calls.
+## Existence checks — never trust the caller
+Only citations_parse is pure regex (`openWorldHint=False`, no external calls,
+every result `verified=false`). citations_resolve and citations_format_oscola
+check existence through `deps.check_document_exists`: TNA for neutral citations,
+legislation.gov.uk for SIs. format_oscola re-checks itself; its `confidence` and
+`resolved_url` inputs are accepted for compatibility and ignored (audit L1).
+Absent means a status in `TNA_ABSENT_STATUSES` / `LEGISLATION_ABSENT_STATUSES`
+(legislation.gov.uk answers a missing document with 400); 429, 5xx and transport
+failures are `transient`, never absent (audit L3). `verified` reports existence;
+`confidence` is parse confidence (0.0 when the source confirmed absence).
 
 ## Test discipline for citations
 - tests/test_citations.py is the canonical guard suite

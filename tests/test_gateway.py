@@ -5,6 +5,7 @@ Uses FastMCP's in-process Client to verify tool registration, schema
 integrity, and offline tool execution without hitting any live APIs.
 """
 
+import json
 import os
 
 import pytest
@@ -113,6 +114,26 @@ class TestResources:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def fake_head(monkeypatch):
+    """Answer every existence-check HEAD from a table (default 200) — no network."""
+    from unittest.mock import MagicMock
+    from src.deps import LegislationClient
+
+    statuses: dict[str, int] = {}
+
+    async def head(self, url, **kwargs):
+        resp = MagicMock()
+        resp.status_code = statuses.get(str(url), 200)
+        return resp
+
+    monkeypatch.setattr(httpx.AsyncClient, "head", head)
+    monkeypatch.setattr(LegislationClient, "head", head)
+    head.statuses = statuses
+    return head
+
+
+@pytest.mark.usefixtures("fake_head")
 class TestFormatOscolaTools:
     @pytest.mark.asyncio
     async def test_format_neutral_uksc(self, client: Client):
@@ -170,24 +191,27 @@ class TestFormatOscolaTools:
         assert result.data["oscola"] == "SI 2018/1234"
 
     @pytest.mark.asyncio
-    async def test_refuses_confidence_zero(self, client: Client):
-        result = await client.call_tool(
-            "citations_format_oscola",
-            {"citation_type": "neutral", "confidence": 0.0, "resolved_url": "https://caselaw.nationalarchives.gov.uk/ewca/civ/2022/9999", "year": 2022, "court": "EWCA CIV", "number": 9999},
-        )
-        assert not result.is_error
-        assert result.data["status"] == "upstream_validation"
-        assert "confidence 0.0" in result.data["detail"]
+    async def test_refuses_confirmed_absent_as_not_found(self, client: Client, fake_head):
+        fake_head.statuses["https://caselaw.nationalarchives.gov.uk/ewca/civ/2022/9999"] = 404
+        with pytest.raises(ToolError) as exc_info:
+            await client.call_tool(
+                "citations_format_oscola",
+                {"citation_type": "neutral", "year": 2022, "court": "EWCA CIV", "number": 9999},
+            )
+        payload = json.loads(str(exc_info.value))
+        assert payload["error_category"] == "not_found"
+        assert "ewca/civ/2022/9999" in payload["description"]
 
     @pytest.mark.asyncio
-    async def test_refuses_neutral_without_resolved_url(self, client: Client):
-        result = await client.call_tool(
-            "citations_format_oscola",
-            {"citation_type": "neutral", "confidence": 0.5, "resolved_url": None, "year": 2024, "court": "EWHC", "number": 100},
-        )
-        assert not result.is_error
-        assert result.data["status"] == "upstream_validation"
-        assert "resolved_url" in result.data["detail"]
+    async def test_refuses_ambiguous_court_as_validation(self, client: Client):
+        with pytest.raises(ToolError) as exc_info:
+            await client.call_tool(
+                "citations_format_oscola",
+                {"citation_type": "neutral", "confidence": 0.5, "resolved_url": None, "year": 2024, "court": "EWHC", "number": 100},
+            )
+        payload = json.loads(str(exc_info.value))
+        assert payload["error_category"] == "validation"
+        assert "ambiguous" in payload["description"]
 
 
 class TestCitationTools:

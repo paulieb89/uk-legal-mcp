@@ -1,8 +1,8 @@
 """
 Tests for the citations module.
 
-The citations module is fully self-contained (no external API),
-making it the most thoroughly unit-testable module in the server.
+Parsing is pure regex, so most of the module is unit-testable offline.
+Existence checks (TNA, legislation.gov.uk) are exercised with a fake HEAD.
 """
 
 import asyncio
@@ -24,7 +24,12 @@ from src.modules.citations.patterns import (
     AMBIGUOUS_COURTS,
 )
 from src.modules.citations.models import CitationType
-from src.modules.citations.tools import _extract_all_citations, _tna_head_check
+from src.deps import (
+    LEGISLATION_ABSENT_STATUSES,
+    LegislationClient,
+    check_document_exists,
+)
+from src.modules.citations.tools import _extract_all_citations
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +323,7 @@ def test_ewhc_trailing_division_qualifier(text, expected_court, expected_number,
 
 
 # ---------------------------------------------------------------------------
-# TNA HEAD check helper — unit tests (mocked HTTP, no network)
+# Shared existence check — unit tests (mocked HTTP, no network)
 # ---------------------------------------------------------------------------
 
 TNA_URL = "https://caselaw.nationalarchives.gov.uk/uksc/2024/12"
@@ -330,13 +335,10 @@ def _mock_resp(status_code: int) -> MagicMock:
     return r
 
 
-def _mock_client(*, response=None, raises=None) -> MagicMock:
-    client = MagicMock()
+def _mock_head(*, response=None, raises=None) -> AsyncMock:
     if raises is not None:
-        client.head = AsyncMock(side_effect=raises)
-    else:
-        client.head = AsyncMock(return_value=response)
-    return client
+        return AsyncMock(side_effect=raises)
+    return AsyncMock(return_value=response)
 
 
 @pytest.fixture(autouse=True)
@@ -345,55 +347,79 @@ def _no_sleep(monkeypatch):
     monkeypatch.setattr(asyncio, "sleep", AsyncMock())
 
 
-class TestTnaHeadCheck:
+class TestCheckDocumentExists:
     @pytest.mark.asyncio
-    async def test_200_returns_none(self):
-        """TNA present — helper returns None (caller leaves confidence unchanged)."""
-        client = _mock_client(response=_mock_resp(200))
-        assert await _tna_head_check(client, TNA_URL) is None
+    async def test_200_is_present(self):
+        head = _mock_head(response=_mock_resp(200))
+        assert await check_document_exists(head, TNA_URL, attempted="t") is True
 
     @pytest.mark.asyncio
-    async def test_200_uses_short_timeout(self):
+    async def test_uses_short_timeout(self):
         """Per-request timeout must be 3.0s — pins the latency fix."""
-        client = _mock_client(response=_mock_resp(200))
-        await _tna_head_check(client, TNA_URL)
-        client.head.assert_awaited_once_with(TNA_URL, timeout=3.0)
+        head = _mock_head(response=_mock_resp(200))
+        await check_document_exists(head, TNA_URL, attempted="t")
+        head.assert_awaited_once_with(TNA_URL, timeout=3.0)
 
     @pytest.mark.asyncio
-    async def test_non_200_returns_zero(self):
-        """TNA confirmed absent (non-200) — helper returns 0.0."""
-        client = _mock_client(response=_mock_resp(404))
-        assert await _tna_head_check(client, TNA_URL) == 0.0
+    @pytest.mark.parametrize("status", [404, 410])
+    async def test_404_and_410_are_absent(self, status):
+        head = _mock_head(response=_mock_resp(status))
+        assert await check_document_exists(head, TNA_URL, attempted="t") is False
 
     @pytest.mark.asyncio
-    async def test_transport_error_raises_tool_error_after_retry(self):
-        """Transport failure on both attempts — raises ToolError (masking-safe), retried once."""
-        client = _mock_client(raises=httpx.ConnectError("refused"))
+    async def test_legislation_400_is_absent(self):
+        """legislation.gov.uk answers a nonexistent document with 400."""
+        head = _mock_head(response=_mock_resp(400))
+        assert await check_document_exists(
+            head, "https://www.legislation.gov.uk/uksi/2025/99999",
+            attempted="t", absent_statuses=LEGISLATION_ABSENT_STATUSES,
+        ) is False
+
+    @pytest.mark.asyncio
+    async def test_tna_400_is_not_absent(self):
+        """400 means absent only where the upstream is known to use it that way."""
+        head = _mock_head(response=_mock_resp(400))
         with pytest.raises(ToolError) as exc_info:
-            await _tna_head_check(client, TNA_URL)
-        assert client.head.await_count == 2  # initial + 1 retry
+            await check_document_exists(head, TNA_URL, attempted="t")
+        assert json.loads(str(exc_info.value))["error_category"] == "transient"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [429, 500, 502, 503, 504, 202, 302])
+    async def test_unverifiable_status_is_transient_never_absent(self, status):
+        """Audit L3: a 429 or 5xx used to be reported as 'document absent'."""
+        head = _mock_head(response=_mock_resp(status))
+        with pytest.raises(ToolError) as exc_info:
+            await check_document_exists(head, TNA_URL, attempted="t")
+        assert head.await_count == 2  # initial + 1 retry
         payload = json.loads(str(exc_info.value))
         assert payload["error_category"] == "transient"
         assert payload["is_retryable"] is True
+        assert payload["attempted"] == "t"
+        assert "NOT evidence" in payload["description"]
 
     @pytest.mark.asyncio
-    async def test_transport_error_never_returns_zero(self):
-        """Transport failure must raise, never return 0.0 — conflation guard."""
-        client = _mock_client(raises=httpx.TimeoutException("timeout"))
-        with pytest.raises(ToolError):
-            await _tna_head_check(client, TNA_URL)
+    @pytest.mark.parametrize("exc", [httpx.ConnectError("refused"), httpx.TimeoutException("timeout")])
+    async def test_transport_error_is_transient_after_retry(self, exc):
+        head = _mock_head(raises=exc)
+        with pytest.raises(ToolError) as exc_info:
+            await check_document_exists(head, TNA_URL, attempted="t")
+        assert head.await_count == 2
+        assert json.loads(str(exc_info.value))["error_category"] == "transient"
 
     @pytest.mark.asyncio
     async def test_recovers_on_second_attempt(self):
-        """First attempt fails, second succeeds — returns None (citation present)."""
-        client = _mock_client()
-        client.head = AsyncMock(side_effect=[httpx.ConnectError("blip"), _mock_resp(200)])
-        assert await _tna_head_check(client, TNA_URL) is None
-        assert client.head.await_count == 2
+        head = AsyncMock(side_effect=[httpx.ConnectError("blip"), _mock_resp(200)])
+        assert await check_document_exists(head, TNA_URL, attempted="t") is True
+        assert head.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retries_a_503_then_trusts_a_404(self):
+        head = AsyncMock(side_effect=[_mock_resp(503), _mock_resp(404)])
+        assert await check_document_exists(head, TNA_URL, attempted="t") is False
 
 
 # ---------------------------------------------------------------------------
-# format_oscola guard — integration test (in-process FastMCP client, no network)
+# In-process gateway with a fake upstream for HEAD requests
 # ---------------------------------------------------------------------------
 
 @pytest_asyncio.fixture
@@ -402,28 +428,180 @@ async def gw_client():
         yield c
 
 
+@pytest.fixture
+def fake_head(monkeypatch):
+    """Route every existence check to a table of URL -> status (default 200)."""
+    statuses: dict[str, int] = {}
+    seen: list[str] = []
+
+    async def head(self, url, **kwargs):
+        seen.append(str(url))
+        return _mock_resp(statuses.get(str(url), 200))
+
+    monkeypatch.setattr(httpx.AsyncClient, "head", head)
+    monkeypatch.setattr(LegislationClient, "head", head)
+    head.statuses = statuses
+    head.seen = seen
+    return head
+
+
 class TestFormatOscolaGuard:
     @pytest.mark.asyncio
-    async def test_confidence_zero_is_refused(self, gw_client: Client):
-        """Confirmed-absent (confidence 0.0) must always produce upstream_validation.
+    async def test_confirmed_absent_is_refused_as_not_found(self, gw_client: Client, fake_head):
+        fake_head.statuses["https://caselaw.nationalarchives.gov.uk/uksc/2099/999"] = 404
+        with pytest.raises(ToolError) as exc_info:
+            await gw_client.call_tool(
+                "citations_format_oscola",
+                {"citation_type": "neutral", "year": 2099, "court": "UKSC", "number": 999},
+            )
+        payload = json.loads(str(exc_info.value))
+        assert payload["error_category"] == "not_found"
+        assert payload["is_retryable"] is False
 
-        This is the anti-fabrication guard. After the _tna_head_check fix,
-        confidence 0.0 exclusively means TNA reached + non-200 — the refusal
-        message is accurate and the guard must remain intact.
-        """
-        result = await gw_client.call_tool(
+    @pytest.mark.asyncio
+    async def test_caller_confidence_is_ignored(self, gw_client: Client, fake_head):
+        """Audit L1: confidence=1 from the caller must not bypass the check."""
+        fake_head.statuses["https://caselaw.nationalarchives.gov.uk/uksc/2024/999"] = 404
+        with pytest.raises(ToolError) as exc_info:
+            await gw_client.call_tool(
+                "citations_format_oscola",
+                {
+                    "citation_type": "neutral", "confidence": 1.0,
+                    "resolved_url": "https://caselaw.nationalarchives.gov.uk/uksc/2024/999",
+                    "year": 2024, "court": "UKSC", "number": 999,
+                },
+            )
+        assert json.loads(str(exc_info.value))["error_category"] == "not_found"
+
+    @pytest.mark.asyncio
+    async def test_caller_resolved_url_is_not_trusted(self, gw_client: Client, fake_head):
+        """The URL checked is rebuilt from the fields, not taken from the caller."""
+        await gw_client.call_tool(
             "citations_format_oscola",
             {
-                "citation_type": "neutral",
-                "confidence": 0.0,
-                "resolved_url": "https://caselaw.nationalarchives.gov.uk/uksc/2099/999",
-                "year": 2099,
-                "court": "UKSC",
-                "number": 999,
+                "citation_type": "neutral", "year": 2024, "court": "UKSC", "number": 12,
+                "resolved_url": "https://example.com/anything",
             },
         )
-        assert result.data["status"] == "upstream_validation"
-        assert result.data["is_retryable"] is False
+        assert fake_head.seen == ["https://caselaw.nationalarchives.gov.uk/uksc/2024/12"]
+
+    @pytest.mark.asyncio
+    async def test_verified_neutral_citation_formats(self, gw_client: Client, fake_head):
+        result = await gw_client.call_tool(
+            "citations_format_oscola",
+            {"citation_type": "neutral", "year": 2024, "court": "UKSC", "number": 12},
+        )
+        assert result.data["oscola"] == "[2024] UKSC 12"
+        assert result.data["verified"] is True
+        assert result.data["resolved_url"] == "https://caselaw.nationalarchives.gov.uk/uksc/2024/12"
+
+    @pytest.mark.asyncio
+    async def test_absent_si_is_refused(self, gw_client: Client, fake_head):
+        fake_head.statuses["https://www.legislation.gov.uk/uksi/2025/99999"] = 400
+        with pytest.raises(ToolError) as exc_info:
+            await gw_client.call_tool(
+                "citations_format_oscola", {"citation_type": "si", "si_year": 2025, "si_number": 99999},
+            )
+        assert json.loads(str(exc_info.value))["error_category"] == "not_found"
+
+    @pytest.mark.asyncio
+    async def test_unverifiable_types_format_with_verified_false(self, gw_client: Client, fake_head):
+        result = await gw_client.call_tool(
+            "citations_format_oscola",
+            {"citation_type": "legislation", "section": "47", "legislation_title": "Companies Act 2006"},
+        )
+        assert result.data["oscola"] == "s.47 Companies Act 2006"
+        assert result.data["verified"] is False
+        assert fake_head.seen == []
+
+    @pytest.mark.asyncio
+    async def test_bare_ewhc_is_a_validation_error(self, gw_client: Client, fake_head):
+        with pytest.raises(ToolError) as exc_info:
+            await gw_client.call_tool(
+                "citations_format_oscola",
+                {"citation_type": "neutral", "year": 2024, "court": "EWHC", "number": 5},
+            )
+        assert json.loads(str(exc_info.value))["error_category"] == "validation"
+
+    @pytest.mark.asyncio
+    async def test_missing_fields_is_a_validation_error(self, gw_client: Client, fake_head):
+        with pytest.raises(ToolError) as exc_info:
+            await gw_client.call_tool("citations_format_oscola", {"citation_type": "si", "si_year": 2025})
+        assert json.loads(str(exc_info.value))["error_category"] == "validation"
+
+    @pytest.mark.asyncio
+    async def test_unreachable_source_is_transient_not_refused(self, gw_client: Client, fake_head):
+        # Distinct citation: the gateway's response cache would replay an earlier success.
+        fake_head.statuses["https://caselaw.nationalarchives.gov.uk/uksc/2024/31"] = 503
+        with pytest.raises(ToolError) as exc_info:
+            await gw_client.call_tool(
+                "citations_format_oscola",
+                {"citation_type": "neutral", "year": 2024, "court": "UKSC", "number": 31},
+            )
+        assert json.loads(str(exc_info.value))["error_category"] == "transient"
+
+    @pytest.mark.asyncio
+    async def test_schema_advertises_open_world_and_optional_confidence(self, gw_client: Client):
+        tool = {t.name: t for t in await gw_client.list_tools()}["citations_format_oscola"]
+        assert tool.annotations.openWorldHint is True
+        assert "confidence" not in tool.inputSchema.get("required", [])
+        assert "no network call" not in (tool.description or "")
+
+
+class TestResolveVerification:
+    @pytest.mark.asyncio
+    async def test_absent_si_is_unverified_with_zero_confidence(self, gw_client: Client, fake_head):
+        """Audit L2: SI 2025/99999 used to come back confidence 1.0, unchecked."""
+        fake_head.statuses["https://www.legislation.gov.uk/uksi/2025/99999"] = 400
+        result = await gw_client.call_tool("citations_resolve", {"citation": "SI 2025/99999"})
+        assert result.data.verified is False
+        assert result.data.confidence == 0.0
+
+    @pytest.mark.asyncio
+    async def test_real_si_is_verified(self, gw_client: Client, fake_head):
+        result = await gw_client.call_tool("citations_resolve", {"citation": "SI 2018/1234"})
+        assert result.data.verified is True
+        assert fake_head.seen == ["https://www.legislation.gov.uk/uksi/2018/1234"]
+
+    @pytest.mark.asyncio
+    async def test_act_section_has_search_url_not_resolved_url(self, gw_client: Client, fake_head):
+        result = await gw_client.call_tool(
+            "citations_resolve", {"citation": "s.47 Imaginary Widgets Act 2099"},
+        )
+        assert result.data.resolved_url is None
+        assert "legislation.gov.uk/search" in result.data.search_url
+        assert result.data.verified is False
+        assert fake_head.seen == []
+
+    @pytest.mark.asyncio
+    async def test_neutral_present_is_verified(self, gw_client: Client, fake_head):
+        result = await gw_client.call_tool("citations_resolve", {"citation": "[2024] UKSC 12"})
+        assert result.data.verified is True
+        assert result.data.confidence == 1.0
+
+    @pytest.mark.asyncio
+    async def test_neutral_429_is_transient_not_absent(self, gw_client: Client, fake_head):
+        """Audit L3."""
+        # Distinct citation: the gateway's response cache would replay an earlier success.
+        fake_head.statuses["https://caselaw.nationalarchives.gov.uk/uksc/2024/32"] = 429
+        with pytest.raises(ToolError) as exc_info:
+            await gw_client.call_tool("citations_resolve", {"citation": "[2024] UKSC 32"})
+        assert json.loads(str(exc_info.value))["error_category"] == "transient"
+
+    @pytest.mark.asyncio
+    async def test_unrecognised_text_is_a_validation_error(self, gw_client: Client, fake_head):
+        with pytest.raises(ToolError) as exc_info:
+            await gw_client.call_tool("citations_resolve", {"citation": "not a citation"})
+        assert json.loads(str(exc_info.value))["error_category"] == "validation"
+
+    @pytest.mark.asyncio
+    async def test_parse_never_claims_verification(self, gw_client: Client, fake_head):
+        result = await gw_client.call_tool(
+            "citations_parse", {"text": "See [2024] UKSC 12 and SI 2018/1234."},
+        )
+        assert result.structured_content["citations"]
+        assert all(c["verified"] is False for c in result.structured_content["citations"])
+        assert fake_head.seen == []
 
 
 # ---------------------------------------------------------------------------
@@ -468,7 +646,7 @@ NEUTRAL_FORMAT_CASES = [
 class TestNeutralFormatOscola:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("court,year,number,expected", NEUTRAL_FORMAT_CASES)
-    async def test_division_follows_judgment_number(self, gw_client: Client, court, year, number, expected):
+    async def test_division_follows_judgment_number(self, gw_client: Client, fake_head, court, year, number, expected):
         result = await gw_client.call_tool(
             "citations_format_oscola",
             {
