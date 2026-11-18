@@ -305,9 +305,11 @@
     },
     "/health": {
       "json": {
+        "git_sha": "<build arg>",
         "modules": 8,
         "server": "uk-legal-mcp",
-        "status": "ok"
+        "status": "ok",
+        "version": "<package release>"
       },
       "status": 200
     }

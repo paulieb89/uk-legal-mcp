@@ -23,6 +23,11 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Commit the image was built from, reported by /health. The deploy workflows
+# pass --build-arg GIT_SHA=<sha>; declared last so it never busts the layer cache.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
+
 EXPOSE 8080
 
 CMD ["python", "-m", "src.gateway"]

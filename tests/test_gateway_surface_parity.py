@@ -92,6 +92,10 @@ async def test_gateway_surface_matches_reviewed_v3_fixture():
     expected["routes"]["/.well-known/mcp/server-card.json"]["json"]["serverInfo"]["version"] = (
         actual["routes"]["/.well-known/mcp/server-card.json"]["json"]["serverInfo"]["version"]
     )
+    # /health reports the release and the build commit (GIT_SHA build arg); the
+    # fixture pins the keys, not the per-build values.
+    for key in ("version", "git_sha"):
+        expected["routes"]["/health"]["json"][key] = actual["routes"]["/health"]["json"][key]
     _normalise_reviewed_fastmcp_v4_deltas(expected, actual)
 
     assert actual == expected

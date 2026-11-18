@@ -47,6 +47,10 @@ from curl_cffi.requests import AsyncSession as CurlAsyncSession
 
 from .deps import LegislationClient, LegislationUpstreamError, http_lifespan
 from .deps import PROJECT_VERSION as _PROJECT_VERSION
+
+# Commit the image was built from, passed as a Docker build arg by the deploy
+# workflows. "unknown" means a build that did not pass it (e.g. a local build).
+GIT_SHA = os.environ.get("GIT_SHA") or "unknown"
 from .deps import raise_tool_error
 from .deps import response_cache
 from typing import Annotated
@@ -431,6 +435,8 @@ async def health(request: Request) -> Response:
     return JSONResponse({
         "status": "ok",
         "server": "uk-legal-mcp",
+        "version": _PROJECT_VERSION,
+        "git_sha": GIT_SHA,
         "modules": len(MOUNTED_MODULES),
     }, headers=CORS_HEADERS)
 

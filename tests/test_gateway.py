@@ -5,6 +5,8 @@ Uses FastMCP's in-process Client to verify tool registration, schema
 integrity, and offline tool execution without hitting any live APIs.
 """
 
+import os
+
 import pytest
 import pytest_asyncio
 import httpx
@@ -348,6 +350,9 @@ class TestCustomRoutes:
             body = resp.json()
             assert body["status"] == "ok"
             assert body["modules"] == 8
+            assert body["version"] == _PROJECT_VERSION
+            # GIT_SHA comes from the Docker build arg; unset locally.
+            assert body["git_sha"] == os.environ.get("GIT_SHA", "unknown")
 
     @pytest.mark.asyncio
     async def test_metrics_route(self):
