@@ -42,11 +42,39 @@ class ParsedCitation(BaseModel):
     si_number: int | None = Field(None, description="SI number")
     resolved_url: str | None = Field(
         None,
-        description="TNA Find Case Law or legislation.gov.uk URL if successfully resolved",
+        description=(
+            "Canonical TNA Find Case Law or legislation.gov.uk URL for the cited "
+            "document, constructed from the citation. Constructing a URL does not "
+            "prove the document exists: check `verified`. Null when no canonical "
+            "URL can be built (ambiguous court, Act sections — see search_url)."
+        ),
+    )
+    search_url: str | None = Field(
+        None,
+        description=(
+            "For Act sections: a legislation.gov.uk title-search URL. It is a "
+            "search, not a link to the Act, and does not confirm the Act exists."
+        ),
+    )
+    verified: bool = Field(
+        False,
+        description=(
+            "True only when this server confirmed the document exists at "
+            "resolved_url against the authoritative source (TNA for neutral "
+            "citations, legislation.gov.uk for SIs). Always false from "
+            "citations_parse, and for citation types this server cannot check "
+            "(Act sections, law reports, retained EU law)."
+        ),
     )
     confidence: float = Field(
         ...,
-        description="Parse confidence 0.0–1.0. Citations below 0.7 are ambiguous and may have been sent for LLM disambiguation.",
+        description=(
+            "Parse confidence 0.0–1.0: how sure the parser is about the citation's "
+            "shape. Citations below 0.7 are ambiguous and may have been sent for "
+            "LLM disambiguation. 0.0 from citations_resolve means the source "
+            "confirmed the document does not exist. Existence is reported by "
+            "`verified`, not by a high confidence."
+        ),
         ge=0.0,
         le=1.0,
     )

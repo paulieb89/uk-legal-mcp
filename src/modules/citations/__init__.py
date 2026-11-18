@@ -1,8 +1,9 @@
 """
 citations sub-module — OSCOLA citation parser and resolver.
 
-Fully self-contained: no external API. Pure Python regex + optional LLM sampling.
-This is the primary differentiator of uk-legal-mcp.
+Parsing is pure regex (+ optional LLM sampling). Resolution and formatting
+verify existence against TNA Find Case Law (neutral citations) and
+legislation.gov.uk (SIs). This is the primary differentiator of uk-legal-mcp.
 """
 
 from fastmcp import FastMCP
@@ -15,18 +16,25 @@ citations_mcp = FastMCP(
     lifespan=inherited_http_lifespan,
     mask_error_details=True,
     instructions=(
-        "OSCOLA legal citation parser and resolver — pure regex, no external API "
-        "dependency. Supports: neutral citations ([2024] UKSC 12), law reports "
-        "([1994] 1 AC 212), legislation sections, Statutory Instruments, retained EU law.\n\n"
+        "OSCOLA legal citation parser, resolver and formatter. Supports: neutral "
+        "citations ([2024] UKSC 12), law reports ([1994] 1 AC 212), legislation "
+        "sections, Statutory Instruments, retained EU law. Parsing is pure regex; "
+        "resolving and formatting check existence against TNA Find Case Law "
+        "(neutral citations) and legislation.gov.uk (SIs).\n\n"
         "Tools:\n"
-        "  citations_parse — extract all citations from free text (judgment, memo, article).\n"
+        "  citations_parse — extract all citations from free text (judgment, memo, "
+        "article). No network call; every result has verified=false.\n"
         "  citations_resolve — resolve a single known citation to its canonical URL + "
-        "structured metadata.\n"
+        "structured metadata, verifying existence where the source allows.\n"
+        "  citations_format_oscola — format a citation string; it re-verifies the "
+        "citation itself and refuses one the source says does not exist.\n"
         "  citations_network — map all cases and legislation cited within a judgment "
         "(takes a TNA URI).\n\n"
         "ANTI-FABRICATION DISCIPLINE — when building an OSCOLA citation:\n"
         "  1. Call citations_resolve FIRST with the user-supplied citation\n"
-        "  2. Only if citations_resolve returns a structured result, format the OSCOLA string\n"
+        "  2. Treat only verified=true as confirmed. Act sections, law reports and "
+        "retained EU law cannot be checked here: say so rather than presenting them "
+        "as verified.\n"
         "  3. If citations_resolve cannot resolve, do NOT manufacture a citation from "
         "training data — report the unresolvable input honestly and ask the user for "
         "more context (court, year, or party names).\n\n"
@@ -35,8 +43,9 @@ citations_mcp = FastMCP(
         "guess. The fabrication failure mode (e.g. inventing '[1993] UKHL 19' for "
         "R v Brown when the correct citation is '[1994] 1 AC 212') is closed by this "
         "verify-first discipline.\n\n"
-        "On error, returns a {status, detail} envelope (status: ok|empty|not_found|"
-        "unknown_error). No upstream API — never returns auth_required / upstream_*."
+        "Failures raise structured errors with error_category: not_found (the source "
+        "confirmed the document does not exist), validation (bad or incomplete input), "
+        "transient (the source could not be reached — NOT evidence of absence)."
     ),
 )
 

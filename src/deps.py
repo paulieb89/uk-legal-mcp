@@ -35,8 +35,11 @@ import httpx
 from curl_cffi.requests import AsyncSession as CurlAsyncSession
 from curl_cffi.requests.exceptions import ConnectionError as CurlConnectionError
 from curl_cffi.requests.exceptions import HTTPError as CurlHTTPError
+from curl_cffi.requests.exceptions import RequestException as CurlRequestException
 from curl_cffi.requests.exceptions import Timeout as CurlTimeout
 from fastmcp import FastMCP
+from fastmcp.exceptions import NotFoundError as FastMCPNotFoundError
+from pydantic import ValidationError as PydanticValidationError
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware.caching import ResponseCachingMiddleware
 from key_value.aio.stores.memory import MemoryStore
@@ -225,6 +228,15 @@ class LegislationClient:
 
         return resp
 
+    async def head(self, url: str, **kwargs):
+        """HEAD a legislation URL. Used only by check_document_exists.
+
+        No 202/WAF handling: a HEAD carries no body to inspect, and any status
+        that is neither success nor a known absence is reported by the caller
+        as "could not verify", never as absent.
+        """
+        return await self._session.head(url, **kwargs)
+
     async def get_html(self, url: str, **kwargs):
         """GET an HTML legislation page.
 
@@ -395,6 +407,156 @@ def _raise_for_status(status: int, *, attempted: str, url: str) -> None:
                                       f"if it persists the upstream is blocking this client.{where}"))
     raise_tool_error("unknown", is_retryable=False, attempted=attempted,
                      description=f"Upstream returned {status}.{where}")
+
+
+# ---------------------------------------------------------------------------
+# Document existence check (TNA Find Case Law, legislation.gov.uk)
+# ---------------------------------------------------------------------------
+
+# Statuses that mean the upstream was reached and confirmed the document does
+# not exist. Everything else that is not a success (429, 5xx, a WAF 202, a
+# transport failure) means existence could not be checked: that is a transient
+# error, never "absent" (audit finding L3: a TNA 429 or 503 used to be reported
+# as the judgment not existing).
+TNA_ABSENT_STATUSES = frozenset({404, 410})
+# legislation.gov.uk answers a request for a document that does not exist with
+# 400, not 404 (probed 2026-11-18: uksi/2025/99999, uksi/2025/5000,
+# ukpga/2006/999 and uksi/2025/99999/data.xml all 400 on HEAD and GET, while
+# uksi/2018/1234 and ukpga/2006/46 are 200; a missing section of a real Act,
+# ukpga/2006/46/section/99999, is 404). The URLs checked here are built from
+# regex-validated integers, so a 400 cannot be a malformed request of ours.
+LEGISLATION_ABSENT_STATUSES = frozenset({400, 404, 410})
+
+EXISTENCE_CHECK_TIMEOUT = 3.0
+
+
+async def check_document_exists(
+    head,
+    url: str,
+    *,
+    attempted: str,
+    absent_statuses: frozenset[int] = TNA_ABSENT_STATUSES,
+    retries: int = 1,
+) -> bool:
+    """Ask the authoritative upstream whether a document exists.
+
+    `head` is an async callable taking (url, timeout=...) and returning a
+    response with .status_code — httpx.AsyncClient.head or LegislationClient.head.
+
+    Returns True when the upstream serves the document (2xx other than 202),
+    False when it answers with one of `absent_statuses`. Anything else — 429,
+    5xx, 202, an unexpected status, a timeout or connection failure — is retried
+    `retries` times and then raised as a structured `transient` ToolError: a
+    check that could not run is not evidence of absence.
+    """
+    last_problem = ""
+    for attempt in range(retries + 1):
+        if attempt:
+            await asyncio.sleep(0.5)
+        try:
+            resp = await head(url, timeout=EXISTENCE_CHECK_TIMEOUT)
+        except (httpx.TransportError, CurlRequestException, LegislationUpstreamError) as exc:
+            last_problem = f"{type(exc).__name__}"
+            continue
+        status = resp.status_code
+        if 200 <= status < 300 and status != 202:
+            return True
+        if status in absent_statuses:
+            return False
+        last_problem = f"HTTP {status}"
+    raise_tool_error(
+        "transient",
+        is_retryable=True,
+        attempted=attempted,
+        description=(
+            f"Could not verify that {url} exists ({last_problem} after "
+            f"{retries + 1} attempts). This is NOT evidence the document is absent; "
+            "retry shortly, and do not cite it as verified meanwhile."
+        ),
+    )
+    raise AssertionError("unreachable")  # raise_tool_error always raises
+
+
+def _is_unparseable_body(exc: BaseException) -> bool:
+    from lxml import etree
+
+    return isinstance(exc, (json.JSONDecodeError, etree.XMLSyntaxError, etree.ParserError))
+
+
+def _classifiable(exc: BaseException) -> bool:
+    return isinstance(
+        exc,
+        (httpx.HTTPError, CurlRequestException, LegislationUpstreamError),
+    ) or _is_unparseable_body(exc)
+
+
+def raise_structured_from_unhandled(exc: BaseException, *, attempted: str) -> None:
+    """Classify an exception that escaped a tool without a structured payload.
+
+    Walks the cause/context chain (FastMCP wraps an httpx timeout in a prose
+    ToolError and keeps the original as __cause__) for the first exception the
+    fleet taxonomy can classify: transport and status errors via
+    raise_http_tool_error, unparseable upstream bodies (JSON/XML/HTML parse
+    errors on a 200) as transient. Anything else is genuinely unexpected and
+    stays `unknown`, carrying its message.
+    """
+    from mcpfleet_obs import parse_error_payload
+
+    chain: list[BaseException] = []
+    cur: BaseException | None = exc
+    while cur is not None and cur not in chain and len(chain) < 8:
+        chain.append(cur)
+        cur = cur.__cause__ or cur.__context__
+    # A structured payload raised deeper down (e.g. inside a resource read the
+    # bridge wrapped) is the real answer: surface it unchanged.
+    for cur in chain:
+        if parse_error_payload(str(cur)) is not None:
+            raise ToolError(str(cur)) from exc
+    for cur in chain:
+        if isinstance(cur, PydanticValidationError):
+            raise_tool_error(
+                "validation", is_retryable=False, attempted=attempted,
+                description=f"Arguments rejected by the tool's input schema: {cur}",
+            )
+        if isinstance(cur, FastMCPNotFoundError):
+            raise_tool_error(
+                "not_found", is_retryable=False, attempted=attempted,
+                description=f"{cur} — check the URI or name against list_resources / list_prompts.",
+            )
+        if _is_unparseable_body(cur):
+            raise_tool_error(
+                "transient", is_retryable=True, attempted=attempted,
+                description=(
+                    f"Upstream returned a body that could not be parsed "
+                    f"({type(cur).__name__}) — typically an error or maintenance page "
+                    "served with status 200. Retry shortly."
+                ),
+            )
+        if _classifiable(cur):
+            raise_http_tool_error(cur, attempted=attempted)
+    raise_tool_error(
+        "unknown", is_retryable=False, attempted=attempted,
+        description=f"Unexpected error: {type(exc).__name__}: {exc}",
+    )
+
+
+def raise_resource_error(
+    exc: BaseException, *, attempted: str, missing: str | None = None,
+) -> None:
+    """Re-raise a resource-read failure as a ResourceError carrying the
+    structured payload (resources cannot raise ToolError to native clients).
+
+    `missing`, when given, is the not_found description for a KeyError from a
+    parser (the requested element is not in the document).
+    """
+    from fastmcp.exceptions import ResourceError
+
+    try:
+        if missing is not None and isinstance(exc, KeyError):
+            raise_tool_error("not_found", is_retryable=False, attempted=attempted, description=missing)
+        raise_structured_from_unhandled(exc, attempted=attempted)
+    except ToolError as structured:
+        raise ResourceError(str(structured)) from exc
 
 
 def raise_http_tool_error(exc: Exception, *, attempted: str) -> None:

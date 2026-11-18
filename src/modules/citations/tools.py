@@ -1,20 +1,27 @@
 """
-Tools for the citations module — OSCOLA citation parser and resolver.
+Tools for the citations module — OSCOLA citation parser, resolver and formatter.
 
-Fully self-contained: no external API. Pure Python regex + optional LLM sampling.
-This is the primary differentiator of uk-legal-mcp.
+Parsing is pure regex (+ optional LLM sampling). citations_resolve and
+citations_format_oscola check that the cited document exists, through
+deps.check_document_exists, against TNA (neutral citations) and
+legislation.gov.uk (SIs). Existence is reported as ParsedCitation.verified.
 """
 
-import asyncio
-import json
 import re
 import time
 from typing import Annotated, Literal
 
 import httpx
 from fastmcp import FastMCP, Context
-from fastmcp.exceptions import ToolError
 from pydantic import Field
+
+from ...deps import (
+    LEGISLATION_ABSENT_STATUSES,
+    TNA_ABSENT_STATUSES,
+    check_document_exists,
+    raise_http_tool_error,
+    raise_tool_error,
+)
 
 from .models import CitationNetwork, CitationParseResult, CitationType, ParsedCitation
 from .patterns import (
@@ -127,8 +134,10 @@ def _parse_citation_from_match(
         title = match.group(2).strip()
         year_m = re.search(r"\d{4}$", title)
         year = int(year_m.group()) if year_m else None
-        resolved = resolve_legislation(title, section)
-        return ParsedCitation(raw=raw, type=ctype, year=year, legislation_title=title, section=section, resolved_url=resolved, confidence=0.95)
+        # A title search is not a link to the Act (audit finding L2), so it goes
+        # in search_url and resolved_url stays null.
+        search = resolve_legislation(title, section)
+        return ParsedCitation(raw=raw, type=ctype, year=year, legislation_title=title, section=section, search_url=search, confidence=0.95)
 
     if ctype == CitationType.SI:
         si_year = int(match.group(1))
@@ -191,30 +200,38 @@ async def _disambiguate_citation(ctx: Context, citation: ParsedCitation) -> Pars
 
 
 # ---------------------------------------------------------------------------
-# TNA existence check helper
+# Existence check
 # ---------------------------------------------------------------------------
 
-async def _tna_head_check(client: httpx.AsyncClient, url: str) -> float | None:
-    """Verify a neutral citation against TNA Find Case Law.
+async def _verify_existence(ctx: Context, parsed: ParsedCitation, *, tool: str) -> ParsedCitation:
+    """Check the cited document exists and record the answer on the citation.
 
-    Returns 0.0 if TNA was reached and confirmed the document absent (non-200).
-    Returns None if TNA confirmed it present (200) — caller leaves confidence unchanged.
-    Raises ToolError with error_category/is_retryable/message on transport failure
-    after one retry (~6.5s worst case with 3s per-request timeout).
-    Non-transport exceptions propagate fail-loud.
+    Neutral citations are checked against TNA and SIs against legislation.gov.uk.
+    Present → verified=True. Confirmed absent → verified=False, confidence=0.0.
+    A check that could not run raises a transient ToolError (never "absent").
+    Other types are returned unchanged with verified=False: this server has no
+    cheap authoritative check for them.
     """
-    for attempt in range(2):
-        try:
-            resp = await client.head(url, timeout=3.0)
-            return 0.0 if resp.status_code != 200 else None
-        except httpx.TransportError as exc:
-            if attempt == 1:
-                raise ToolError(json.dumps({
-                    "error_category": "transient",
-                    "is_retryable": True,
-                    "message": f"TNA verification failed after retry ({type(exc).__name__}).",
-                })) from exc
-            await asyncio.sleep(0.5)
+    if not parsed.resolved_url:
+        return parsed
+    if parsed.type == CitationType.NEUTRAL:
+        client: httpx.AsyncClient = ctx.lifespan_context["http"]
+        head, absent, source = client.head, TNA_ABSENT_STATUSES, "TNA Find Case Law"
+    elif parsed.type == CitationType.SI:
+        head = ctx.lifespan_context["legislation_http"].head
+        absent, source = LEGISLATION_ABSENT_STATUSES, "legislation.gov.uk"
+    else:
+        return parsed
+
+    exists = await check_document_exists(
+        head,
+        parsed.resolved_url,
+        attempted=f"{tool}({parsed.raw!r}): {source} existence check",
+        absent_statuses=absent,
+    )
+    if exists:
+        return parsed.model_copy(update={"verified": True})
+    return parsed.model_copy(update={"verified": False, "confidence": 0.0})
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +276,8 @@ def register_tools(mcp: FastMCP) -> None:
         EWHC without division) can OPTIONALLY be disambiguated by setting
         disambiguate=True, which asks the CONNECTED CLIENT's own model (not this
         server) to resolve the division via MCP sampling — off by default.
-        Citations resolve to TNA / legislation.gov.uk URLs when possible.
+        Canonical TNA / legislation.gov.uk URLs are constructed where possible,
+        but nothing is checked: every result has verified=false.
 
         AFTER calling, pass each citation through citations_resolve to verify it
         points at a real document before quoting or formatting it — the parser
@@ -299,20 +317,21 @@ def register_tools(mcp: FastMCP) -> None:
     ) -> ParsedCitation:
         """USE THIS TOOL BEFORE constructing an OSCOLA citation string from known fields, OR to confirm a citation points at a real document.
 
-        Parses + resolves a single citation (neutral citation, SI, legislation
-        section, retained EU law) and returns parsed fields plus resolved_url.
-        For neutral citations, performs a live TNA HEAD check — non-200 sets
-        confidence to 0.0 (document absent). Do NOT format or quote a
-        confidence-0.0 citation.
+        Returns parsed fields plus resolved_url. Neutral citations are checked
+        live against TNA, SIs against legislation.gov.uk: verified=true means
+        the document exists; if the source confirms it does not, verified=false
+        and confidence=0.0 — do NOT format or quote that citation. Act
+        sections, law reports and retained EU law cannot be checked and come
+        back verified=false (Acts with a search_url, not a resolved_url):
+        present them as unverified.
 
-        If the TNA HEAD check fails (timeout, connection error), raises ToolError
-        with {"error_category": "transient", "is_retryable": true}. One retry is
-        attempted — retry this call or proceed without TNA verification.
+        A transient error means the check could not run (timeout, 429, 5xx) —
+        NOT that the document is absent; retry, or proceed without claiming
+        verification.
 
-        Formatting a citation from "known" fields without prior resolution is the
-        most common fabrication route. If this tool raises or returns no
-        resolved_url, do NOT manufacture a citation — surface the failure and ask
-        the user for the source URL.
+        AFTER calling, if this tool raises or returns no resolved_url, do NOT
+        manufacture a citation — surface the failure and ask the user for the
+        source URL.
 
         Authoritative source for UK legal-citation resolution.
         """
@@ -320,21 +339,17 @@ def register_tools(mcp: FastMCP) -> None:
         confident, ambiguous = _extract_all_citations(citation.strip(), patterns)
         all_found = confident + ambiguous
         if not all_found:
-            raise ValueError(
-                f"No recognised OSCOLA citation found in '{citation}'. "
-                f"Supported: [YYYY] COURT N, [YYYY] N SERIES PAGE, s.N Act YYYY, SI YYYY/N, Regulation (EU) YYYY/N"
+            raise_tool_error(
+                "validation",
+                is_retryable=False,
+                attempted=f"citations_resolve({citation!r})",
+                description=(
+                    f"No recognised OSCOLA citation found in {citation!r}. Supported: "
+                    "[YYYY] COURT N, [YYYY] N SERIES PAGE, s.N Act YYYY, SI YYYY/N, "
+                    "Regulation (EU) YYYY/N"
+                ),
             )
-        parsed = all_found[0]
-
-        # Live existence check for neutral citations — a URL being constructable
-        # is not the same as the judgment existing at that URL.
-        if parsed.resolved_url and parsed.type == CitationType.NEUTRAL:
-            client: httpx.AsyncClient = ctx.lifespan_context["http"]
-            new_confidence = await _tna_head_check(client, parsed.resolved_url)
-            if new_confidence is not None:
-                parsed = parsed.model_copy(update={"confidence": new_confidence})
-
-        return parsed
+        return await _verify_existence(ctx, all_found[0], tool="citations_resolve")
 
     @mcp.tool(
         name="network",
@@ -366,8 +381,11 @@ def register_tools(mcp: FastMCP) -> None:
         # here and caused content-negotiation issues on some URLs.
         client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
         uri = case_uri.lstrip("/")
-        resp = await client.get(f"{TNA_BASE}/{uri}/data.xml")
-        resp.raise_for_status()
+        try:
+            resp = await client.get(f"{TNA_BASE}/{uri}/data.xml")
+            resp.raise_for_status()
+        except Exception as exc:
+            raise_http_tool_error(exc, attempted=f"citations_network({case_uri!r})")
 
         patterns = _compile_patterns()
         confident, ambiguous = _extract_all_citations(resp.text, patterns)
@@ -395,28 +413,29 @@ def register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(
         name="format_oscola",
-        annotations={"title": "Format OSCOLA Citation String", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+        annotations={"title": "Format OSCOLA Citation String", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def citations_format_oscola(
         citation_type: Annotated[
             Literal["neutral", "law_report", "legislation", "si", "eu_retained"],
             Field(description="'type' field from citations_resolve result."),
         ],
+        ctx: Context,
         confidence: Annotated[
-            float,
+            float | None,
             Field(
                 description=(
-                    "'confidence' from citations_resolve. Refuses to format if 0.0 — "
-                    "that means TNA confirmed the document does not exist. Pass only "
-                    "the value citations_resolve returned; do not guess."
+                    "Ignored; accepted for compatibility with older callers. This tool "
+                    "verifies the citation against the source itself and does not "
+                    "trust a caller-reported confidence."
                 ),
                 ge=0.0,
                 le=1.0,
             ),
-        ],
+        ] = None,
         resolved_url: Annotated[
             str | None,
-            Field(description="'resolved_url' from citations_resolve. Must be non-null for neutral citations."),
+            Field(description="Ignored; accepted for compatibility. The URL is rebuilt from the citation fields and returned."),
         ] = None,
         year: Annotated[int | None, Field(description="'year' from citations_resolve.")] = None,
         court: Annotated[str | None, Field(description="'court' from citations_resolve, e.g. 'UKSC', 'EWCA CIV', 'EWHC (KB)'.")] = None,
@@ -432,73 +451,84 @@ def register_tools(mcp: FastMCP) -> None:
     ) -> dict:
         """USE THIS TOOL AFTER citations_resolve to produce the correctly formatted OSCOLA citation string.
 
-        Pass the parsed fields returned by citations_resolve directly into this
-        tool. Formats per OSCOLA 4th edition rules for each citation type.
+        Pass the fields citations_resolve returned. Formats per OSCOLA 4th
+        edition. This tool re-checks existence itself — neutral citations
+        against TNA, SIs against legislation.gov.uk — and does not take the
+        caller's word. Raises not_found if the source confirms the document
+        does not exist, validation for incomplete fields or an ambiguous court
+        (e.g. bare EWHC), transient if the check could not run (NOT evidence
+        of absence).
 
-        Refuses (status: upstream_validation) if confidence is 0.0 — TNA confirmed
-        the document does not exist — or if a neutral citation has no resolved_url
-        (ambiguous court code, e.g. bare EWHC without a division). In either case,
-        do NOT manufacture a citation; surface the failure and ask the user for
-        the source URL or better identifying details.
+        Returns the OSCOLA string with verified=true only when the document was
+        confirmed; Act sections, law reports and retained EU law are formatted
+        with verified=false — present them as unverified.
 
-        DO NOT construct the input fields yourself. The structured input must come
-        from citations_resolve — guessing fields is the primary citation-fabrication
-        route and this tool is the guard against it.
+        AFTER a refusal, do NOT manufacture a citation; ask the user for the
+        source URL or better identifying details. Never construct the input
+        fields yourself — guessed fields are the main fabrication route.
 
-        Authoritative OSCOLA formatting for UK legal citations (no network call).
+        Authoritative OSCOLA formatting for UK legal citations.
         """
-        if confidence == 0.0:
-            return {
-                "status": "upstream_validation",
-                "detail": (
-                    "Cannot format: citations_resolve returned confidence 0.0 — "
-                    "TNA confirmed this judgment does not exist at the resolved URL. "
-                    "Do not manufacture a citation. Ask the user for the source URL "
-                    "or better identifying details."
+        attempted = f"citations_format_oscola(citation_type={citation_type!r})"
+
+        def invalid(detail: str) -> None:
+            raise_tool_error("validation", is_retryable=False, attempted=attempted, description=detail)
+
+        if citation_type == "neutral" and not all([year, court, number]):
+            invalid("Neutral citation requires year, court, and number.")
+        if citation_type == "law_report" and not all([year, report_series, page]):
+            invalid("Law report citation requires year, report_series, and page.")
+        if citation_type == "legislation" and not all([section, legislation_title]):
+            invalid("Legislation citation requires section and legislation_title.")
+        if citation_type == "si" and not all([si_year, si_number]):
+            invalid("SI citation requires si_year and si_number.")
+        if citation_type == "eu_retained" and not raw:
+            invalid("EU retained law citation requires the raw field.")
+
+        oscola = _build_oscola(
+            citation_type, year, court, number,
+            report_series, volume, page,
+            legislation_title, section,
+            si_year, si_number, raw,
+        )
+
+        canonical_url: str | None = None
+        if citation_type == "neutral":
+            court_key = re.sub(r"\s+", " ", court or "").strip().upper()
+            canonical_url = resolve_neutral_citation(year, court_key, number)
+            if canonical_url is None:
+                invalid(
+                    f"Cannot format {oscola!r}: the court code {court!r} is ambiguous "
+                    "or unsupported (e.g. bare EWHC without a division), so it cannot "
+                    "be checked. Call citations_resolve, or ask the user for the full "
+                    "citation including the division."
+                )
+        elif citation_type == "si":
+            canonical_url = resolve_si(si_year, si_number)
+
+        check = ParsedCitation(
+            raw=oscola,
+            type=CitationType(citation_type),
+            resolved_url=canonical_url,
+            confidence=1.0,
+        )
+        checked = await _verify_existence(ctx, check, tool="citations_format_oscola")
+        if canonical_url and not checked.verified:
+            raise_tool_error(
+                "not_found",
+                is_retryable=False,
+                attempted=attempted,
+                description=(
+                    f"Refusing to format {oscola!r}: the source confirmed no document "
+                    f"exists at {canonical_url}. Do not manufacture a citation. Ask the "
+                    "user for the source URL or better identifying details."
                 ),
-                "is_retryable": False,
-            }
-
-        if citation_type == "neutral" and resolved_url is None:
-            return {
-                "status": "upstream_validation",
-                "detail": (
-                    "Cannot format: neutral citation has no resolved_url — the court "
-                    "code is ambiguous or unsupported (e.g. bare EWHC without a "
-                    "division). Call citations_resolve with disambiguate=True or ask "
-                    "the user for the full citation including the division."
-                ),
-                "is_retryable": False,
-            }
-
-        try:
-            if citation_type == "neutral" and not all([year, court, number]):
-                raise ValueError("Neutral citation requires year, court, and number.")
-            if citation_type == "law_report" and not all([year, report_series, page]):
-                raise ValueError("Law report citation requires year, report_series, and page.")
-            if citation_type == "legislation" and not all([section, legislation_title]):
-                raise ValueError("Legislation citation requires section and legislation_title.")
-            if citation_type == "si" and not all([si_year, si_number]):
-                raise ValueError("SI citation requires si_year and si_number.")
-            if citation_type == "eu_retained" and not raw:
-                raise ValueError("EU retained law citation requires the raw field.")
-
-            oscola = _build_oscola(
-                citation_type, year, court, number,
-                report_series, volume, page,
-                legislation_title, section,
-                si_year, si_number, raw,
             )
-        except ValueError as exc:
-            return {
-                "status": "upstream_validation",
-                "detail": str(exc),
-                "is_retryable": False,
-            }
 
         return {
             "status": "ok",
             "oscola": oscola,
             "citation_type": citation_type,
-            "resolved_url": resolved_url,
+            "resolved_url": canonical_url,
+            "verified": checked.verified,
         }

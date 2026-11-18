@@ -39,7 +39,10 @@ from fastmcp.server.transforms.resources_as_tools import _format_result
 from fastmcp.server.dependencies import get_context
 from fastmcp.tools import Tool
 from mcp.types import ToolAnnotations
-from mcpfleet_obs import install
+from fastmcp.exceptions import NotFoundError as FastMCPNotFoundError
+from fastmcp.exceptions import ToolError
+from fastmcp.server.middleware import Middleware
+from mcpfleet_obs import install, parse_error_payload
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -47,7 +50,11 @@ from curl_cffi.requests import AsyncSession as CurlAsyncSession
 
 from .deps import LegislationClient, LegislationUpstreamError, http_lifespan
 from .deps import PROJECT_VERSION as _PROJECT_VERSION
-from .deps import raise_tool_error
+
+# Commit the image was built from, passed as a Docker build arg by the deploy
+# workflows. "unknown" means a build that did not pass it (e.g. a local build).
+GIT_SHA = os.environ.get("GIT_SHA") or "unknown"
+from .deps import raise_http_tool_error, raise_structured_from_unhandled, raise_tool_error
 from .deps import response_cache
 from typing import Annotated
 
@@ -128,6 +135,30 @@ gateway.add_middleware(StructuredLoggingMiddleware(
 # tool_duration_seconds, build_info and /metrics. Adds ClientTrackingMiddleware
 # then FleetMetricsMiddleware — same position the local copies occupied.
 install(gateway, prefix="uk_legal")
+
+# Structured errors (issue #105). Sits INSIDE the fleet metrics middleware so
+# tool_calls_total sees the classified category. Any exception that reaches
+# here without a FleetErrorPayload — a raw httpx timeout, a parse error on an
+# HTML body, a prose ToolError FastMCP built around one of those — is
+# classified from its cause chain instead of surfacing as a masked
+# "Error calling tool" counted as `unknown`.
+class StructuredErrorMiddleware(Middleware):
+    async def on_call_tool(self, context, call_next):
+        try:
+            return await call_next(context)
+        except FastMCPNotFoundError:
+            # An unregistered tool name: mcpfleet-obs folds these into the
+            # `_unknown_` label by exception type, so leave it untouched.
+            raise
+        except ToolError as exc:
+            if parse_error_payload(str(exc)) is not None:
+                raise
+            raise_structured_from_unhandled(exc, attempted=context.message.name)
+        except Exception as exc:
+            raise_structured_from_unhandled(exc, attempted=context.message.name)
+
+
+gateway.add_middleware(StructuredErrorMiddleware())
 
 # Per-tool timing — logs "Tool 'X' completed in Y ms"
 gateway.add_middleware(DetailedTimingMiddleware())
@@ -338,12 +369,29 @@ def server_about() -> str:
 from fastmcp import Context  # noqa: E402 (after gateway instantiation)
 
 
+# TNA judgment slugs: lowercase court/division segments plus year and number,
+# e.g. uksc/2024/12, ewhc/kb/2024/1. A leading slash is tolerated (stripped).
+_SLUG_PATTERN = r"^/?[A-Za-z0-9_\-]+(/[A-Za-z0-9_\-]+)+/?$"
+
+
+async def _judgment_xml(ctx: Context, slug: str, *, attempted: str) -> str:
+    """Fetch a judgment's LegalDocML, raising structured errors (L4 / #105)."""
+    import httpx
+    client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
+    try:
+        resp = await client.get(f"{TNA_BASE}/{slug.strip('/')}/data.xml")
+        resp.raise_for_status()
+    except Exception as exc:
+        raise_http_tool_error(exc, attempted=attempted)
+    return resp.text
+
+
 @gateway.tool(
     name="judgment_get_header",
     annotations={"title": "Get Judgment Header", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
 )
 async def judgment_get_header(
-    slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450'", min_length=3, max_length=200)],
+    slug: Annotated[str, Field(description="Judgment slug from case_law_search, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450' — path segments of letters, digits, '-' or '_', no host or 'https://'.", min_length=3, max_length=200, pattern=_SLUG_PATTERN)],
     ctx: Context,
 ) -> dict:
     """USE THIS TOOL WHEN you have a judgment slug and need metadata (parties, judges, neutral citation, court, dates).
@@ -352,11 +400,16 @@ async def judgment_get_header(
     judgment_get_index to discover paragraphs, then judgment_get_paragraph to
     read specific ones. Authoritative source for UK judgment metadata.
     """
-    import httpx
-    client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
-    resp = await client.get(f"{TNA_BASE}/{slug.lstrip('/')}/data.xml")
-    resp.raise_for_status()
-    return {"slug": slug, "header": case_law_parsers.extract_header(resp.text)}
+    attempted = f"judgment_get_header(slug={slug!r})"
+    xml_text = await _judgment_xml(ctx, slug, attempted=attempted)
+    try:
+        header = case_law_parsers.extract_header(xml_text)
+    except KeyError:
+        raise_tool_error(
+            "not_found", is_retryable=False, attempted=attempted,
+            description=f"Judgment {slug!r} has no <header> element in its LegalDocML.",
+        )
+    return {"slug": slug, "header": header}
 
 
 @gateway.tool(
@@ -364,7 +417,7 @@ async def judgment_get_header(
     annotations={"title": "Get Judgment Paragraph Index", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
 )
 async def judgment_get_index(
-    slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12'", min_length=3, max_length=200)],
+    slug: Annotated[str, Field(description="Judgment slug from case_law_search, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450' — path segments of letters, digits, '-' or '_', no host or 'https://'.", min_length=3, max_length=200, pattern=_SLUG_PATTERN)],
     ctx: Context,
 ) -> dict:
     """USE THIS TOOL WHEN you have a judgment slug and want the paragraph navigation index (eId + preview line for every paragraph).
@@ -374,11 +427,8 @@ async def judgment_get_index(
     full text, or use case_law_grep_judgment for content search across all
     paragraphs.
     """
-    import httpx
-    client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
-    resp = await client.get(f"{TNA_BASE}/{slug.lstrip('/')}/data.xml")
-    resp.raise_for_status()
-    raw = case_law_parsers.extract_index(resp.text)
+    xml_text = await _judgment_xml(ctx, slug, attempted=f"judgment_get_index(slug={slug!r})")
+    raw = case_law_parsers.extract_index(xml_text)
     paragraphs = []
     for line in raw.strip().splitlines():
         if ":" in line:
@@ -392,8 +442,8 @@ async def judgment_get_index(
     annotations={"title": "Get Judgment Paragraph", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
 )
 async def judgment_get_paragraph(
-    slug: Annotated[str, Field(description="Judgment slug, e.g. 'uksc/2024/12'", min_length=3, max_length=200)],
-    eId: Annotated[str, Field(description="Paragraph eId from judgment_get_index, e.g. 'para_12'. Numeric strings like '12' are accepted and normalized to 'para_12'.", min_length=1, max_length=100)],
+    slug: Annotated[str, Field(description="Judgment slug from case_law_search, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450' — path segments of letters, digits, '-' or '_', no host or 'https://'.", min_length=3, max_length=200, pattern=_SLUG_PATTERN)],
+    eId: Annotated[str, Field(description="Paragraph eId from judgment_get_index, e.g. 'para_12'. Numeric strings like '12' are accepted and normalized to 'para_12'. Letters, digits, '_', '-' and '.' only.", min_length=1, max_length=100, pattern=r"^\s*[A-Za-z0-9_.\-]+\s*$")],
     ctx: Context,
 ) -> dict:
     """USE THIS TOOL WHEN you have a judgment slug + LegalDocML eId and want that paragraph's full text.
@@ -402,14 +452,22 @@ async def judgment_get_paragraph(
     case_law_grep_judgment to locate paragraphs by content). Returns the
     paragraph XML content (400–1,700 tokens typical).
     """
-    import httpx
-    client: httpx.AsyncClient = ctx.lifespan_context["xml_http"]
-    resp = await client.get(f"{TNA_BASE}/{slug.lstrip('/')}/data.xml")
-    resp.raise_for_status()
     normalized_eid = eId.strip()
     if normalized_eid.isdigit():
         normalized_eid = f"para_{normalized_eid}"
-    content = case_law_parsers.extract_paragraph(resp.text, normalized_eid)
+    attempted = f"judgment_get_paragraph(slug={slug!r}, eId={normalized_eid!r})"
+    xml_text = await _judgment_xml(ctx, slug, attempted=attempted)
+    try:
+        content = case_law_parsers.extract_paragraph(xml_text, normalized_eid)
+    except KeyError:
+        raise_tool_error(
+            "not_found", is_retryable=False, attempted=attempted,
+            description=(
+                f"Judgment {slug!r} has no paragraph with eId {normalized_eid!r}. "
+                "Call judgment_get_index for the valid eIds, or case_law_grep_judgment "
+                "to locate a paragraph by its content."
+            ),
+        )
     return {"slug": slug, "eId": normalized_eid, "content": content}
 
 
@@ -431,6 +489,8 @@ async def health(request: Request) -> Response:
     return JSONResponse({
         "status": "ok",
         "server": "uk-legal-mcp",
+        "version": _PROJECT_VERSION,
+        "git_sha": GIT_SHA,
         "modules": len(MOUNTED_MODULES),
     }, headers=CORS_HEADERS)
 

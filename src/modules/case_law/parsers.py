@@ -90,9 +90,11 @@ def extract_paragraph(xml_text: str, eId: str) -> str:
     native eIds, matches the synthetic eId derived from <num> text.
     """
     root = _root(xml_text)
-    el = root.find(f".//akn:paragraph[@eId='{eId}']", LEGALDOCML_NS)
+    all_paras = root.findall(".//akn:paragraph", LEGALDOCML_NS)
+    # Compare attributes in Python: interpolating a caller-supplied eId into the
+    # XPath expression let a quote break out of the predicate.
+    el = next((p for p in all_paras if p.get("eId") == eId), None)
     if el is None:
-        all_paras = root.findall(".//akn:paragraph", LEGALDOCML_NS)
         if not any(p.get("eId") for p in all_paras):
             for i, p in enumerate(all_paras, start=1):
                 if _synthetic_eid(p, i) == eId:

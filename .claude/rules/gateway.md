@@ -36,6 +36,10 @@ API-specific context belongs in the tool's except block before calling format_ht
 ## Middleware stack (order matters)
 1. ErrorHandlingMiddleware
 2. StructuredLoggingMiddleware
-3. DetailedTimingMiddleware
-4. Response caching (per-module config) — build it with `deps.response_cache(...)`, never `ResponseCachingMiddleware(...)` directly: the default store is unbounded (`tests/test_response_cache_bounds.py` enforces this)
+3. mcpfleet-obs `install()` (ClientTracking + FleetMetrics)
+4. StructuredErrorMiddleware — must stay INSIDE the metrics middleware so
+   tool_calls_total sees the classified category (#105). Leaves a direct
+   NotFoundError (unregistered tool name) untouched: obs folds it into `_unknown_`.
+5. DetailedTimingMiddleware
+6. Response caching (per-module config) — build it with `deps.response_cache(...)`, never `ResponseCachingMiddleware(...)` directly: the default store is unbounded (`tests/test_response_cache_bounds.py` enforces this)
 Do not reorder. Adding middleware at the wrong position silently breaks error propagation.

@@ -19,7 +19,7 @@ from ...xml_safe import parse_xml
 from pydantic import Field
 
 from ...deps import LegislationUpstreamError, format_http_error, raise_http_tool_error, raise_tool_error
-from .models import LegislationResult, LegislationSearchResult, LegislationSection, LegislationTOC
+from .models import LegislationResult, LegislationSearchResult, LegislationSection, LegislationTOC, LegislationType
 
 LEGISLATION_BASE = "https://www.legislation.gov.uk"
 
@@ -578,7 +578,7 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Get Legislation Section", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def legislation_get_section(
-        type: Annotated[str, Field(description="Legislation type code: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). Use the value from legislation_search results.", min_length=2, max_length=10)],
+        type: Annotated[LegislationType, Field(description="legislation.gov.uk type code, e.g. 'ukpga' (UK Acts), 'uksi' (UK SIs), 'asp' (Scottish Acts), 'ssi' (Scottish SIs), 'nia' (NI Acts), 'wsi' (Welsh SIs), 'eur' (retained EU regulations). Not 'act' or 'si'. Use the value from legislation_search results.")],
         year: Annotated[int, Field(description="Year of enactment", ge=1800, le=2100)],
         number: Annotated[int, Field(description="Chapter or SI number", ge=1)],
         section: Annotated[str, Field(description="Provision number, e.g. '47' or '12A' — works for Act sections, SI regulations, and SI articles alike. Use the numeric part only — not 'section-47'/'regulation-47'/'article-47'. Schedules are not currently supported.", min_length=1, max_length=50)],
@@ -648,7 +648,7 @@ def register_tools(mcp: FastMCP) -> None:
         annotations={"title": "Get Legislation Table of Contents", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     )
     async def legislation_get_toc(
-        type: Annotated[str, Field(description="Legislation type code: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). Use the value from legislation_search results.", min_length=2, max_length=10)],
+        type: Annotated[LegislationType, Field(description="legislation.gov.uk type code, e.g. 'ukpga' (UK Acts), 'uksi' (UK SIs), 'asp' (Scottish Acts), 'ssi' (Scottish SIs), 'nia' (NI Acts), 'wsi' (Welsh SIs), 'eur' (retained EU regulations). Not 'act' or 'si'. Use the value from legislation_search results.")],
         year: Annotated[int, Field(description="Year of enactment", ge=1800, le=2100)],
         number: Annotated[int, Field(description="Chapter or SI number", ge=1)],
         offset: Annotated[int, Field(description="Number of items to skip from the flattened TOC. Use with limit to page through very large statutes like the Companies Act 2006 (1300+ items).", ge=0)] = 0,
