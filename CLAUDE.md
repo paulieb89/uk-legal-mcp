@@ -127,6 +127,7 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 8. Set `annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}` on all tools (openWorldHint=False for pure-regex tools like citations_parse)
 9. **Content discipline:** description must be NEUTRAL PROCEDURAL ("USE WHEN searching tenancy case law"), NOT OPINIONATED ADVOCACY ("USE WHEN defending a tenant"). ChatGPT's broad audience may misread advocacy framing as legal advice
 10. Run `python -m py_compile` on the changed file before deploying
+11. Regenerate the public reference: `uv run python scripts/gen_reference.py` (captures the surface with `fastmcp inspect scripts/inspect_entry.py:gateway`; rewrites only the GENERATED tables in `docs/tool-reference.md`). A new tool namespace needs its own `<!-- BEGIN GENERATED: tools prefix=… -->` block. CI runs `--check`, which fails on drift or on a tool missing from every table.
 
 ## Adding a new module
 

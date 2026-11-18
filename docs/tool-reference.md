@@ -2,96 +2,140 @@
 
 This is the compact public reference for the uk-legal-mcp tool surface. Tool descriptions inside MCP clients carry more detailed routing guidance.
 
+The tables are generated from the live server (`fastmcp inspect`) by `scripts/gen_reference.py`; edit the prose, not the tables. CI fails when they drift.
+
 ## Case Law
 
-| Tool | What it does |
-|---|---|
-| `case_law_search` | Full-text search of UK judgments. Filter by court, judge, party, date range. |
-| `case_law_grep_judgment` | Pattern-match within a judgment; returns `{eId, snippet, match}` per hit. |
+<!-- BEGIN GENERATED: tools prefix=case_law_,judgment_ -->
+| Tool | Title | Summary |
+|---|---|---|
+| `judgment_get_header` | Get Judgment Header | Use when you have a judgment slug and need metadata (parties, judges, neutral citation, court, dates). |
+| `judgment_get_index` | Get Judgment Paragraph Index | Use when you have a judgment slug and want the paragraph navigation index (eId + preview line for every paragraph). |
+| `judgment_get_paragraph` | Get Judgment Paragraph | Use when you have a judgment slug + LegalDocML eId and want that paragraph's full text. |
+| `case_law_search` | Search UK Case Law | Use when searching UK case law by party names, court, judge, date, or free-text query. |
+| `case_law_grep_judgment` | Search within a UK Court Judgment | Use when you have a judgment slug and want to find paragraphs whose text matches a pattern. |
+<!-- END GENERATED -->
 
-| Resource | Returns |
-|---|---|
-| `judgment://{slug*}/header` | Metadata: parties, judges, neutral citation. |
-| `judgment://{slug*}/index` | Paragraph eId and first-line per row. |
-| `judgment://{slug*}/para/{eId}` | A single paragraph with its sub-paragraphs. |
+<!-- BEGIN GENERATED: templates prefix=judgment:// -->
+| Resource | Name | Summary |
+|---|---|---|
+| `judgment://{slug*}/header` | UK Court Judgment — metadata header | Metadata for a TNA judgment: parties, judges, neutral citation, court, dates. ~1,000 tokens. |
+| `judgment://{slug*}/index` | UK Court Judgment — paragraph index | Navigation index: 'eId: first_line' rows for every paragraph in the judgment (~4,000 tokens for a typical Supreme Court case). |
+| `judgment://{slug*}/para/{eId}` | UK Court Judgment — single paragraph | A single &lt;paragraph> element by its LegalDocML eId (e.g. 'para_12'). |
+<!-- END GENERATED -->
 
 ## Legislation
 
-| Tool | What it does |
-|---|---|
-| `legislation_search` | Find Acts and SIs by keyword. |
-| `legislation_get_toc` | Table of contents for an Act: parts, chapters, sections, schedules. |
-| `legislation_get_section` | A specific section with `extent`, `in_force`, `version_date`, and CLML XML or HTML fallback. |
+<!-- BEGIN GENERATED: tools prefix=legislation_ -->
+| Tool | Title | Summary |
+|---|---|---|
+| `legislation_search` | Search UK Legislation | Use when searching UK Acts and Statutory Instruments by title, phrase, or full-text. |
+| `legislation_get_section` | Get Legislation Section | Use when you have a known Act / SI and want the parsed text of a specific section, regulation, or article, with extent and in-force metadata. |
+| `legislation_get_toc` | Get Legislation Table of Contents | Use when you have a known Act / SI and want the structural table of contents (parts, chapters, individual sections/regulations/articles). |
+<!-- END GENERATED -->
 
-| Resource | Returns |
-|---|---|
-| `legislation://{type}/{year}/{number}/section/{section}{?date}` | CLML XML for a section; optional point-in-time date. |
-| `legislation://{type}/{year}/{number}/toc{?date}` | Flat `id: title` table of contents. |
+<!-- BEGIN GENERATED: templates prefix=legislation:// -->
+| Resource | Name | Summary |
+|---|---|---|
+| `legislation://{type}/{year}/{number}/section/{section}{?date}` | UK Legislation Section (CLML XML) | CLML XML for a specific section of an Act or SI. |
+| `legislation://{type}/{year}/{number}/toc{?date}` | UK Legislation Table of Contents | Flat table of contents (parts, chapters, sections, schedules) as a newline-separated 'id: title' list. |
+<!-- END GENERATED -->
 
 ## Parliament
 
-| Tool | What it does |
-|---|---|
-| `parliament_search_hansard` | Search Hansard contributions with citation-grade metadata plus corpus totals and debate/division previews. |
-| `parliament_policy_position_summary` | Deterministic facet counts on a topic: house, section, year, top debates. No LLM labels. |
-| `parliament_get_debate_divisions` | Divisions held within a debate. Chain via `id` to `votes_get_division`. |
-| `parliament_lookup_by_column` | Resolve a Hansard column citation to its debate across current, bound, and historic Hansard records. |
-| `parliament_find_member` | Name to integer member ID. |
-| `parliament_member_debates` | One member's Hansard contributions, optionally filtered by topic. |
-| `parliament_member_interests` | A member's registered financial interests. |
-| `parliament_search_petitions` | UK Parliament petitions by keyword. |
+<!-- BEGIN GENERATED: tools prefix=parliament_ -->
+| Tool | Title | Summary |
+|---|---|---|
+| `parliament_search_hansard` | Search Hansard Debates | Use when searching Hansard by topic, bill title, or text phrase. |
+| `parliament_policy_position_summary` | Hansard Policy Position Summary (deterministic facets) | Use when you want debate-level corpus signals on a topic — by_house, by_year, by_section breakdowns — without reading every contribution. |
+| `parliament_find_member` | Find Member of Parliament | Use when you have a member's name and need their integer member_id. |
+| `parliament_member_debates` | Get Member Debates | Use when you have a member_id and want contributions where THAT member used a specific topic phrase verbatim (text-body search). |
+| `parliament_member_interests` | Get Member Financial Interests | Use when you have a member_id and need their registered financial interests (donations, directorships, land, gifts). |
+| `parliament_search_petitions` | Search UK Parliament Petitions | Use when searching UK Parliament petitions by keyword or topic. |
+| `parliament_get_debate_divisions` | Get Divisions Held In A Debate | Use when you have a debate_ext_id and want the divisions (formal votes) held within it. |
+| `parliament_get_debate_contributions` | Get Contributions In A Debate | Use when you have a debate_ext_id and want verbatim contributions, optionally filtered to one member. |
+| `parliament_lookup_by_column` | Resolve A Hansard Column Citation | Use when you have an OSCOLA-style Hansard citation (column + volume + house) and need the debate. |
+<!-- END GENERATED -->
 
-| Resource | Returns |
-|---|---|
-| `hansard://debate/{ext_id}/header` | Debate overview and ordered contribution index with citable column numbers where available. |
-| `hansard://debate/{ext_id}/contribution/{ext_id}` | A single contribution's full text and metadata. |
-| `hansard://member/{id}/biography` | Government, opposition, and committee posts with start/end dates. |
+<!-- BEGIN GENERATED: templates prefix=hansard:// -->
+| Resource | Name | Summary |
+|---|---|---|
+| `hansard://debate/{debate_ext_id}/header` | Hansard Debate — header + ordered contribution index | Debate overview (title, date, house, location, volume) plus an ordered index of contributions in the debate: 'OrderInSection: AttributedTo [col_ref] — first 100 chars'. |
+| `hansard://debate/{debate_ext_id}/contribution/{contribution_ext_id}` | Hansard Contribution — single contribution full text | A single contribution's full text + member metadata + column reference, extracted from its parent debate. |
+| `hansard://member/{member_id}/biography` | UK Parliament Member — biography | Full biography from the Members API: constituency representations, house memberships, government posts, opposition posts, committee memberships, party affiliations. |
+<!-- END GENERATED -->
 
 ## Bills
 
-| Tool | What it does |
-|---|---|
-| `bills_search_bills` | Search current and historical Bills by keyword, session, or type. |
-| `bills_get_bill` | Full bill detail: stages, sponsors, publications. |
+<!-- BEGIN GENERATED: tools prefix=bills_ -->
+| Tool | Title | Summary |
+|---|---|---|
+| `bills_search_bills` | Search Parliamentary Bills | Use when searching UK parliamentary bills by keyword, session, house, or legislative stage. |
+| `bills_get_bill` | Get Bill Detail | Use when you have a bill_id (from bills_search_bills) and want the full detail. |
+<!-- END GENERATED -->
 
 ## Votes
 
-| Tool | What it does |
-|---|---|
-| `votes_search_divisions` | Search Commons and Lords divisions by keyword or date. |
-| `votes_get_division` | Full division detail: vote counts and per-member voting record. |
+<!-- BEGIN GENERATED: tools prefix=votes_ -->
+| Tool | Title | Summary |
+|---|---|---|
+| `votes_search_divisions` | Search Parliamentary Divisions | Use when searching Commons or Lords formal votes by topic, date, or member. |
+| `votes_get_division` | Get Division Detail | Use when you have a division_id + house and want the full member-by-member voting record. |
+<!-- END GENERATED -->
 
 ## Committees
 
-| Tool | What it does |
-|---|---|
-| `committees_search_committees` | Select committees by keyword. |
-| `committees_get_committee` | Committee detail: membership and sub-committees. |
-| `committees_search_businesses` | A committee's inquiries and other business, including status and report context. |
-| `committees_search_evidence` | Oral and written evidence submissions. |
+<!-- BEGIN GENERATED: tools prefix=committees_ -->
+| Tool | Title | Summary |
+|---|---|---|
+| `committees_search_committees` | Search Parliamentary Committees | Use when searching or listing UK parliamentary select committees by name, house, or active status. |
+| `committees_get_committee` | Get Committee Detail | Use when you have a committee_id and want the metadata + current membership. |
+| `committees_search_businesses` | Search Committee Inquiries and Business | Use when identifying a committee inquiry or business before evidence retrieval. |
+| `committees_search_evidence` | Search Committee Evidence | Use when retrieving committee evidence, especially for an identified inquiry. |
+<!-- END GENERATED -->
 
 ## Citations
 
-| Tool | What it does |
-|---|---|
-| `citations_parse` | Extract OSCOLA citations from free text. Resolves to canonical URLs where possible. |
-| `citations_resolve` | Parse and resolve a single citation string. |
-| `citations_network` | Fetch a judgment and map citations within it: cases, legislation, SIs, EU law. |
+<!-- BEGIN GENERATED: tools prefix=citations_ -->
+| Tool | Title | Summary |
+|---|---|---|
+| `citations_parse` | Parse OSCOLA Citations | Use when you have free text (a memo, an email, a clause) and want every OSCOLA-style citation it contains extracted and classified. |
+| `citations_resolve` | Resolve Single OSCOLA Citation | Use before constructing an OSCOLA citation string from known fields, OR to confirm a citation points at a real document. |
+| `citations_network` | Get Case Citation Network | Use when you have a judgment slug and want to map every citation it makes — cases cited, legislation referenced, SIs, retained EU law. |
+| `citations_format_oscola` | Format OSCOLA Citation String | Use after citations_resolve to produce the correctly formatted OSCOLA citation string. |
+<!-- END GENERATED -->
 
 Supported citation formats include neutral citations, law reports, legislation sections, Statutory Instruments, and retained EU law.
 
 ## HMRC
 
-| Tool | What it does |
-|---|---|
-| `hmrc_get_vat_rate` | VAT rate lookup for a commodity or service. |
-| `hmrc_check_mtd_status` | Check Making Tax Digital VAT mandate status for a VRN. Requires HMRC OAuth. |
-| `hmrc_search_guidance` | Search GOV.UK for HMRC guidance documents; result snippets are discovery metadata. |
-| `hmrc_get_manual_page` | Retrieve bounded, cited content from a canonical GOV.UK HMRC internal-manual page. |
+<!-- BEGIN GENERATED: tools prefix=hmrc_ -->
+| Tool | Title | Summary |
+|---|---|---|
+| `hmrc_get_vat_rate` | Get VAT Rate for Commodity | Use when you know the UK VAT category name for a good or service and want its VAT treatment. |
+| `hmrc_check_mtd_status` | Check MTD VAT Status | Use when you have a 9-digit VAT Registration Number and need that business's Making Tax Digital VAT mandate status. |
+| `hmrc_search_guidance` | Search HMRC Guidance | Use when discovering HMRC GOV.UK guidance on a topic. |
+| `hmrc_get_manual_page` | Read HMRC Internal Manual Page | Use when a cited HMRC internal-manual page must be read. |
+<!-- END GENERATED -->
 
 `hmrc_check_mtd_status` requires `HMRC_CLIENT_ID` and `HMRC_CLIENT_SECRET`. The server defaults to sandbox; set `HMRC_API_BASE=https://api.service.hmrc.gov.uk` for production.
 
-## Resource bridge
+## Resource bridge and generated tools
+
+<!-- BEGIN GENERATED: tools prefix=read_resource,list_resources,list_prompts,get_prompt -->
+| Tool | Title | Summary |
+|---|---|---|
+| `list_prompts` | list_prompts | List all available prompts. |
+| `get_prompt` | get_prompt | Get a prompt by name with optional arguments. |
+| `list_resources` | list_resources | List all available resources and resource templates. |
+| `read_resource` | read_resource | Read a registered server resource URI, not an ordinary web URL. |
+<!-- END GENERATED -->
+
+<!-- BEGIN GENERATED: resources -->
+| Resource | Name | Summary |
+|---|---|---|
+| `server://about` | About this server | Provenance, upstream APIs, and operational posture. |
+<!-- END GENERATED -->
 
 `read_resource` reads only the `judgment://`, `legislation://`, `hansard://`, and `server://` resource URIs exposed by this server. It does not fetch ordinary `https://` URLs. Use a source-specific tool for a cited web URL; canonical GOV.UK HMRC internal-manual URLs are retrieved with `hmrc_get_manual_page`.
 
@@ -99,9 +143,11 @@ Supported citation formats include neutral citations, law reports, legislation s
 
 Workflow templates are exposed as tools via `PromptsAsTools` for clients that cannot consume MCP prompts natively.
 
-| Prompt | Module | What it produces |
-|---|---|---|
-| `summarise_act` | legislation | Structured summary of a UK Act or SI. |
-| `compare_legislation` | legislation | Comparative analysis of two pieces of legislation on a topic. |
-| `policy_reception_review` | parliament | Citation-grade review of how a policy topic is being received in Parliament. |
-| `member_record_on_topic` | parliament | Citable evidence pack of a named member's contributions on a topic. |
+<!-- BEGIN GENERATED: prompts -->
+| Prompt | Summary |
+|---|---|
+| `legislation_summarise_act` | Summarise a UK Act of Parliament or Statutory Instrument. |
+| `legislation_compare_legislation` | Compare two pieces of UK legislation on a specific topic. |
+| `parliament_policy_reception_review` | Review how a policy topic is being received in Parliament, with citable evidence. |
+| `parliament_member_record_on_topic` | Assemble the citable record of a parliamentarian's contributions on a topic. |
+<!-- END GENERATED -->

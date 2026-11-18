@@ -105,3 +105,9 @@ asyncio_mode = "strict"
 markers = [
     "live: hits live external APIs — excluded from offline CI (deselect with -m 'not live')",
 ]
+
+[tool.reference-tables]
+# scripts/gen_reference.py: fastmcp inspect entry and the docs whose
+# GENERATED tables it rewrites.
+entry = "scripts/inspect_entry.py:gateway"
+docs = ["docs/tool-reference.md"]
