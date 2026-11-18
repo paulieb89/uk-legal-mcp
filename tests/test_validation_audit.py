@@ -124,7 +124,7 @@ async def test_invalid_type_code_is_a_validation_error(client, tool, monkeypatch
         args["section"] = "47"
     with pytest.raises(ToolError) as exc_info:
         await client.call_tool(tool, args)
-    assert "ukpga" in str(exc_info.value) or "type" in str(exc_info.value)
+    assert json.loads(str(exc_info.value))["error_category"] == "validation"
     assert calls == []
 
 

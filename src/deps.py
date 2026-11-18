@@ -39,6 +39,7 @@ from curl_cffi.requests.exceptions import RequestException as CurlRequestExcepti
 from curl_cffi.requests.exceptions import Timeout as CurlTimeout
 from fastmcp import FastMCP
 from fastmcp.exceptions import NotFoundError as FastMCPNotFoundError
+from pydantic import ValidationError as PydanticValidationError
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware.caching import ResponseCachingMiddleware
 from key_value.aio.stores.memory import MemoryStore
@@ -512,6 +513,11 @@ def raise_structured_from_unhandled(exc: BaseException, *, attempted: str) -> No
         if parse_error_payload(str(cur)) is not None:
             raise ToolError(str(cur)) from exc
     for cur in chain:
+        if isinstance(cur, PydanticValidationError):
+            raise_tool_error(
+                "validation", is_retryable=False, attempted=attempted,
+                description=f"Arguments rejected by the tool's input schema: {cur}",
+            )
         if isinstance(cur, FastMCPNotFoundError):
             raise_tool_error(
                 "not_found", is_retryable=False, attempted=attempted,
