@@ -66,6 +66,8 @@ fly secrets set HMRC_CLIENT_ID=xxx HMRC_CLIENT_SECRET=xxx --app uk-legal-mcp
 - **Docstrings are load-bearing.** Field descriptions on Pydantic input models directly control how LLMs call the tools. When changing a parameter's behavior (e.g. phrase search vs keyword search), update the Field description to match. See commit `cd2b3a6` for the full audit of what went wrong and how it was fixed.
 
 - **Errors raise through one helper.** `deps.py:raise_http_tool_error(exc, attempted=...)` converts any upstream exception into a structured `ToolError` carrying `error_category` / `is_retryable` / `attempted` / `description`. It handles httpx AND curl_cffi (the legislation client is curl_cffi — an httpx-only match silently drops every legislation error into `unknown`). `deps.py:format_http_error()` is LEGACY, returns a prose string, and must not be used in new code. Do not put API-specific error messages in generic handlers — the 403 message used to blame TNA for all 403s including Hansard.
+  - **Safety net, not a substitute:** `gateway.py:StructuredErrorMiddleware` sits *inside* the mcpfleet-obs metrics middleware and classifies anything that still escapes a tool without a structured payload, via `deps.raise_structured_from_unhandled` (walks the cause chain: transport/status errors → `raise_http_tool_error`, unparseable 200 bodies → `transient`, pydantic schema rejections → `validation`, FastMCP `NotFoundError` → `not_found`; only the genuinely unexpected stays `unknown`). It lets a direct `NotFoundError` for an unregistered tool name pass so obs folds it into `_unknown_`. Resources use `deps.raise_resource_error`. Still classify at the call site where the category carries meaning (e.g. a missing paragraph is `not_found`). `tests/test_every_tool_structured_errors.py` forces a timeout and an HTML body under every registered tool and fails when a new tool has no entry (#105).
+  - **Existence checks go through `deps.check_document_exists`** (TNA HEAD for judgments, legislation.gov.uk HEAD for SIs). Absent means a status in `TNA_ABSENT_STATUSES` (404/410) or `LEGISLATION_ABSENT_STATUSES` (400/404/410 — legislation.gov.uk answers a missing document with 400). 429, 5xx and transport failures are `transient`, never "absent".
 
 - **Caches and metric labels are bounded.** Build response caches with `deps.response_cache(...)`, never `ResponseCachingMiddleware(...)` directly: the default store is unbounded and this process has a fixed memory budget (`CACHE_MAX_ENTRIES`, default 300 per collection; `tests/test_response_cache_bounds.py` enforces it). Metric labels that take client-controlled values are capped: `tool` is the registered name or `unknown`, `client_name` keeps the first `CLIENT_LABEL_MAX` (40) distinct values then `other`.
 
@@ -83,7 +85,7 @@ fly secrets set HMRC_CLIENT_ID=xxx HMRC_CLIENT_SECRET=xxx --app uk-legal-mcp
 | votes | `commonsvotes-api.parliament.uk` | JSON. Public. 25/page hard cap. |
 | votes | `lordsvotes-api.parliament.uk` | JSON. Public. Has `isGovernmentWin` field. |
 | committees | `committees-api.parliament.uk` | JSON. Public, no auth. |
-| citations | None | Pure regex. Self-contained. |
+| citations | `caselaw.nationalarchives.gov.uk`, `legislation.gov.uk` | Parsing is pure regex; `citations_resolve`/`citations_format_oscola` HEAD-check existence (`verified`). `format_oscola` ignores the caller's `confidence`. |
 | hmrc | `test-api.service.hmrc.gov.uk` (sandbox default) | OAuth 2.0. Set `HMRC_API_BASE` for production. |
 | hmrc | `www.gov.uk/api/search.json` | Public GOV.UK search. |
 
@@ -118,9 +120,9 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 1. Add input model (Pydantic `BaseModel` with `ConfigDict(extra="forbid")`) and Field descriptions
 2. Add tool function inside `register_tools(mcp)` in the module's `tools.py`
 3. Use `ctx.lifespan_context["http"]` for JSON APIs, `ctx.lifespan_context["xml_http"]` for XML
-4. Return a typed Pydantic model (or a dict), NOT a JSON string. FastMCP derives `outputSchema` from the return annotation and populates `structuredContent` — returning `str` collapses that to `{"type": "string"}` and loses structured output, which 2026 clients rely on. All 35 tools currently return object schemas; keep it that way.
+4. Return a typed Pydantic model (or a dict), NOT a JSON string. FastMCP derives `outputSchema` from the return annotation and populates `structuredContent` — returning `str` collapses that to `{"type": "string"}` and loses structured output, which 2026 clients rely on. Every tool currently returns an object schema; keep it that way.
 5. **Write the tool description in the 4-part pattern**: USE WHEN... / what it returns / AFTER calling, call X if Y / authoritative-source clause. See [`docs/internal/chatgpt-workflow-encoding.md`](docs/internal/chatgpt-workflow-encoding.md). The description is the ONLY workflow-teaching layer ChatGPT users see.
-6. Wrap all external calls in try/except routed through the structured envelope (status: ok|empty|auth_required|upstream_validation|upstream_timeout|upstream_unavailable|not_found|unknown_error). Empty/error envelopes carry `next_steps` or `detail` so the agent doesn't fall back to confabulation (Obs 183).
+6. Wrap all external calls in try/except and **raise** through `raise_http_tool_error` / `raise_tool_error` (see "Errors raise through one helper") — never return a `{"status": ...}` error result from a tool, which reads as success to the client and metrics. Only resources serialise envelopes (`.claude/rules/error-handling.md`). Errors carry a `description` so the agent doesn't fall back to confabulation (Obs 183). Add the tool to `TOOL_ARGS` in `tests/test_every_tool_structured_errors.py`.
 7. **External XML must go through `src/xml_safe.py:parse_xml`** — never call `lxml.etree.fromstring` directly. defusedxml prevents XXE / billion-laughs / external-DTD attacks.
 8. Set `annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}` on all tools (openWorldHint=False for pure-regex tools like citations_parse)
 9. **Content discipline:** description must be NEUTRAL PROCEDURAL ("USE WHEN searching tenancy case law"), NOT OPINIONATED ADVOCACY ("USE WHEN defending a tenant"). ChatGPT's broad audience may misread advocacy framing as legal advice
@@ -139,6 +141,7 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 - Offline tests read committed fixtures from `tests/fixtures/` (provenance in its `README.md`). `tests/live/fixtures/` is gitignored scratch space for live captures; no test may depend on it.
 - Domain modules that hit live APIs are exercised by `audit_*` scripts and manual/dogfeed testing via Claude Desktop, ChatGPT, or MCP Inspector.
 - `.github/workflows/ci.yml` runs the non-live suite on every pull request and every push to `main`, and `release.yml` runs it again before anything is published. Run it locally before pushing rather than finding out in CI.
+- `tests/live/validation_audit_calls.py` re-runs the 2026-11-17 validation audit's calls (plus controls on real documents) against a deployed server and prints `/health` version + git_sha, the recorded before, the expected after, and the actual result; exits 1 on any failure. Default URL is staging; pass `--url https://uk-legal-mcp.fly.dev/mcp` for prod. Not collected by pytest.
 - Test discipline: prefer smoke tests + real runtime probes over fitted unit tests that just restate the implementation (see auto-memory `no-fitted-tests`).
 
 ## Deployment
@@ -146,6 +149,14 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 - Production deploys only through `.github/workflows/release.yml`, which runs when a GitHub release is published: the non-live suite must pass, then PyPI publish, then `flyctl deploy`. Don't run `fly deploy` by hand (project settings deny it); it skips PyPI, so the published and live versions drift. Dockerfile copies `src/` only (tests excluded via `.dockerignore`).
 - Version consistency is asserted, not trusted: `scripts/check_version_sync.py` checks `pyproject.toml`, `[tool.bumpversion]` and both `server.json` entries agree, in `ci.yml` and (with `--expect <tag>`) in `release.yml`, so a release cut from the wrong version cannot publish. `scripts/check-deploy-drift.sh` reports whether production, PyPI and the latest tag agree.
 - Use the `/release` skill (`.claude/skills/release/SKILL.md`) to cut a release — it's the procedure around this machinery (version bump, CHANGELOG, release-prep PR, tag, `gh release create`, then verifying what actually shipped), not a replacement for it.
+- `/health` reports `version` and `git_sha`. `GIT_SHA` is a Docker build arg passed by `deploy-staging.yml` (checked-out commit) and `release.yml` (`github.sha`, the tag's commit); a hand-built image reports `unknown`.
+- **Release gates** (on top of the `/release` skill):
+  - The only approval gate is `gh release create`. Feature and release-prep PRs may be merged once "Non-live tests" passes.
+  - One repo at a time: release, verify prod, then the next. If a prod check fails, stop and give the rollback.
+  - After merging to `main`, before tagging: staging redeploys from `main`; confirm `/health` git_sha is the merge commit and `tests/live/validation_audit_calls.py` passes.
+  - Before asking for the gate, state the rollback: the previous Fly image (`fly releases -a uk-legal-mcp --image`), the command the user runs (`fly deploy -a uk-legal-mcp --image <previous>` — project settings deny it to agents; no rollback workflow yet, #91), and the PyPI yank page (`https://pypi.org/manage/project/uk-legal-mcp/release/<version>/` — yanking is web-only).
+  - After release: prod `/health` shows the version and the tag's SHA, `scripts/check-deploy-drift.sh` passes, and the live script passes against prod and through uk-business-mcp (live proxy, tools prefixed `law_`).
+  - A branch staging deploy must run the branch's workflow: `gh workflow run deploy-staging.yml --ref <branch> -f ref=<branch>` (`--ref main` runs main's workflow file).
 - One machine in `lhr` (deployed with `--ha=false`); `fly.toml` sets `auto_stop_machines = "off"` and `min_machines_running = 1`.
 - The "not listening on expected address" warning during rolling deploy is transient — the machine reaches good state immediately after.
 - Secrets are set via `fly secrets set` and persist across deploys.
