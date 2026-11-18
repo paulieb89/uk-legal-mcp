@@ -55,11 +55,23 @@ Changes: [CHANGELOG 0.11.0](../../CHANGELOG.md), PRs #107 (fixes) and #111 (rele
 - `fastmcp inspect` can't load `src/gateway.py` (relative imports) — use
   `scripts/inspect_entry.py:gateway`.
 
+## Later the same day (fleet)
+
+- README `## Connect` section (#117). Local stdio here works (`uvx uk-legal-mcp`,
+  tested against a scratch Claude Code config); DD's and govuk's doesn't (their
+  console scripts start HTTP).
+- uk-business-mcp 0.4.1 (FastMCP 4.1.8, `GET /mcp` 405) and govuk-mcp 0.3.2
+  shipped. govuk's overload was clients (mostly Claude Code) holding its own
+  `GET /mcp` streams open, not the proxy. This server already returned 405 and
+  was unaffected.
+
 ## Open issues
 
-#108 · #109 · #110 · #91
+#116 · #108 · #109 · #110 · #91
 
 ## Recommended next step
+
+**AMENDED 2026-11-18:** first FastMCP 4.1.3 → 4.1.8 (#116) with DD and govuk, so the fleet runs one patch; DD and govuk then copy this repo's `main_stdio` for their stdio entry points. Previously:
 
 #91 (an authorised rollback workflow): today a rollback is a `fly deploy
 --image` the user must run by hand. Then the three #105 follow-ups.
