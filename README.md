@@ -20,15 +20,33 @@ For best results, tell your assistant to use the `uk-legal-mcp` server and not t
 
 ---
 
-## Quick Start
+## Connect
 
-Use the hosted MCP endpoint:
+Hosted endpoint — no install, no API key:
 
 ```text
 https://uk-legal-mcp.fly.dev/mcp
 ```
 
-For clients that use `mcpServers` JSON:
+### Claude (web, desktop and mobile)
+
+1. Open **Customize → Connectors** ([claude.ai/customize/connectors](https://claude.ai/customize/connectors)).
+2. Click **Add custom connector**.
+3. Name it `uk-legal`, paste the URL above and click **Add**. No sign-in is needed.
+
+That's it — no config file to edit and no restart. Add the connector on web or desktop, and it's then available on your account, including the mobile apps. Turn it on or off per chat from the **+** menu → **Connectors**. On Team and Enterprise plans an Owner adds it once under **Organization settings → Connectors**; Free plans can add one custom connector.
+
+### Claude Code
+
+If you've added the connector above, Claude Code lists it under `/mcp` — but only when Claude Code is signed in with your claude.ai subscription login, not an API key. Otherwise, add it directly:
+
+```bash
+claude mcp add --transport http --scope user uk-legal https://uk-legal-mcp.fly.dev/mcp
+```
+
+### Other clients
+
+VS Code and Cursor: use the install badges at the top of this page. For clients configured with `mcpServers` JSON:
 
 ```json
 {
@@ -41,13 +59,20 @@ For clients that use `mcpServers` JSON:
 }
 ```
 
-For local stdio use:
+### Run it locally (stdio)
+
+Local mode uses your own IP rather than a shared cloud IP, which can be more reliable for very large Acts.
+
+Claude Code:
 
 ```bash
-uvx uk-legal-mcp
+claude mcp add --scope user uk-legal -- uvx uk-legal-mcp
 ```
 
-Claude Desktop local config:
+<details>
+<summary>Claude Desktop and other <code>mcpServers</code> clients</summary>
+
+Claude Desktop runs local servers either as a packaged desktop extension (`.mcpb`, installed from **Settings → Extensions**) or from `claude_desktop_config.json`. There's no `.mcpb` for this server yet, so for local mode add this to the config file (**Settings → Developer → Edit Config**) and restart the app. For everyday use the hosted connector above is simpler.
 
 ```json
 {
@@ -60,7 +85,9 @@ Claude Desktop local config:
 }
 ```
 
-If a hosted tool stops responding, refresh the server from your client's Apps / Customise menu. For very large Acts, local mode can be more reliable because it uses your own IP rather than a shared cloud IP.
+</details>
+
+If a hosted tool stops responding, refresh the server from your client's connector settings (in Claude, **Customize → Connectors**).
 
 ---
 
