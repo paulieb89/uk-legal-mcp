@@ -2,6 +2,24 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [0.11.0] — 2026-11-18
+
+### Breaking
+
+- `citations_format_oscola` verifies the citation itself and raises `not_found` / `validation` instead of returning a status result. The `confidence` argument is no longer used.
+- `citations_resolve` adds `verified` and `search_url`; for Acts, `resolved_url` is null and the search link is in `search_url`.
+
+### Fixed
+
+- SIs are verified against legislation.gov.uk; a citation the source confirms absent scores 0.0.
+- Rate limits and server errors from TNA or legislation.gov.uk raise a transient error instead of marking a document absent.
+- `judgment_get_paragraph` returns `not_found` naming a missing eId; unhandled tool errors are now classified (#105).
+- `legislation_get_section` and `legislation_get_toc` reject unknown type codes.
+
+### Added
+
+- `/health` reports `version` and `git_sha`.
+
 ## [0.10.0] — 2026-11-15
 
 ### Changed
