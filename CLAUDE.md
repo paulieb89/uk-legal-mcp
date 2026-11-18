@@ -151,13 +151,7 @@ Together they cover the four layers a parser can silently fail at: **wire-in par
 - Version consistency is asserted, not trusted: `scripts/check_version_sync.py` checks `pyproject.toml`, `[tool.bumpversion]` and both `server.json` entries agree, in `ci.yml` and (with `--expect <tag>`) in `release.yml`, so a release cut from the wrong version cannot publish. `scripts/check-deploy-drift.sh` reports whether production, PyPI and the latest tag agree.
 - Use the `/release` skill (`.claude/skills/release/SKILL.md`) to cut a release — it's the procedure around this machinery (version bump, CHANGELOG, release-prep PR, tag, `gh release create`, then verifying what actually shipped), not a replacement for it.
 - `/health` reports `version` and `git_sha`. `GIT_SHA` is a Docker build arg passed by `deploy-staging.yml` (checked-out commit) and `release.yml` (`github.sha`, the tag's commit); a hand-built image reports `unknown`.
-- **Release gates** (on top of the `/release` skill):
-  - The only approval gate is `gh release create`. Feature and release-prep PRs may be merged once "Non-live tests" passes.
-  - One repo at a time: release, verify prod, then the next. If a prod check fails, stop and give the rollback.
-  - After merging to `main`, before tagging: staging redeploys from `main`; confirm `/health` git_sha is the merge commit and `tests/live/validation_audit_calls.py` passes.
-  - Before asking for the gate, state the rollback: the previous Fly image (`fly releases -a uk-legal-mcp --image`), the command the user runs (`fly deploy -a uk-legal-mcp --image <previous>` — project settings deny it to agents; no rollback workflow yet, #91), and the PyPI yank page (`https://pypi.org/manage/project/uk-legal-mcp/release/<version>/` — yanking is web-only).
-  - After release: prod `/health` shows the version and the tag's SHA, `scripts/check-deploy-drift.sh` passes, and the live script passes against prod and through uk-business-mcp (live proxy, tools prefixed `law_`).
-  - A branch staging deploy must run the branch's workflow: `gh workflow run deploy-staging.yml --ref <branch> -f ref=<branch>` (`--ref main` runs main's workflow file).
+- **Release gates** — one approval gate at `gh release create`, one repo at a time, rollback stated before the gate, staging re-verified from `main` before tagging, prod and proxy checks after — live in the `/release` skill (`.claude/skills/release/SKILL.md`), shared in substance with uk-due-diligence-mcp and uk-business-mcp.
 - One machine in `lhr` (deployed with `--ha=false`); `fly.toml` sets `auto_stop_machines = "off"` and `min_machines_running = 1`.
 - The "not listening on expected address" warning during rolling deploy is transient — the machine reaches good state immediately after.
 - Secrets are set via `fly secrets set` and persist across deploys.
