@@ -1148,11 +1148,11 @@
       "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
-        "openWorldHint": false,
+        "openWorldHint": true,
         "readOnlyHint": true,
         "title": "Format OSCOLA Citation String"
       },
-      "description": "USE THIS TOOL AFTER citations_resolve to produce the correctly formatted OSCOLA citation string.\n\nPass the parsed fields returned by citations_resolve directly into this\ntool. Formats per OSCOLA 4th edition rules for each citation type.\n\nRefuses (status: upstream_validation) if confidence is 0.0 \u2014 TNA confirmed\nthe document does not exist \u2014 or if a neutral citation has no resolved_url\n(ambiguous court code, e.g. bare EWHC without a division). In either case,\ndo NOT manufacture a citation; surface the failure and ask the user for\nthe source URL or better identifying details.\n\nDO NOT construct the input fields yourself. The structured input must come\nfrom citations_resolve \u2014 guessing fields is the primary citation-fabrication\nroute and this tool is the guard against it.\n\nAuthoritative OSCOLA formatting for UK legal citations (no network call).",
+      "description": "USE THIS TOOL AFTER citations_resolve to produce the correctly formatted OSCOLA citation string.\n\nPass the fields citations_resolve returned. Formats per OSCOLA 4th\nedition. This tool re-checks existence itself \u2014 neutral citations\nagainst TNA, SIs against legislation.gov.uk \u2014 and does not take the\ncaller's word. Raises not_found if the source confirms the document\ndoes not exist, validation for incomplete fields or an ambiguous court\n(e.g. bare EWHC), transient if the check could not run (NOT evidence\nof absence).\n\nReturns the OSCOLA string with verified=true only when the document was\nconfirmed; Act sections, law reports and retained EU law are formatted\nwith verified=false \u2014 present them as unverified.\n\nAFTER a refusal, do NOT manufacture a citation; ask the user for the\nsource URL or better identifying details. Never construct the input\nfields yourself \u2014 guessed fields are the main fabrication route.\n\nAuthoritative OSCOLA formatting for UK legal citations.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1168,10 +1168,18 @@
             "type": "string"
           },
           "confidence": {
-            "description": "'confidence' from citations_resolve. Refuses to format if 0.0 \u2014 that means TNA confirmed the document does not exist. Pass only the value citations_resolve returned; do not guess.",
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "type": "number"
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Ignored; accepted for compatibility with older callers. This tool verifies the citation against the source itself and does not trust a caller-reported confidence."
           },
           "court": {
             "anyOf": [
@@ -1255,7 +1263,7 @@
               }
             ],
             "default": null,
-            "description": "'resolved_url' from citations_resolve. Must be non-null for neutral citations."
+            "description": "Ignored; accepted for compatibility. The URL is rebuilt from the citation fields and returned."
           },
           "section": {
             "anyOf": [
@@ -1319,8 +1327,7 @@
           }
         },
         "required": [
-          "citation_type",
-          "confidence"
+          "citation_type"
         ],
         "type": "object"
       },
@@ -1428,7 +1435,7 @@
         "readOnlyHint": true,
         "title": "Parse OSCOLA Citations"
       },
-      "description": "USE THIS TOOL WHEN you have free text (a memo, an email, a clause) and want every OSCOLA-style citation it contains extracted and classified.\n\nIdentifies: neutral citations ([2024] UKSC 12), law reports ([2024] 1 WLR\n100), legislation sections (s.47 Companies Act 2006), SIs (SI 2018/1234),\nretained EU law (Regulation (EU) 2016/679).\n\nParsing is pure regex by default. Ambiguous citations (e.g. bare [2024]\nEWHC without division) can OPTIONALLY be disambiguated by setting\ndisambiguate=True, which asks the CONNECTED CLIENT's own model (not this\nserver) to resolve the division via MCP sampling \u2014 off by default.\nCitations resolve to TNA / legislation.gov.uk URLs when possible.\n\nAFTER calling, pass each citation through citations_resolve to verify it\npoints at a real document before quoting or formatting it \u2014 the parser\nrecognises the SHAPE of a citation but does not confirm the document\nexists.",
+      "description": "USE THIS TOOL WHEN you have free text (a memo, an email, a clause) and want every OSCOLA-style citation it contains extracted and classified.\n\nIdentifies: neutral citations ([2024] UKSC 12), law reports ([2024] 1 WLR\n100), legislation sections (s.47 Companies Act 2006), SIs (SI 2018/1234),\nretained EU law (Regulation (EU) 2016/679).\n\nParsing is pure regex by default. Ambiguous citations (e.g. bare [2024]\nEWHC without division) can OPTIONALLY be disambiguated by setting\ndisambiguate=True, which asks the CONNECTED CLIENT's own model (not this\nserver) to resolve the division via MCP sampling \u2014 off by default.\nCanonical TNA / legislation.gov.uk URLs are constructed where possible,\nbut nothing is checked: every result has verified=false.\n\nAFTER calling, pass each citation through citations_resolve to verify it\npoints at a real document before quoting or formatting it \u2014 the parser\nrecognises the SHAPE of a citation but does not confirm the document\nexists.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1459,7 +1466,7 @@
               "description": "A single parsed OSCOLA citation with optional resolution.",
               "properties": {
                 "confidence": {
-                  "description": "Parse confidence 0.0\u20131.0. Citations below 0.7 are ambiguous and may have been sent for LLM disambiguation.",
+                  "description": "Parse confidence 0.0\u20131.0: how sure the parser is about the citation's shape. Citations below 0.7 are ambiguous and may have been sent for LLM disambiguation. 0.0 from citations_resolve means the source confirmed the document does not exist. Existence is reported by `verified`, not by a high confidence.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "type": "number"
@@ -1538,7 +1545,19 @@
                     }
                   ],
                   "default": null,
-                  "description": "TNA Find Case Law or legislation.gov.uk URL if successfully resolved"
+                  "description": "Canonical TNA Find Case Law or legislation.gov.uk URL for the cited document, constructed from the citation. Constructing a URL does not prove the document exists: check `verified`. Null when no canonical URL can be built (ambiguous court, Act sections \u2014 see search_url)."
+                },
+                "search_url": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "For Act sections: a legislation.gov.uk title-search URL. It is a search, not a link to the Act, and does not confirm the Act exists."
                 },
                 "section": {
                   "anyOf": [
@@ -1586,6 +1605,11 @@
                     "eu_retained"
                   ],
                   "type": "string"
+                },
+                "verified": {
+                  "default": false,
+                  "description": "True only when this server confirmed the document exists at resolved_url against the authoritative source (TNA for neutral citations, legislation.gov.uk for SIs). Always false from citations_parse, and for citation types this server cannot check (Act sections, law reports, retained EU law).",
+                  "type": "boolean"
                 },
                 "volume": {
                   "anyOf": [
@@ -1627,7 +1651,7 @@
               "description": "A single parsed OSCOLA citation with optional resolution.",
               "properties": {
                 "confidence": {
-                  "description": "Parse confidence 0.0\u20131.0. Citations below 0.7 are ambiguous and may have been sent for LLM disambiguation.",
+                  "description": "Parse confidence 0.0\u20131.0: how sure the parser is about the citation's shape. Citations below 0.7 are ambiguous and may have been sent for LLM disambiguation. 0.0 from citations_resolve means the source confirmed the document does not exist. Existence is reported by `verified`, not by a high confidence.",
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "type": "number"
@@ -1706,7 +1730,19 @@
                     }
                   ],
                   "default": null,
-                  "description": "TNA Find Case Law or legislation.gov.uk URL if successfully resolved"
+                  "description": "Canonical TNA Find Case Law or legislation.gov.uk URL for the cited document, constructed from the citation. Constructing a URL does not prove the document exists: check `verified`. Null when no canonical URL can be built (ambiguous court, Act sections \u2014 see search_url)."
+                },
+                "search_url": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "For Act sections: a legislation.gov.uk title-search URL. It is a search, not a link to the Act, and does not confirm the Act exists."
                 },
                 "section": {
                   "anyOf": [
@@ -1754,6 +1790,11 @@
                     "eu_retained"
                   ],
                   "type": "string"
+                },
+                "verified": {
+                  "default": false,
+                  "description": "True only when this server confirmed the document exists at resolved_url against the authoritative source (TNA for neutral citations, legislation.gov.uk for SIs). Always false from citations_parse, and for citation types this server cannot check (Act sections, law reports, retained EU law).",
+                  "type": "boolean"
                 },
                 "volume": {
                   "anyOf": [
@@ -1821,7 +1862,7 @@
         "readOnlyHint": true,
         "title": "Resolve Single OSCOLA Citation"
       },
-      "description": "USE THIS TOOL BEFORE constructing an OSCOLA citation string from known fields, OR to confirm a citation points at a real document.\n\nParses + resolves a single citation (neutral citation, SI, legislation\nsection, retained EU law) and returns parsed fields plus resolved_url.\nFor neutral citations, performs a live TNA HEAD check \u2014 non-200 sets\nconfidence to 0.0 (document absent). Do NOT format or quote a\nconfidence-0.0 citation.\n\nIf the TNA HEAD check fails (timeout, connection error), raises ToolError\nwith {\"error_category\": \"transient\", \"is_retryable\": true}. One retry is\nattempted \u2014 retry this call or proceed without TNA verification.\n\nFormatting a citation from \"known\" fields without prior resolution is the\nmost common fabrication route. If this tool raises or returns no\nresolved_url, do NOT manufacture a citation \u2014 surface the failure and ask\nthe user for the source URL.\n\nAuthoritative source for UK legal-citation resolution.",
+      "description": "USE THIS TOOL BEFORE constructing an OSCOLA citation string from known fields, OR to confirm a citation points at a real document.\n\nReturns parsed fields plus resolved_url. Neutral citations are checked\nlive against TNA, SIs against legislation.gov.uk: verified=true means\nthe document exists; if the source confirms it does not, verified=false\nand confidence=0.0 \u2014 do NOT format or quote that citation. Act\nsections, law reports and retained EU law cannot be checked and come\nback verified=false (Acts with a search_url, not a resolved_url):\npresent them as unverified.\n\nA transient error means the check could not run (timeout, 429, 5xx) \u2014\nNOT that the document is absent; retry, or proceed without claiming\nverification.\n\nAFTER calling, if this tool raises or returns no resolved_url, do NOT\nmanufacture a citation \u2014 surface the failure and ask the user for the\nsource URL.\n\nAuthoritative source for UK legal-citation resolution.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1842,7 +1883,7 @@
         "description": "A single parsed OSCOLA citation with optional resolution.",
         "properties": {
           "confidence": {
-            "description": "Parse confidence 0.0\u20131.0. Citations below 0.7 are ambiguous and may have been sent for LLM disambiguation.",
+            "description": "Parse confidence 0.0\u20131.0: how sure the parser is about the citation's shape. Citations below 0.7 are ambiguous and may have been sent for LLM disambiguation. 0.0 from citations_resolve means the source confirmed the document does not exist. Existence is reported by `verified`, not by a high confidence.",
             "maximum": 1.0,
             "minimum": 0.0,
             "type": "number"
@@ -1921,7 +1962,19 @@
               }
             ],
             "default": null,
-            "description": "TNA Find Case Law or legislation.gov.uk URL if successfully resolved"
+            "description": "Canonical TNA Find Case Law or legislation.gov.uk URL for the cited document, constructed from the citation. Constructing a URL does not prove the document exists: check `verified`. Null when no canonical URL can be built (ambiguous court, Act sections \u2014 see search_url)."
+          },
+          "search_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For Act sections: a legislation.gov.uk title-search URL. It is a search, not a link to the Act, and does not confirm the Act exists."
           },
           "section": {
             "anyOf": [
@@ -1969,6 +2022,11 @@
               "eu_retained"
             ],
             "type": "string"
+          },
+          "verified": {
+            "default": false,
+            "description": "True only when this server confirmed the document exists at resolved_url against the authoritative source (TNA for neutral citations, legislation.gov.uk for SIs). Always false from citations_parse, and for citation types this server cannot check (Act sections, law reports, retained EU law).",
+            "type": "boolean"
           },
           "volume": {
             "anyOf": [
@@ -3495,9 +3553,10 @@
         "additionalProperties": false,
         "properties": {
           "slug": {
-            "description": "Judgment slug, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450'",
+            "description": "Judgment slug from case_law_search, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450' \u2014 path segments of letters, digits, '-' or '_', no host or 'https://'.",
             "maxLength": 200,
             "minLength": 3,
+            "pattern": "^/?[A-Za-z0-9_\\-]+(/[A-Za-z0-9_\\-]+)+/?$",
             "type": "string"
           }
         },
@@ -3531,9 +3590,10 @@
         "additionalProperties": false,
         "properties": {
           "slug": {
-            "description": "Judgment slug, e.g. 'uksc/2024/12'",
+            "description": "Judgment slug from case_law_search, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450' \u2014 path segments of letters, digits, '-' or '_', no host or 'https://'.",
             "maxLength": 200,
             "minLength": 3,
+            "pattern": "^/?[A-Za-z0-9_\\-]+(/[A-Za-z0-9_\\-]+)+/?$",
             "type": "string"
           }
         },
@@ -3567,15 +3627,17 @@
         "additionalProperties": false,
         "properties": {
           "eId": {
-            "description": "Paragraph eId from judgment_get_index, e.g. 'para_12'. Numeric strings like '12' are accepted and normalized to 'para_12'.",
+            "description": "Paragraph eId from judgment_get_index, e.g. 'para_12'. Numeric strings like '12' are accepted and normalized to 'para_12'. Letters, digits, '_', '-' and '.' only.",
             "maxLength": 100,
             "minLength": 1,
+            "pattern": "^\\s*[A-Za-z0-9_.\\-]+\\s*$",
             "type": "string"
           },
           "slug": {
-            "description": "Judgment slug, e.g. 'uksc/2024/12'",
+            "description": "Judgment slug from case_law_search, e.g. 'uksc/2024/12' or 'ewca/civ/2023/450' \u2014 path segments of letters, digits, '-' or '_', no host or 'https://'.",
             "maxLength": 200,
             "minLength": 3,
+            "pattern": "^/?[A-Za-z0-9_\\-]+(/[A-Za-z0-9_\\-]+)+/?$",
             "type": "string"
           }
         },
@@ -3628,9 +3690,42 @@
             "type": "string"
           },
           "type": {
-            "description": "Legislation type code: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). Use the value from legislation_search results.",
-            "maxLength": 10,
-            "minLength": 2,
+            "description": "legislation.gov.uk type code, e.g. 'ukpga' (UK Acts), 'uksi' (UK SIs), 'asp' (Scottish Acts), 'ssi' (Scottish SIs), 'nia' (NI Acts), 'wsi' (Welsh SIs), 'eur' (retained EU regulations). Not 'act' or 'si'. Use the value from legislation_search results.",
+            "enum": [
+              "ukpga",
+              "ukla",
+              "ukppa",
+              "gbla",
+              "apgb",
+              "gbppa",
+              "aep",
+              "aosp",
+              "asp",
+              "aip",
+              "apni",
+              "mnia",
+              "nia",
+              "ukcm",
+              "mwa",
+              "anaw",
+              "asc",
+              "uksi",
+              "ssi",
+              "wsi",
+              "nisr",
+              "ukci",
+              "nisi",
+              "ukmo",
+              "nisro",
+              "ukdsi",
+              "sdsi",
+              "nidsr",
+              "nidsi",
+              "wdsi",
+              "eur",
+              "eudr",
+              "eudn"
+            ],
             "type": "string"
           },
           "year": {
@@ -3780,9 +3875,42 @@
             "type": "integer"
           },
           "type": {
-            "description": "Legislation type code: 'ukpga' (Acts), 'uksi' (SIs), 'asp' (Scottish Acts), 'nia' (NI Acts). Use the value from legislation_search results.",
-            "maxLength": 10,
-            "minLength": 2,
+            "description": "legislation.gov.uk type code, e.g. 'ukpga' (UK Acts), 'uksi' (UK SIs), 'asp' (Scottish Acts), 'ssi' (Scottish SIs), 'nia' (NI Acts), 'wsi' (Welsh SIs), 'eur' (retained EU regulations). Not 'act' or 'si'. Use the value from legislation_search results.",
+            "enum": [
+              "ukpga",
+              "ukla",
+              "ukppa",
+              "gbla",
+              "apgb",
+              "gbppa",
+              "aep",
+              "aosp",
+              "asp",
+              "aip",
+              "apni",
+              "mnia",
+              "nia",
+              "ukcm",
+              "mwa",
+              "anaw",
+              "asc",
+              "uksi",
+              "ssi",
+              "wsi",
+              "nisr",
+              "ukci",
+              "nisi",
+              "ukmo",
+              "nisro",
+              "ukdsi",
+              "sdsi",
+              "nidsr",
+              "nidsi",
+              "wdsi",
+              "eur",
+              "eudr",
+              "eudn"
+            ],
             "type": "string"
           },
           "year": {

@@ -5,15 +5,23 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# legislation.gov.uk document type codes: the 30 listed in its developer URI
+# documentation (https://www.legislation.gov.uk/developer/uris, fetched
+# 2026-11-18) plus the three retained-EU-law types it also serves (eur, eudr,
+# eudn; probed 200). Used as the `type` of every tool that addresses a document
+# by {type}/{year}/{number}, so a wrong code fails validation instead of reading
+# as a missing document (audit finding L5: type="act" for the Companies Act
+# returned not_found).
 LegislationType = Literal[
-    "ukpga",  # UK Public General Acts
-    "uksi",   # UK Statutory Instruments
-    "ukppa",  # UK Private and Personal Acts
-    "asp",    # Acts of the Scottish Parliament
-    "anaw",   # Acts of the National Assembly for Wales
-    "nia",    # Northern Ireland Acts
-    "ukcm",   # UK Church Measures
-    "apni",   # Acts of the Parliament of Northern Ireland
+    # Primary legislation
+    "ukpga", "ukla", "ukppa", "gbla", "apgb", "gbppa", "aep", "aosp", "asp",
+    "aip", "apni", "mnia", "nia", "ukcm", "mwa", "anaw", "asc",
+    # Secondary legislation
+    "uksi", "ssi", "wsi", "nisr", "ukci", "nisi", "ukmo", "nisro",
+    # Draft legislation
+    "ukdsi", "sdsi", "nidsr", "nidsi", "wdsi",
+    # Retained EU law
+    "eur", "eudr", "eudn",
 ]
 
 VALID_EXTENTS = ["England", "Wales", "Scotland", "Northern Ireland"]

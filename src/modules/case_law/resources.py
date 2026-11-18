@@ -14,6 +14,7 @@ in scheme names.
 import httpx
 from fastmcp import Context, FastMCP
 
+from ...deps import raise_resource_error
 from . import parsers
 
 TNA_BASE = "https://caselaw.nationalarchives.gov.uk"
@@ -49,8 +50,11 @@ def register_case_law_resources(gateway: FastMCP) -> None:
         tags={"case_law", "tna", "judgment"},
     )
     async def judgment_header(slug: str, ctx: Context) -> str:
-        xml = await _fetch_xml(slug, ctx)
-        return parsers.extract_header(xml)
+        try:
+            xml = await _fetch_xml(slug, ctx)
+            return parsers.extract_header(xml)
+        except Exception as exc:
+            raise_resource_error(exc, attempted=f"judgment_header(slug={slug!r})", missing=f"Judgment {slug!r} has no <header> element.")
 
     @gateway.resource(
         "judgment://{slug*}/index",
@@ -67,8 +71,11 @@ def register_case_law_resources(gateway: FastMCP) -> None:
         tags={"case_law", "tna", "judgment", "navigation"},
     )
     async def judgment_index(slug: str, ctx: Context) -> str:
-        xml = await _fetch_xml(slug, ctx)
-        return parsers.extract_index(xml)
+        try:
+            xml = await _fetch_xml(slug, ctx)
+            return parsers.extract_index(xml)
+        except Exception as exc:
+            raise_resource_error(exc, attempted=f"judgment_index(slug={slug!r})", missing=None)
 
     @gateway.resource(
         "judgment://{slug*}/para/{eId}",
@@ -83,5 +90,8 @@ def register_case_law_resources(gateway: FastMCP) -> None:
         tags={"case_law", "tna", "judgment", "paragraph"},
     )
     async def judgment_paragraph(slug: str, eId: str, ctx: Context) -> str:
-        xml = await _fetch_xml(slug, ctx)
-        return parsers.extract_paragraph(xml, eId)
+        try:
+            xml = await _fetch_xml(slug, ctx)
+            return parsers.extract_paragraph(xml, eId)
+        except Exception as exc:
+            raise_resource_error(exc, attempted=f"judgment_paragraph(slug={slug!r})", missing=f"Judgment {slug!r} has no paragraph with eId {eId!r}; read judgment://{slug}/index for valid eIds.")

@@ -470,9 +470,12 @@ def register_tools(mcp: FastMCP) -> None:
                 max_chars=max_chars,
             )
         except ValueError as exc:
+            # A 200 without the manual page's structure is almost always an
+            # error or maintenance page, not a permanent property of the URL
+            # (#105: this used to be counted as `unknown`).
             raise_tool_error(
-                "unknown",
-                is_retryable=False,
+                "transient",
+                is_retryable=True,
                 attempted=f"hmrc_get_manual_page(url={requested_url!r})",
-                description=f"Official GOV.UK manual-page content was not retrievable: {exc} Do not infer its contents.",
+                description=f"Official GOV.UK manual-page content was not retrievable: {exc} Retry shortly. Do not infer its contents.",
             )

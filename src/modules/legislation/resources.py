@@ -21,6 +21,7 @@ not the whole Act.
 
 from fastmcp import Context, FastMCP
 
+from ...deps import raise_resource_error
 from .tools import _parse_toc_xml
 
 LEGISLATION_BASE = "https://www.legislation.gov.uk"
@@ -56,8 +57,11 @@ def register_legislation_resources(gateway: FastMCP) -> None:
             url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}/{date}/data.xml"
         else:
             url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/section/{section}/data.xml"
-        resp = await client.get(url)
-        resp.raise_for_status()
+        try:
+            resp = await client.get(url)
+            resp.raise_for_status()
+        except Exception as exc:
+            raise_resource_error(exc, attempted=f"legislation_section({type}/{year}/{number}/{section})")
         return resp.text
 
     @gateway.resource(
@@ -85,7 +89,10 @@ def register_legislation_resources(gateway: FastMCP) -> None:
             url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/{date}/data.xml"
         else:
             url = f"{LEGISLATION_BASE}/{type}/{year}/{number}/data.xml"
-        resp = await client.get(url)
-        resp.raise_for_status()
-        items = _parse_toc_xml(resp.text)
+        try:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            items = _parse_toc_xml(resp.text)
+        except Exception as exc:
+            raise_resource_error(exc, attempted=f"legislation_toc({type}/{year}/{number})")
         return "\n".join(items)
