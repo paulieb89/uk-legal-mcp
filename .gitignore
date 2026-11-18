@@ -20,7 +20,8 @@ build/
 *.log
 
 research/
-plans/
+# Root-level working plans only; docs/plans/ holds committed handoffs.
+/plans/
 references/
 
 # Internal working notes — never committed. Public docs live directly in docs/.
