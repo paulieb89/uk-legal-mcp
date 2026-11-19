@@ -2,6 +2,14 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [0.11.1] — 2026-11-19
+
+### Fixed
+
+- `hmrc_check_mtd_status` is no longer offered on the hosted instance, which has only HMRC sandbox credentials and so returned HMRC test data. A self-hosted instance with `HMRC_API_BASE=https://api.service.hmrc.gov.uk` still offers it.
+- HMRC responses are cached for 24 hours instead of 90 days (#110).
+- `server://about` replaces "no user query or response data is stored" with an accurate `data_handling` statement: query content is not logged, and responses may be cached for up to 24 hours. The figure is derived from the configured caches.
+
 ## [0.11.0] — 2026-11-18
 
 ### Breaking
