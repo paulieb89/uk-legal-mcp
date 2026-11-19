@@ -66,6 +66,7 @@ from .modules.bills import bills_mcp
 from .modules.case_law import case_law_mcp
 from .modules.case_law.resources import TNA_BASE, register_case_law_resources
 from .modules.case_law import parsers as case_law_parsers
+from .modules.case_law.models import SourceAttribution
 from .modules.citations import citations_mcp
 from .modules.committees import committees_mcp
 from .modules.hmrc import hmrc_mcp
@@ -432,7 +433,7 @@ async def judgment_get_header(
             "not_found", is_retryable=False, attempted=attempted,
             description=f"Judgment {slug!r} has no <header> element in its LegalDocML.",
         )
-    return {"slug": slug, "header": header}
+    return {"slug": slug, "header": header, "attribution": SourceAttribution().model_dump()}
 
 
 @gateway.tool(
@@ -457,7 +458,7 @@ async def judgment_get_index(
         if ":" in line:
             eid, _, preview = line.partition(":")
             paragraphs.append({"eId": eid.strip(), "preview": preview.strip()})
-    return {"slug": slug, "paragraphs": paragraphs}
+    return {"slug": slug, "paragraphs": paragraphs, "attribution": SourceAttribution().model_dump()}
 
 
 @gateway.tool(
@@ -491,7 +492,7 @@ async def judgment_get_paragraph(
                 "to locate a paragraph by its content."
             ),
         )
-    return {"slug": slug, "eId": normalized_eid, "content": content}
+    return {"slug": slug, "eId": normalized_eid, "content": content, "attribution": SourceAttribution().model_dump()}
 
 
 # ---------------------------------------------------------------------------

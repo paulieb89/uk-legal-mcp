@@ -5,6 +5,21 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# The Open Justice Licence v2.0 requires this statement, verbatim, with a link
+# to the licence where possible, on any reuse of Find Case Law content.
+OJL_ATTRIBUTION = "Contains information licensed under the Open Justice - Licence v2.0."
+OJL_LICENCE_URL = "https://caselaw.nationalarchives.gov.uk/open-justice-licence/version/2"
+
+
+class SourceAttribution(BaseModel):
+    """Attribution The National Archives requires for Find Case Law content."""
+
+    statement: str = Field(
+        OJL_ATTRIBUTION,
+        description="Attribution required by the Open Justice Licence. Include it, verbatim, wherever this judgment content is shown or reused.",
+    )
+    licence_url: str = Field(OJL_LICENCE_URL, description="The Open Justice Licence v2.0.")
+
 
 class JudgmentIdentifier(BaseModel):
     """A structured citation identifier for a judgment."""
@@ -66,6 +81,10 @@ class JudgmentSearchResult(BaseModel):
             "When greater than zero, `results` is incomplete for this page."
         ),
     )
+    attribution: SourceAttribution = Field(
+        default_factory=SourceAttribution,
+        description="Open Justice Licence attribution for the Find Case Law content in this result.",
+    )
 
 
 class GrepHit(BaseModel):
@@ -87,3 +106,7 @@ class GrepResult(BaseModel):
     pattern: str = Field(..., description="The pattern that was searched for")
     hits: list[GrepHit] = Field(..., description="Matching paragraphs in document order")
     truncated: bool = Field(..., description="True if hit count reached max_hits and more matches may exist")
+    attribution: SourceAttribution = Field(
+        default_factory=SourceAttribution,
+        description="Open Justice Licence attribution for the Find Case Law content in this result.",
+    )

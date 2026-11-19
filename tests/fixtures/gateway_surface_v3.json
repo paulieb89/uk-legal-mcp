@@ -824,6 +824,22 @@
       "outputSchema": {
         "description": "Output schema for case_law_grep_judgment.",
         "properties": {
+          "attribution": {
+            "description": "Open Justice Licence attribution for the Find Case Law content in this result.",
+            "properties": {
+              "licence_url": {
+                "default": "https://caselaw.nationalarchives.gov.uk/open-justice-licence/version/2",
+                "description": "The Open Justice Licence v2.0.",
+                "type": "string"
+              },
+              "statement": {
+                "default": "Contains information licensed under the Open Justice - Licence v2.0.",
+                "description": "Attribution required by the Open Justice Licence. Include it, verbatim, wherever this judgment content is shown or reused.",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
           "hits": {
             "description": "Matching paragraphs in document order",
             "items": {
@@ -983,6 +999,22 @@
       "outputSchema": {
         "description": "Paginated search result container for judgments.",
         "properties": {
+          "attribution": {
+            "description": "Open Justice Licence attribution for the Find Case Law content in this result.",
+            "properties": {
+              "licence_url": {
+                "default": "https://caselaw.nationalarchives.gov.uk/open-justice-licence/version/2",
+                "description": "The Open Justice Licence v2.0.",
+                "type": "string"
+              },
+              "statement": {
+                "default": "Contains information licensed under the Open Justice - Licence v2.0.",
+                "description": "Attribution required by the Open Justice Licence. Include it, verbatim, wherever this judgment content is shown or reused.",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
           "has_more": {
             "description": "Whether additional pages exist",
             "type": "boolean"
@@ -1370,6 +1402,22 @@
       "outputSchema": {
         "description": "Citations found within a single judgment, grouped by type.\n\nEach list contains the de-duplicated raw citation text as it appeared\nin the source. To resolve any entry to a URL, pass it through\ncitations_resolve.",
         "properties": {
+          "attribution": {
+            "description": "Open Justice Licence attribution for the judgment these citations were extracted from.",
+            "properties": {
+              "licence_url": {
+                "default": "https://caselaw.nationalarchives.gov.uk/open-justice-licence/version/2",
+                "description": "The Open Justice Licence v2.0.",
+                "type": "string"
+              },
+              "statement": {
+                "default": "Contains information licensed under the Open Justice - Licence v2.0.",
+                "description": "Attribution required by the Open Justice Licence. Include it, verbatim, wherever this judgment content is shown or reused.",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
           "case_uri": {
             "description": "The judgment URI that was fetched and parsed",
             "type": "string"
