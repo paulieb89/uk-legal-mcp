@@ -2,6 +2,12 @@
 
 All notable changes to `uk-legal-mcp` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Version numbers follow semver.
 
+## [0.11.2] — 2026-11-19
+
+### Fixed
+
+- Tools that return Find Case Law content (`case_law_search`, `case_law_grep_judgment`, `judgment_get_header`, `judgment_get_index`, `judgment_get_paragraph`, `citations_network`) now carry the attribution the Open Justice Licence v2.0 requires: "Contains information licensed under the Open Justice - Licence v2.0.", with a link to the licence.
+
 ## [0.11.1] — 2026-11-19
 
 ### Fixed
