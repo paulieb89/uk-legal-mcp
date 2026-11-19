@@ -21,6 +21,7 @@ Region:    lhr (London) — co-located with UK legal data sources
 
 import json
 import logging
+import math
 import os
 from urllib.parse import urlparse
 
@@ -43,6 +44,7 @@ from fastmcp.exceptions import NotFoundError as FastMCPNotFoundError
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import Middleware
 from mcpfleet_obs import install, parse_error_payload
+from mcpfleet_obs.clients import IP_LABEL_ENABLED
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -55,7 +57,7 @@ from .deps import PROJECT_VERSION as _PROJECT_VERSION
 # workflows. "unknown" means a build that did not pass it (e.g. a local build).
 GIT_SHA = os.environ.get("GIT_SHA") or "unknown"
 from .deps import raise_http_tool_error, raise_structured_from_unhandled, raise_tool_error
-from .deps import response_cache
+from .deps import max_cache_ttl_seconds, response_cache
 from typing import Annotated
 
 from pydantic import Field
@@ -67,6 +69,7 @@ from .modules.case_law import parsers as case_law_parsers
 from .modules.citations import citations_mcp
 from .modules.committees import committees_mcp
 from .modules.hmrc import hmrc_mcp
+from .modules.hmrc.tools import hmrc_is_sandbox
 from .modules.legislation import legislation_mcp
 from .modules.legislation.resources import (
     LEGISLATION_BASE,
@@ -107,7 +110,8 @@ gateway = FastMCP(
         "• votes — Commons and Lords division records.\n"
         "• committees — Select committees, membership, evidence.\n"
         "• citations — OSCOLA citation parsing and resolution (no API key).\n"
-        "• hmrc — UK VAT rates, MTD status, HMRC guidance.\n\n"
+        + ("• hmrc — UK VAT rates, HMRC guidance.\n\n" if hmrc_is_sandbox()
+           else "• hmrc — UK VAT rates, MTD status, HMRC guidance.\n\n") +
         "Each module's own instructions cover how to drive its tools. "
         "Read server://about for upstream APIs, provenance, and operational posture. "
         "All tools are read-only. Judgments and statutes are cached aggressively."
@@ -328,6 +332,25 @@ register_legislation_resources(gateway)
 register_parliament_resources(gateway)
 
 
+def _hmrc_upstream() -> dict:
+    if hmrc_is_sandbox():
+        return {"module": "hmrc", "api": "gov.uk/api/search.json", "auth": "none",
+                "note": "MTD status disabled on this instance (sandbox credentials only)"}
+    return {"module": "hmrc", "api": "api.service.hmrc.gov.uk + gov.uk/api/search.json",
+            "auth": "OAuth 2.0"}
+
+
+def _data_handling() -> str:
+    hours = math.ceil(max_cache_ttl_seconds() / 3600)
+    text = (
+        "Query content is not logged. Responses may be cached for up to "
+        f"{hours} hours to answer repeat requests."
+    )
+    if IP_LABEL_ENABLED:
+        text += " Distinct callers are counted with an anonymous tag that resets on restart."
+    return text
+
+
 @gateway.resource(
     "server://about",
     name="About this server",
@@ -351,10 +374,10 @@ def server_about() -> str:
             {"module": "votes",       "api": "commonsvotes-api.parliament.uk + lordsvotes-api.parliament.uk",     "auth": "none"},
             {"module": "committees",  "api": "committees-api.parliament.uk",                                      "auth": "none"},
             {"module": "citations",   "api": "none (regex; optional client-side LLM disambiguation, off by default)", "auth": "n/a"},
-            {"module": "hmrc",        "api": "test-api.service.hmrc.gov.uk + gov.uk/api/search.json",             "auth": "OAuth 2.0 (sandbox by default)"},
+            _hmrc_upstream(),
         ],
         "llm_posture": "this server runs no LLM of its own. All tool responses come directly from the named APIs, EXCEPT citations_parse with disambiguate=True (off by default), which asks the connected client's own model to resolve an ambiguous court division via MCP sampling.",
-        "no_data_retention": "no user query or response data is stored",
+        "data_handling": _data_handling(),
         "all_tools_read_only": True,
     }, indent=2)
 

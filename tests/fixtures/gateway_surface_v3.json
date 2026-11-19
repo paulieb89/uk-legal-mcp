@@ -3099,7 +3099,7 @@
         "readOnlyHint": true,
         "title": "Check MTD VAT Status"
       },
-      "description": "USE THIS TOOL WHEN you have a 9-digit VAT Registration Number and need that business's Making Tax Digital VAT mandate status.\n\nReturns whether the business is mandated for MTD, effective date, and\ntrading name.\n\nConnects to the HMRC sandbox by default. Set HMRC_API_BASE to\n'https://api.service.hmrc.gov.uk' for production. Requires\nHMRC_CLIENT_ID + HMRC_CLIENT_SECRET environment variables (OAuth 2.0).\nRaises if credentials are not configured \u2014 do not infer status.",
+      "description": "USE THIS TOOL WHEN you have a 9-digit VAT Registration Number and need that business's Making Tax Digital VAT mandate status.\n\nReturns whether the business is mandated for MTD, effective date, and\ntrading name.\n\nOnly offered when HMRC_API_BASE points at production\n('https://api.service.hmrc.gov.uk'); with the default sandbox base the\ntool is hidden, because sandbox answers are HMRC test data. Requires\nHMRC_CLIENT_ID + HMRC_CLIENT_SECRET environment variables (OAuth 2.0).\nRaises if credentials are not configured \u2014 do not infer status.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

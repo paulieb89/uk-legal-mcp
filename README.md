@@ -120,7 +120,7 @@ See [the lawyer guide](docs/lawyer-guide.md) for ready-to-run prompts.
 | Votes | Commons and Lords divisions, counts, results, and per-member voting records. |
 | Committees | Select committees, memberships, oral evidence, and written evidence. |
 | Citations | OSCOLA-style citation parsing and resolution to canonical sources. |
-| HMRC | VAT rate lookups, GOV.UK HMRC guidance search, and optional authenticated MTD VAT status checks. |
+| HMRC | VAT rate lookups, GOV.UK HMRC guidance search, and MTD VAT status checks on self-hosted instances with production HMRC credentials (not offered on the hosted endpoint). |
 
 The server also exposes `judgment://`, `legislation://`, and `hansard://` resources for source text that is too large to return in a single search result.
 

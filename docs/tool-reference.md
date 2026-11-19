@@ -113,12 +113,11 @@ Supported citation formats include neutral citations, law reports, legislation s
 | Tool | Title | Summary |
 |---|---|---|
 | `hmrc_get_vat_rate` | Get VAT Rate for Commodity | Use when you know the UK VAT category name for a good or service and want its VAT treatment. |
-| `hmrc_check_mtd_status` | Check MTD VAT Status | Use when you have a 9-digit VAT Registration Number and need that business's Making Tax Digital VAT mandate status. |
 | `hmrc_search_guidance` | Search HMRC Guidance | Use when discovering HMRC GOV.UK guidance on a topic. |
 | `hmrc_get_manual_page` | Read HMRC Internal Manual Page | Use when a cited HMRC internal-manual page must be read. |
 <!-- END GENERATED -->
 
-`hmrc_check_mtd_status` requires `HMRC_CLIENT_ID` and `HMRC_CLIENT_SECRET`. The server defaults to sandbox; set `HMRC_API_BASE=https://api.service.hmrc.gov.uk` for production.
+`hmrc_check_mtd_status` is not offered on the hosted instance, which has only HMRC sandbox credentials. A self-hosted instance offers it when `HMRC_API_BASE=https://api.service.hmrc.gov.uk` is set, with production `HMRC_CLIENT_ID` and `HMRC_CLIENT_SECRET`.
 
 ## Resource bridge and generated tools
 
