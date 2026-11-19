@@ -1,5 +1,7 @@
 # uk-legal-mcp
 
+Maintained by BOUCH — private hosting, custom tools and setup: paul@bouch.dev · [bouch.dev/products/uk-legal-mcp](https://bouch.dev/products/uk-legal-mcp)
+
 <!-- mcp-name: io.github.paulieb89/uk-legal-mcp -->
 
 [![PyPI](https://img.shields.io/pypi/v/uk-legal-mcp)](https://pypi.org/project/uk-legal-mcp/)
