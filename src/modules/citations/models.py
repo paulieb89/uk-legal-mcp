@@ -4,6 +4,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..case_law.models import SourceAttribution
+
 
 class CitationType(str, Enum):
     NEUTRAL = "neutral"          # [2024] UKSC 12
@@ -127,4 +129,8 @@ class CitationNetwork(BaseModel):
     total_citations: int = Field(
         ...,
         description="Sum of all de-duplicated citations across every bucket",
+    )
+    attribution: SourceAttribution = Field(
+        default_factory=SourceAttribution,
+        description="Open Justice Licence attribution for the judgment these citations were extracted from.",
     )
