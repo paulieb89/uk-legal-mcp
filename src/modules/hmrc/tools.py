@@ -21,7 +21,13 @@ from pydantic import Field
 from ...deps import raise_http_tool_error, raise_tool_error
 from .models import HMRCGuidanceResult, HMRCGuidanceSearchResult, HMRCManualPage, MTDStatus, VATRate
 
-HMRC_API_BASE = os.getenv("HMRC_API_BASE", "https://test-api.service.hmrc.gov.uk")
+HMRC_SANDBOX_BASE = "https://test-api.service.hmrc.gov.uk"
+HMRC_API_BASE = os.getenv("HMRC_API_BASE", HMRC_SANDBOX_BASE)
+
+
+def hmrc_is_sandbox(base: str = HMRC_API_BASE) -> bool:
+    """True when MTD calls would return HMRC sandbox test data, not real records."""
+    return "test-api." in base
 GOVUK_SEARCH_BASE = "https://www.gov.uk/api/search.json"
 GOVUK_MANUAL_PREFIX = "/hmrc-internal-manuals/"
 _MANUAL_FAMILY_RE = re.compile(r"^[a-z0-9-]{2,100}$")
@@ -339,8 +345,9 @@ def register_tools(mcp: FastMCP) -> None:
         Returns whether the business is mandated for MTD, effective date, and
         trading name.
 
-        Connects to the HMRC sandbox by default. Set HMRC_API_BASE to
-        'https://api.service.hmrc.gov.uk' for production. Requires
+        Only offered when HMRC_API_BASE points at production
+        ('https://api.service.hmrc.gov.uk'); with the default sandbox base the
+        tool is hidden, because sandbox answers are HMRC test data. Requires
         HMRC_CLIENT_ID + HMRC_CLIENT_SECRET environment variables (OAuth 2.0).
         Raises if credentials are not configured — do not infer status.
         """

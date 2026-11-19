@@ -41,7 +41,11 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import NotFoundError as FastMCPNotFoundError
 from pydantic import ValidationError as PydanticValidationError
 from fastmcp.exceptions import ToolError
-from fastmcp.server.middleware.caching import ResponseCachingMiddleware
+from fastmcp.server.middleware.caching import (
+    FIVE_MINUTES_IN_SECONDS,
+    ONE_HOUR_IN_SECONDS,
+    ResponseCachingMiddleware,
+)
 from key_value.aio.stores.memory import MemoryStore
 from prometheus_client import Counter as PromCounter
 
@@ -61,12 +65,36 @@ CACHE_MAX_ENTRIES = int(os.getenv("CACHE_MAX_ENTRIES", "300"))
 CACHE_MAX_ITEM_BYTES = 256 * 1024
 
 
+# FastMCP's per-operation TTL defaults (fastmcp.server.middleware.caching), applied
+# when a settings dict omits "ttl". server://about states the longest TTL, so it
+# must count these too.
+_CACHE_DEFAULT_TTLS = {
+    "list_tools_settings": FIVE_MINUTES_IN_SECONDS,
+    "list_resources_settings": FIVE_MINUTES_IN_SECONDS,
+    "list_prompts_settings": FIVE_MINUTES_IN_SECONDS,
+    "read_resource_settings": ONE_HOUR_IN_SECONDS,
+    "get_prompt_settings": ONE_HOUR_IN_SECONDS,
+    "call_tool_settings": ONE_HOUR_IN_SECONDS,
+}
+_cache_ttls: list[int] = []
+
+
+def max_cache_ttl_seconds() -> int:
+    """Longest TTL of any response cache built so far (0 if none)."""
+    return max(_cache_ttls, default=0)
+
+
 def response_cache(*, max_entries: int | None = None, **settings) -> ResponseCachingMiddleware:
     """Build a ResponseCachingMiddleware over a bounded store.
 
     Always use this instead of ResponseCachingMiddleware(...): the default store
-    is unbounded (enforced by tests/test_response_cache_bounds.py).
+    is unbounded (enforced by tests/test_response_cache_bounds.py). Every TTL it
+    will apply is recorded for max_cache_ttl_seconds().
     """
+    for key, default_ttl in _CACHE_DEFAULT_TTLS.items():
+        op = settings.get(key) or {}
+        if op.get("enabled", True):
+            _cache_ttls.append(int(op.get("ttl", default_ttl)))
     limit = CACHE_MAX_ENTRIES if max_entries is None else max_entries
     return ResponseCachingMiddleware(
         cache_storage=MemoryStore(max_entries_per_collection=limit),
